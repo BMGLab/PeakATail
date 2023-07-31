@@ -1,2 +1,2 @@
 # ProjectEMA
-Python package for peakcalling and clustering by PAS expression.
+Python package for peakcalling and ....
