@@ -29,6 +29,7 @@ def read_check(read, barcode:str, barcode_len:int, direction:bool, seq_len:int, 
     if it is > just skip read 
     if it is < change to standart
     '''
+    #6
     if read_end - read_start > seq_len:
         return None
     elif read_end - read_start < seq_len:
