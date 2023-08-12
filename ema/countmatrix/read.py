@@ -22,12 +22,12 @@ def read_check(read, barcode:str, barcode_len:int, direction:bool, seq_len:int, 
     if read_chro in ignore_chro:
         return None
     '''
-    TODO 
-    this block will be fixed 
     this block just get reads that len are standart len
     if it is > just skip read 
     if it is < change to standart
     '''
+    #TODO 
+    #this block will be fixed 
     #6
     if read_end - read_start > seq_len:
         return None

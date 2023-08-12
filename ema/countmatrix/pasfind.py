@@ -1,0 +1,1 @@
+#maybe will transfer peak class pafind method here as a function if I want to multithreaing
