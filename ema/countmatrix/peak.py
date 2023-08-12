@@ -1,19 +1,21 @@
 class Peak():
-    # use to merge peaks 
-    last_peak_end  = None
+
+    pasnumber = 0
     '''
     TODO
     '''
 
-    def __init__(self, peak_list:list, peak_start:int, peak_strand:bool, cb_dict:dict):
+    def __init__(self, peak_list=[], peak_start=0, last_peak_end=0, peak_strand=True, cb_dict={}):
         '''
         :param peak_list: [[read_end1, height1], [read_end2, height]...., [read_endn, heightendn]]
-        :param peak_start: this point is one read endpoint that detect as peak start 
+        :param peak_start: this point is one read endpoint that detect as peak start but it not mean firat start of peak cause coulde merge multiple peaks
+            peak_start assigne when signal turn True in peakcalling function
         :param peak_strand: presents gene strand 
         :param cb_dict: collect all CellBarcodes are in peak
         '''
         self.peak_list = peak_list
-        self.peal_start = peak_start
+        self.peak_start = peak_start
+        self.last_peak_end = last_peak_end
         self.peak_strand = peak_strand
         self.cb_dict = cb_dict
 
@@ -50,7 +52,7 @@ class Peak():
             # 5% must be atleast 1 so max height must be at least 20 
             
             if max_height <= 20:
-                return False
+                return False, False
             
             else:
                 # diffirent two block for different strands
@@ -66,7 +68,7 @@ class Peak():
                             return pas_1, pas_2
                     
                     else:
-                        return False
+                        return False, False
                     
                 else:
                     for item in self.peak_list:
@@ -76,8 +78,8 @@ class Peak():
                             pas_2 = item[0]
                             return pas_1, pas_2
                     else:
-                        return False
+                        return False, False
 
         except:
-            return False
+            return False, False
         
