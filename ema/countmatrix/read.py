@@ -3,7 +3,7 @@ def read_check(read, barcode:str, barcode_len:int, direction:bool, seq_len:int, 
     '''
     fuction check read useubility 
     if it is useable return values
-    if it is not return None
+    if it is not return False
     '''
     try:# do not calculate reads don't have CB
         cb = read.get_tag(barcode)
