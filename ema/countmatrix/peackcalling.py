@@ -98,9 +98,6 @@ def peak_calling(direction:bool, bamfile_dir:str, bedfile, matrix, cb_tota:dict,
     bamfile.close()
 
 if __name__ == "__main__":
-    peak_calling
-
-
-
+    peak_calling()
 
 
