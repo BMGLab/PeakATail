@@ -4,16 +4,19 @@ import time
 from peak import Peak
 from read import read_check
 from paswrite import matrix_write, pas_write
+from config import directory_config, variable_config
 
 start_time = time.time()
 
-def peak_calling(direction:bool, bamfile_dir:str, bedfile, matrix, cb_tota:dict, seqlen:int, default_threshold=5, ignore_chro = ["MT", "mt"],merge_len=100 ):
+def peak_calling(direction:bool, bamfile_dir:str, bedfilepath:str, matrixpath:str, default_threshold=variable_config.default_threshold(), merge_len=variable_config.merge_len()):
 
     '''
     
     data_array
     '''
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb')
+    matrix = open(matrixpath, "w")
+    bedfile = open(bedfilepath, "w")
     data_array = [] 
     signal = False
     chro = "1"
@@ -30,7 +33,7 @@ def peak_calling(direction:bool, bamfile_dir:str, bedfile, matrix, cb_tota:dict,
     
         # checking read validity if it is not countinue to next ittirate
         #chro1 is play role as condition check
-        chro1, start1, end1, strand, cb = read_check(read=read, barcode_len=16, direction=direction, seq_len=seqlen, ignore_chro=ignore_chro)
+        chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
 
         if chro1 == False:
             continue
@@ -98,6 +101,6 @@ def peak_calling(direction:bool, bamfile_dir:str, bedfile, matrix, cb_tota:dict,
     bamfile.close()
 
 if __name__ == "__main__":
-    peak_calling()
+    peak_calling() 
 
 

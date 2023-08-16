@@ -1,5 +1,6 @@
+from config import variable_config
 
-def read_check(read, barcode:str, barcode_len:int, direction:bool, seq_len:int, ignore_chro):
+def read_check(read, barcode:str, direction:bool, barcode_len=variable_config.cb_len() ,seq_len=variable_config.seqlen(), ignore_chro=variable_config.ignore_chro()):
     '''
     fuction check read useubility 
     if it is useable return values

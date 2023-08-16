@@ -1,9 +1,11 @@
 import anndata as ad
 import scanpy as sc
 import pandas as pd
+from .config import directory_config
 
-def clustering(adata:ad.AnnData(), outputpath:str):
-    result_file = "write/pbmc3k.h5ad"
+def clustering(adata:ad.AnnData(), outputpath=directory_config.cluster_labels(), result_file=directory_config.cluster_output()):
+    """TODO
+    """
     sc.pp.normalize_total(adata=adata, target_sum= 1e4)
     sc.pp.log1p(adata)
     
