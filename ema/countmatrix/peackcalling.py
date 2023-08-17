@@ -8,7 +8,7 @@ from config import directory_config, variable_config
 
 start_time = time.time()
 
-def peak_calling(direction:bool, bamfile_dir:str, bedfilepath:str, matrixpath:str, default_threshold=variable_config.default_threshold(), merge_len=variable_config.merge_len()):
+def peak_calling(direction:bool, bedfilepath:str, matrixpath:str,bamfile_dir = "/test/testdata/Aligned.sortedByCoord.out.bam" ,default_threshold=variable_config.default_threshold(), merge_len=variable_config.merge_len()):
 
     '''
     

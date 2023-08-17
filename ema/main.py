@@ -3,6 +3,7 @@ from .matrixfilter import filter_cb, make_dataframe, preprocessing
 from .clustering import clustering
 from .config import directory_config
 import multiprocessing
+import pysam as ps
 
 def main():
     peak_calling(True, bedfile=directory_config.negbed(), matrix=directory_config.negmatrixpath())
@@ -12,8 +13,3 @@ def main():
     adata = preprocessing(df=matrix_df)
     clustering(adata=adata)
     
-
-
-
-
-
