@@ -1,9 +1,8 @@
-from .countmatrix.peackcalling import peak_calling
-from .matrixfilter import filter_cb, make_dataframe, preprocessing
-from .clustering import clustering
-from .config import directory_config
+from ema.countmatrix.peackcalling import peak_calling
+from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
+from ema.clustering import clustering
+from ema.config import directory_config
 import multiprocessing
-import pysam as ps
 
 def main():
     peak_calling(True, bedfile=directory_config.negbed(), matrix=directory_config.negmatrixpath())

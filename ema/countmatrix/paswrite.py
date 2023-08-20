@@ -1,4 +1,4 @@
-from indexing import indexing
+from ema.countmatrix.indexing import indexing
 
 direction_dict = {True:1, False:-1}
 def pas_write(chro:int, peak_start:int, l_end:int, strand:bool, output):

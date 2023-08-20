@@ -1,14 +1,18 @@
 import pysam as ps
 import bisect
 import time
-from peak import Peak
-from read import read_check
-from paswrite import matrix_write, pas_write
+from ema.countmatrix.peak import Peak
+from ema.countmatrix.read import read_check
+from ema.countmatrix.paswrite import matrix_write, pas_write
 from config import directory_config, variable_config
 
 start_time = time.time()
 
-def peak_calling(direction:bool, bedfilepath:str, matrixpath:str,bamfile_dir = "/test/testdata/Aligned.sortedByCoord.out.bam" ,default_threshold=variable_config.default_threshold(), merge_len=variable_config.merge_len()):
+def peak_calling(   
+                    direction:bool, bedfilepath:str,
+                    matrixpath:str, bamfile_dir = "/test/testdata/Aligned.sortedByCoord.out.bam" ,
+                    default_threshold=variable_config.default_threshold(), merge_len=variable_config.merge_len()
+                ):
 
     '''
     
