@@ -20,6 +20,7 @@ class variable_config():
     default_threshold = 5
     merge_len = 100
     ignore_chro = ["MT", "mt"]
+    time = 0
 
 class filter_config():
     min_read = 2000
