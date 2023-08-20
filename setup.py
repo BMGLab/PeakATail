@@ -3,10 +3,11 @@ from setuptools import setup, find_packages
 setup(
     name="ema",
     version='0.1.a1',
-    install_requires=["pysam", 
-                      "anndata", 
-                      "scanpy", 
-                      "pandas", 
-                      "scipy"]
+    packages=find_packages(),
+    install_requires=["pysam>=0.17.0", 
+                      "anndata>=0.9.1", 
+                      "scanpy>=1.9.3", 
+                      "pandas>=1.3.5", 
+                      "scipy>=1.8.0"]
     
 )
