@@ -4,14 +4,14 @@ import time
 from ema.countmatrix.peak import Peak
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
-from config import directory_config, variable_config
+from ema.config import directory_config, variable_config
 
 start_time = time.time()
 
 def peak_calling(   
                     direction:bool, bedfilepath:str,
-                    matrixpath:str, bamfile_dir = "/test/testdata/Aligned.sortedByCoord.out.bam" ,
-                    default_threshold=variable_config.default_threshold(), merge_len=variable_config.merge_len()
+                    matrixpath:str, bamfile_dir = "/home/user/D/BAMdata/proje/ProjectEMA/ema/test/testdata/Aligned.sortedByCoord.out.bam" ,
+                    default_threshold=variable_config.default_threshold, merge_len=variable_config.merge_len
                 ):
 
     '''
@@ -24,7 +24,7 @@ def peak_calling(
     data_array = [] 
     signal = False
     chro = "1"
-    l_end = 0
+    l_end, i_end = 0, 0
     timercount = 0
     peak = Peak(peak_strand=direction)
     i = 0 # I forgot what is this but use in peakstarting block
@@ -39,21 +39,30 @@ def peak_calling(
         #chro1 is play role as condition check
         chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
 
-        if chro1 == False:
+        if chro1 == 0:
             continue
         
         if chro1 != chro:#TODO COMPLETE
-            if len(peak.peak_list()) != 0:# TODO thsi block has code reaptition
+            if signal:
                 signal = False
-
                 pas_1, pas_2 = peak.pasfind()
 
-                if pas_1 != False: # if pasfind method return don't False mean peak have valid pas
+                if pas_1 != 0:
+                    Peak.pasnumber += 1
+                    pas_write(chro1, pas_2, pas_1, strand, output=bedfile)
+                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+            
+            elif len(peak.peak_list) != 0:# TODO thsi block has code reaptition
+                signal = False
+                pas_1, pas_2 = peak.pasfind()
+
+                if pas_1 != 0: # if pasfind method return don't False mean peak have valid pas
                     Peak.pasnumber += 1
                     pas_write(chro1, pas_2, pas_1, strand, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
 
-                peak = Peak(peak_start=start1, peak_strand=direction) #make new instance of Peak class
+            peak = Peak(peak_strand=direction) #make new instance of Peak class
+            i_end, l_end = 0, 0
 
         if signal:
             l_end = data_array[-default_threshold] # it takes -5 from end in default it means where heghit is more than threshold
@@ -85,13 +94,13 @@ def peak_calling(
             signal = True
             i += 1  #I forgot what is this but will fix TODO
 
-            if start1 - peak.last_peak_end() > merge_len and i!=1:
+            if start1 - peak.last_peak_end > merge_len and i!=1:
                 #Peak has been completed so find pas 
                 #write pas
                 #make new instance of peak
                 pas_1, pas_2 = peak.pasfind()
 
-                if pas_1 != False: # if pasfind method return don't False mean peak have valid pas
+                if pas_1 != 0: # if pasfind method return don't  mean peak have valid pas
                     Peak.pasnumber += 1
                     pas_write(chro1, pas_2, pas_1, strand, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
