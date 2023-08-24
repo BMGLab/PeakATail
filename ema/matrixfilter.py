@@ -10,7 +10,7 @@ import scanpy as sc
 filtered_cb_list = []
 
 
-def filter_cb(negativematrixpath=directory_config.negmatrixpath(), positivematrixpath=directory_config.posmatrixpath(), sorted_corrected_sparse_path=directory_config.filterd_matrix(), min_read=filter_config.min_read()):
+def filter_cb(negativematrixpath=directory_config.negmatrixpath, positivematrixpath=directory_config.posmatrixpath, sorted_corrected_sparse_path=directory_config.filterd_matrix, min_read=filter_config.min_read):
     """TODO
     """
     cb_list = list(cb_total.keys()) # take view of keys covert them to list
@@ -63,13 +63,13 @@ def filter_cb(negativematrixpath=directory_config.negmatrixpath(), positivematri
                 sorted_corrected_sparse_list.write(f"{item[0]} {item[1]} {item[2]}\n")
     
     
-def make_dataframe(matrixpath=directory_config.matrixpath(), collist=filtered_cb_list):
+def make_dataframe(matrixpath=directory_config.matrixpath, collist=filtered_cb_list):
     sparsematrix = sci.mmread(matrixpath)
     
     matrix_frame = pd.DataFrame(sparsematrix.toarray(), columns=collist)
     return matrix_frame.transpose()
 
-def preprocessing(df:pd.DataFrame, min_cells=filter_config.min_cells(), min_genes=filter_config.min_genes()):
+def preprocessing(df:pd.DataFrame, min_cells=filter_config.min_cells, min_genes=filter_config.min_genes):
     adata = ad.AnnData(X=df)
     sc.pp.filter_cells(adata, min_genes=min_genes)
     sc.pp.filter_genes(adata, min_cells=min_cells)
