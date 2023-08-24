@@ -19,8 +19,8 @@ def peak_calling(
     data_array
     '''
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb')
-    matrix = open(matrixpath, "w")
-    bedfile = open(bedfilepath, "w")
+    matrix = open(matrixpath, "a")
+    bedfile = open(bedfilepath, "a")
     data_array = [] 
     signal = False
     chro = "1"
@@ -34,7 +34,7 @@ def peak_calling(
             endtime = time.time()
             print(f"{endtime-start_time}")
         timercount += 1
-    
+        
         # checking read validity if it is not countinue to next ittirate
         #chro1 is play role as condition check
         chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
@@ -74,7 +74,7 @@ def peak_calling(
         it means peak has been finisfhed
         '''
         if signal and  start1 > l_end: #in peak
-            signal == False
+            signal = False
             peak.last_peak_end = l_end
             peak.peak_start = 0
             
@@ -105,7 +105,7 @@ def peak_calling(
                     pas_write(chro1, pas_2, pas_1, strand, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
 
-                peak = Peak(peak_start=start1, peak_strand=direction) #make new instance of Peak class
+                peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}) #make new instance of Peak class
             else:
                 peak.peak_start = start1 #Peak has not been complete so will continue to ass items to peak_list
 

@@ -19,7 +19,6 @@ class Peak():
         self.peak_strand = peak_strand
         self.cb_dict = cb_dict
 
-
     # each time data_array slicing ubdate peak_add 
     def peak_add(self, data_array:list, slice_loc:int):
         array_len = len(data_array)
@@ -36,7 +35,7 @@ class Peak():
 
 
     
-    def pasfind(self):
+    def pasfind(self) -> int:
         '''
         pasfind method loop on peak_list and fidn max_height
         find 5% then find value larger than max_heght 5% and assigne it as pas 
@@ -52,7 +51,7 @@ class Peak():
             # 5% must be atleast 1 so max height must be at least 20 
             
             if max_height <= 20:
-                return False, False
+                return 0, 0
             
             else:
                 # diffirent two block for different strands
@@ -68,7 +67,7 @@ class Peak():
                             return pas_1, pas_2
                     
                     else:
-                        return False, False
+                        return 0, 0
                     
                 else:
                     for item in self.peak_list:
@@ -78,8 +77,8 @@ class Peak():
                             pas_2 = item[0]
                             return pas_1, pas_2
                     else:
-                        return False, False
+                        return 0, 0
 
         except:
-            return False, False
+            return 0, 0
         
