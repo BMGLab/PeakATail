@@ -1,8 +1,9 @@
 import os 
 
-output_dir = os.path.join(os.getcwd(), "emaout")
-os.makedirs(output_dir, exist_ok=True)
+
 class directory_config():
+    output_dir = os.path.join(os.getcwd(), "emaout")
+    os.makedirs(output_dir, exist_ok=True)
     posmatrixpath = os.path.join(output_dir, "posmatrix.mtx")
     negmatrixpath = os.path.join(output_dir, "negmatrix.mtx")
     matrixpath = os.path.join(output_dir, "pascountmatrix.mtx")
