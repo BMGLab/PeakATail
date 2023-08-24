@@ -12,3 +12,5 @@ def main():
     adata = preprocessing(df=matrix_df)
     clustering(adata=adata)
     
+if __name__ == "__main__":
+    main()
