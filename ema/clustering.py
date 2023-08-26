@@ -16,13 +16,12 @@ def clustering(adata:ad.AnnData(), outputpath=directory_config.cluster_labels, r
 
     sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)
 
-    sc.tl.paga(adata)
-    sc.pl.paga(adata, plot=False)
-    sc.tl.umap(adata, init_pos='paga')
-    sc.tl.umap(adata)
-    sc.tl.leiden(adata)
-    sc.pl.umap(adata, color=['leiden', 'CST3', 'NKG7'])
-    adata.write(result_file)
+    #sc.pl.paga(adata, plot=False)
+    sc.tl.umap(adata) #init_pos='paga'
+    #sc.tl.umap(adata)
+    sc.tl.louvain(adata)
+    #sc.pl.umap(adata, color=['leiden', 'CST3', 'NKG7'])
+    #adata.write(result_file)
     cluster_labels = adata.obs['louvain']
     cluster_labels.sort_index()
     cluster_labels.to_csv(outputpath, header=True, index=True)
