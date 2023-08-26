@@ -23,6 +23,7 @@ class variable_config():
     ignore_chro = ["MT", "mt"]
     barcode_tag = "CB" #corrected barcode tag in BAM file
     time = 0
+    matrixmarketheader = f"%%MatrixMarket matrix coordinate integer general\n"
 
 
 class filter_config():
