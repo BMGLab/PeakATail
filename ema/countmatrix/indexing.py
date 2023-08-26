@@ -3,6 +3,7 @@ cb_index = 0
 
 def indexing(cb:str) -> int:
     global cb_index
+    global cb_total
     try:
         col = cb_total[cb]
         return col
