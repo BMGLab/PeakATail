@@ -19,8 +19,8 @@ def peak_calling(
     data_array
     '''
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb')
-    matrix = open(matrixpath, "a")
-    bedfile = open(bedfilepath, "a")
+    matrix = open(matrixpath, "w")
+    bedfile = open(bedfilepath, "w")
     data_array = [] 
     signal = False
     chro = "1"
