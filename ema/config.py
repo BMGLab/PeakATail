@@ -14,6 +14,7 @@ class directory_config():
     filtered_cb = os.path.join(output_dir, "filterdcb.tsv")
     cluster_output = os.path.join(output_dir, "write", "pbmc3k.h5ad")
     cluster_labels = os.path.join(output_dir, "clusterlabels.csv")
+    bam_dir = None
 
 class variable_config():
     seqlen = 98

@@ -10,7 +10,7 @@ start_time = time.time()
 
 def peak_calling(   
                     direction:bool, bedfilepath:str,
-                    matrixpath:str, bamfile_dir = "/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/Aligned.sortedByCoord.out.bam" ,
+                    matrixpath:str, bamfile_dir = directory_config.bam_dir ,
                     default_threshold=variable_config.default_threshold, merge_len=variable_config.merge_len
                 ):
 
