@@ -1,6 +1,8 @@
 /test/testdata
 /ema/__pycache__
 /ema/countmatrix/__pycache__
-/ema.egg-info
+/*.egg-info
 /emaout
 /ema/cbtotoal.py
+*.pyc
+/dist/

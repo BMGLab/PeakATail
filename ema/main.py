@@ -1,7 +1,7 @@
 from .countmatrix.peackcalling import peak_calling
+from .config import directory_config, variable_config
 from .matrixfilter import filter_cb, make_dataframe, preprocessing
 from .clustering import clustering
-from .config import directory_config
 import multiprocessing
 
 def main():

@@ -10,7 +10,7 @@ start_time = time.time()
 
 def peak_calling(   
                     direction:bool, bedfilepath:str,
-                    matrixpath:str, bamfile_dir = "/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/Aligned.sortedByCoord.out.bam" ,
+                    matrixpath:str, bamfile_dir = directory_config.bam_dir ,
                     default_threshold=variable_config.default_threshold, merge_len=variable_config.merge_len
                 ):
 
@@ -18,9 +18,10 @@ def peak_calling(
     
     data_array
     '''
+    print(bamfile_dir)
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb')
-    matrix = open(matrixpath, "a")
-    bedfile = open(bedfilepath, "a")
+    matrix = open(matrixpath, "w")
+    bedfile = open(bedfilepath, "w")
     data_array = [] 
     signal = False
     chro = "1"
