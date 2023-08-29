@@ -9,6 +9,11 @@ setup(
                       "scanpy>=1.9.3", 
                       "pandas>=1.3.5", 
                       "scipy>=1.8.0"],
+                      entry_points={
+                          'console_scripts':[
+                              'ema=ema.main:main'
+                          ]
+                      },
                       author="Amir Amiri Tabat",
                       author_email="amiramiritabat01@gmail.com",
                       url="https://github.com/TRextabat"
