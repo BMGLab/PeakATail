@@ -87,8 +87,7 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=filtered_
     return df
 
 def preprocessing(df:pd.DataFrame(), min_cells=filter_config.min_cells, 
-                  min_genes=filter_config.min_genes, 
-                  collist=filtered_cb_list):
+                  min_genes=filter_config.min_genes):
     
     #each Cell pas count
     pas_count = df[df != 0].count(axis=0)
