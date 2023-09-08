@@ -1,8 +1,8 @@
 import os 
-from ema.cli import cli
+#from ema.cli import cli --changed
 from dataclasses import dataclass
 
-args = cli() 
+#args = cli()  --changed
 @dataclass
 class directory_config:
     output_dir = os.path.join(os.getcwd(), "emaout")
@@ -17,16 +17,16 @@ class directory_config:
     filtered_cb = os.path.join(output_dir, "filterdcb.tsv")
     cluster_output = os.path.join(output_dir, "write", "pbmc3k.h5ad")
     cluster_labels = os.path.join(output_dir, "clusterlabels.csv")
-    bam_dir = args.bam_dir
+    bam_dir = "/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/Aligned.sortedByCoord.out.bam" #change 
     
 @dataclass
 class variable_config:
-    seqlen = args.seqlen
-    cb_len = args.cb_len
+    seqlen = 98 #changed
+    cb_len = 16 #changed
     default_threshold = 5
     merge_len = 100
     ignore_chro = ["MT", "mt"]
-    barcode_tag = args.barcode_tag
+    barcode_tag = "CB" #changed
     time = 0
     matrixmarketheader = f"%%MatrixMarket matrix coordinate integer general\n"
 
