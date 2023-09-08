@@ -19,6 +19,7 @@ from ema.clustering import clustering
 def intersolo(solomatrixpath="/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/Solomatrix/matrix.mtx"
               ,solo_cbpath="/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/Solomatrix/barcodes.tsv"):
     solo_list = open(solo_cbpath, "r").readlines()
+    solo_list = [line.strip() for line in solo_list]
     solo_df = make_dataframe(matrixpath=solomatrixpath, collist=solo_list)
     solo_data = preprocessing(df=solo_df, min_cells=3, min_genes=200)
     filter_cb(negativematrixpath=  "/home/user/elyar/emaout/negmatrix.mtx",
@@ -28,11 +29,15 @@ def intersolo(solomatrixpath="/home/user/D/BAMdata/proje/ProjectEMA/test/testdat
     ema_df = make_dataframe(collist=filtered_cb_list)
     ema_data = preprocessing(df=ema_df, min_cells=3, min_genes=200)
 
+
     common_col = solo_data.columns.intersection(ema_data.columns)
+    print("thisssssssssss" + common_col)
     intersectema = ema_data.loc[:,common_col].transpose()
     intersectemaadat = ad.AnnData(X=intersectema)
     intersectsolo = solo_data.loc[:,common_col].transpose()
     intersectsoloadata = ad.AnnData(X=intersectsolo)
+    #print(intersectema)
+    #print(intersectsolo)
     clustering(adata=intersectemaadat, 
                outputpath="/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/emalabels.csv")
     
