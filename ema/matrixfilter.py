@@ -1,5 +1,5 @@
 from collections import defaultdict
-from ema.countmatrix.indexing import cb_total
+from ema.cbtotoal import cb_dic as  cb_total #changed 
 from ema.config import filter_config, directory_config, variable_config
 import pandas as pd
 import scipy.io as sci
