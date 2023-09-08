@@ -83,6 +83,7 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=filtered_
     print(type(sparsematrix))
     print(sparsematrix)
     df = pd.DataFrame(sparsematrix.toarray(), columns=collist)
+    print(df)
     print("frame ok")
     return df
 
@@ -99,8 +100,9 @@ def preprocessing(df:pd.DataFrame(), min_cells=filter_config.min_cells,
     cell_count = df[df != 0].count(axis=1)
     df = df[cell_count >= min_cells] #filtering pas
     print("pasok")
+    return df
 
-    adata = ad.AnnData(X=df.transpose())
-    print("adataok")
-    return adata
+    #adata = ad.AnnData(X=df)
+    #print("adataok")
+    #return adata
 
