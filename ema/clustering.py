@@ -10,9 +10,10 @@ def clustering(adata:ad.AnnData(), outputpath=directory_config.cluster_labels,
     sc.pp.normalize_total(adata=adata, target_sum= 1e4)
     sc.pp.log1p(adata)
     
-    sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+    sc.pp.highly_variable_genes(adata, min_mean=0.0125, max_mean=3, min_disp=0.5, n_top_genes=2000)
+    print(adata.var.highly_variable)
     adata = adata[:, adata.var.highly_variable]#TODO not sure
-
+    print(adata)
     sc.pp.scale(adata, max_value=10)
 
     sc.pp.neighbors(adata, n_neighbors=10, n_pcs=40)
