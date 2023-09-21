@@ -45,7 +45,7 @@ def peak_calling(
         
         if chro1 != chro:#TODO COMPLETE
             if signal:
-                signal = False
+            
                 pas_1, pas_2 = peak.pasfind()
 
                 if pas_1 != 0:
@@ -54,16 +54,22 @@ def peak_calling(
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
             
             elif len(peak.peak_list) != 0:# TODO thsi block has code reaptition
-                signal = False
+            
                 pas_1, pas_2 = peak.pasfind()
 
                 if pas_1 != 0: # if pasfind method return don't False mean peak have valid pas
                     Peak.pasnumber += 1
                     pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+<<<<<<< HEAD
 
             peak = Peak(peak_strand=direction) #make new instance of Peak class
             i_end, l_end = 0, 0
+=======
+            signal = False
+            peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={},last_peak_end=0) #make new instance of Peak class
+            i_end, l_end, data_array, i = 0, 0, [], 0
+>>>>>>> 4ffe063 (debug chro change)
 
         if signal:
             l_end = data_array[-default_threshold] # it takes -5 from end in default it means where heghit is more than threshold
@@ -106,7 +112,7 @@ def peak_calling(
                     pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
 
-                peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}) #make new instance of Peak class
+                peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0) #make new instance of Peak class
             else:
                 peak.peak_start = start1 #Peak has not been complete so will continue to ass items to peak_list
 
