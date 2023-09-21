@@ -62,7 +62,7 @@ def peak_calling(
                     pas_write(chro1, pas_2, pas_1, strand, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
 
-            peak = Peak(peak_strand=direction) #make new instance of Peak class
+            peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}) #make new instance of Peak class
             i_end, l_end = 0, 0
 
         if signal:
