@@ -2,7 +2,7 @@
 **/__pycache__
 **/*.egg-info
 **/emaout
-**/cbtotol.py
+**/cbtotal.py
 *.pyc
 /dist/
 
