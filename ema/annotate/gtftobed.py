@@ -11,7 +11,6 @@ def gtf_bed(endbeddir:str,
              id_index=9,
              biotype_index=17,
              score=0
-
              ) -> None:
 
     with open(gtfdir, "r") as gtf, open(endbeddir, "w") as endbed:
@@ -41,3 +40,6 @@ def gtf_bed(endbeddir:str,
 
                 bed_info = f"{chro}\t{start}\t{end}\t{id}\t{score}\t{strand}\n"
                 endbed.write(bed_info)
+
+if __name__ == "__main__":
+    gtf_bed()
