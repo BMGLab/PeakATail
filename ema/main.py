@@ -1,14 +1,20 @@
-from .countmatrix.peackcalling import peak_calling
-from .config import directory_config, variable_config
-from .matrixfilter import filter_cb, make_dataframe, preprocessing
-from .clustering import clustering
-import multiprocessing
+from ema.countmatrix.peackcalling import peak_calling
+from ema.config import directory_config, variable_config
+from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
+from ema.clustering import clustering
+from ema.annotate.annotate import annotate
+from ema.annotate.find_close import find_close
+from ema.annotate.gtftobed import gtf_bed
+import multiprocessing as mp
 
 def main():
     peak_calling(True, bedfilepath=directory_config.negbed, matrixpath=directory_config.negmatrixpath)
     peak_calling(False, bedfilepath=directory_config.posbed, matrixpath=directory_config.posmatrixpath)
     filter_cb()
-    matrix_df = make_dataframe()
+    gtf_bed()
+    genes = find_close()
+    annotated_frame = make_dataframe()
+    matrix_df = annotate(countmatrix=annotated_frame, genes=genes)
     adata = preprocessing(df=matrix_df)
     clustering(adata=adata)
     
