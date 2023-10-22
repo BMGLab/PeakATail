@@ -1,8 +1,12 @@
 /test/testdata
-/ema/__pycache__
-/ema/countmatrix/__pycache__
-/*.egg-info
-/emaout
-/ema/cbtotoal.py
+**/__pycache__
+**/*.egg-info
+**/emaout
+**/cbtotal.py
 *.pyc
 /dist/
+*.bed
+*.tsv
+*.csv
+*.mtx
+

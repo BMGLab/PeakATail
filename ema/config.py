@@ -17,7 +17,12 @@ class directory_config:
     filtered_cb = os.path.join(output_dir, "filterdcb.tsv")
     cluster_output = os.path.join(output_dir, "write", "pbmc3k.h5ad")
     cluster_labels = os.path.join(output_dir, "clusterlabels.csv")
+    endbed = os.path.join(output_dir, "gene_end.bed")
+    pas_geneid = os.path.join(output_dir, "pas_gene.tsv")
+    raw_features = os.path.join(output_dir, "raw_feature.tsv")
+    annotatedbed = os.path.join(output_dir, "annotatedpas.bed")
     bam_dir = args.bam_dir
+    gtf_dir = args.gtf_dir
     
 @dataclass
 class variable_config:
