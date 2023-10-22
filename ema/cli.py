@@ -15,7 +15,7 @@ def cli():
 
     parser.add_argument("--BarcodeTag", type=str, dest="barcode_tag", required=True)
 
-    parser.add_argument("--gtfDir", dist="gtf_dir", type=str, required=True)
+    parser.add_argument("--gtfDir", dest="gtf_dir", type=str, required=True)
     return parser.parse_args()
     
     
