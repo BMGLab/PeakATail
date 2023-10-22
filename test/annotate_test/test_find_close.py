@@ -2,7 +2,7 @@ from ema.annotate.find_close import find_close
 from ema.config import directory_config
 
 
-find_close(posbed_dir=directory_config.posbed, 
+close = find_close(posbed_dir=directory_config.posbed, 
             negbe_dir=directory_config.negbed,
             genomebed_dir=directory_config.endbed,
             mergebed=directory_config.pasbed,
@@ -10,3 +10,4 @@ find_close(posbed_dir=directory_config.posbed,
             annotatedbed_dir=directory_config.annotatedbed)
 
 
+print(close)
