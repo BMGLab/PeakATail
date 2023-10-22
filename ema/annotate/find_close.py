@@ -1,12 +1,12 @@
+from ema.config import directory_config
 import pybedtools
 import pandas as pd
 
-def find_close(posbed_dir:str,
-             negbe_dir:str,
-             genomebed_dir:str,
-             annotatedbed_dir:str,
-             mergebed:str,
-             features:str,
+def find_close(posbed_dir=directory_config.posbed,
+             negbe_dir=directory_config.negbed,
+             genomebed_dir=directory_config.endbed,
+             annotatedbed_dir=directory_config.annotatedbed,
+             mergebed=directory_config.pasbed,
              pas_col=3,
              gene_col=9
              ) -> pd.DataFrame():
@@ -18,14 +18,19 @@ def find_close(posbed_dir:str,
 
     pasbed = negbed.cat(posbed, postmerge=False).sort()
     pasbed.saveas(mergebed)
-
+    #find closest endpoint of  agene for a pas and annotated it for that
     annotaded = pasbed.closest(genomebed, D="ref", t="first", s=True)
     annotaded.saveas(annotatedbed_dir)
-
+    
     annotated_frame = pd.read_csv(annotatedbed_dir, delimiter="\t", header=None)
+    # get columns that contain pas_id and gene_id
     genes_frame = annotated_frame.iloc[:,[pas_col,gene_col]]
     genes_frame = genes_frame.sort_values(by=pas_col, kind="quicksort")
-    genes_frame.to_csv(features, sep="\t", index=False, header=False)
+    # remove that pas could not annotate to any gene and bedtools returned "."
+    genes_frame = genes_frame.set_index(genes_frame.columns[0])
+    mask = genes_frame != "."
+    genes_frame = genes_frame[mask].dropna()
+
     return genes_frame
 
 if __name__ == "__main__":
