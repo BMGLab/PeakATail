@@ -5,4 +5,8 @@
 **/cbtotal.py
 *.pyc
 /dist/
+*.bed
+*.tsv
+*.csv
+*.mtx
 
