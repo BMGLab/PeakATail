@@ -7,10 +7,12 @@ setup(
     install_requires=["pysam==0.17.0", 
                       "anndata==0.9.1", 
                       "scanpy==1.9.3", 
-                      "pandas==1.3.5", 
+                      "pandas==1.3.5",
+                      "numpy==1.21.5" 
                       "scipy==1.8.0",
                       "igraph==0.10.6",
-                      "louvain==0.8.0"],
+                      "louvain==0.8.0",
+                      "pybedtools==0.9.0"],
                       entry_points={
                           'console_scripts':[
                               'ema=ema.main:main'
