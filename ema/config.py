@@ -5,7 +5,7 @@ from dataclasses import dataclass
 args = cli() 
 @dataclass
 class directory_config:
-    output_dir = "/home/user/D/BAMdata/proje/ProjectEMA/test/annotate_test/"#os.path.join(os.getcwd(), "emaout")
+    output_dir = os.path.join(os.getcwd(), "emaout")
     os.makedirs(output_dir, exist_ok=True)
     posmatrixpath = os.path.join(output_dir, "posmatrix.mtx")
     negmatrixpath = os.path.join(output_dir, "negmatrix.mtx")
@@ -22,7 +22,7 @@ class directory_config:
     raw_features = os.path.join(output_dir, "raw_feature.tsv")
     annotatedbed = os.path.join(output_dir, "annotatedpas.bed")
     bam_dir = args.bam_dir
-    gtf_dir = "/home/user/D/BAMdata/proje/ProjectEMA/test/testdata/Homo_sapiens.GRCh38.99.gtf"
+    gtf_dir = args.gtf_dir
     
 @dataclass
 class variable_config:
