@@ -12,7 +12,8 @@ filtered_cb_list = []
 def filter_cb(negativematrixpath=directory_config.negmatrixpath,
                 positivematrixpath=directory_config.posmatrixpath,
                 sorted_corrected_sparse_path=directory_config.filterd_matrix, 
-                min_read=filter_config.min_read):
+                min_read=filter_config.min_read, 
+                filter_cb_file=directory_config.filtered_cb):
     
     """TODO
     """
@@ -76,6 +77,9 @@ def filter_cb(negativematrixpath=directory_config.negmatrixpath,
                 item[1] = corrected_index
                 sorted_corrected_sparse_list.write(f"{item[0]} {item[1]} {item[2]}\n")
     
+    with open(filter_cb_file, "w") as file:
+        for item in filtered_cb_list:
+            file.write(f"{item}\n")
     
 def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=filtered_cb_list):
     print("in")
