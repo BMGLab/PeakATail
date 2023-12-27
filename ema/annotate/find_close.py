@@ -24,7 +24,7 @@ def find_close(posbed_dir=directory_config.posbed,
     
     annotated_frame = pd.read_csv(annotatedbed_dir, delimiter="\t", header=None)
     # getthat distance are more than 5000, 13 = distance column
-    condition = abs(annotated_frame.iloc[:,12]) <= 5000
+    condition = abs(annotated_frame.iloc[:,12]) >= 5000
     # set gene_id column to NA
     annotated_frame.iloc[condition, 9] = "NA"
     annotated_frame.to_csv(annotatedbed_dir, sep="\t", header=False, index=False)
