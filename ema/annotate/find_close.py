@@ -22,9 +22,11 @@ def find_close(posbed_dir=directory_config.posbed,
     annotaded = pasbed.closest(genomebed, D="ref", t="first", s=True)
     annotaded.saveas(annotatedbed_dir)
     
-    raw_annotated_frame = pd.read_csv(annotatedbed_dir, delimiter="\t", header=None)
-    # remove pas that distance are more than 5000, 13 = distance column
-    annotated_frame = raw_annotated_frame[abs(raw_annotated_frame.iloc[:,12]) <= 5000]
+    annotated_frame = pd.read_csv(annotatedbed_dir, delimiter="\t", header=None)
+    # getthat distance are more than 5000, 13 = distance column
+    condition = abs(annotated_frame.iloc[:,12]) <= 5000
+    # set gene_id column to NA
+    annotated_frame.iloc[condition, 9] = "NA"
     annotated_frame.to_csv(annotatedbed_dir, sep="\t", header=False, index=False)
     # get columns that contain pas_id and gene_id
     genes_frame = annotated_frame.iloc[:,[pas_col,gene_col]]
