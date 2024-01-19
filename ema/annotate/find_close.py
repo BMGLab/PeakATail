@@ -19,7 +19,7 @@ def find_close(posbed_dir=directory_config.posbed,
     pasbed = negbed.cat(posbed, postmerge=False).sort()
     pasbed.saveas(mergebed)
     #find closest endpoint of  agene for a pas and annotated it for that
-    annotaded = pasbed.intersect(genomebed, D="ref", t="first", s=True, loj=True)
+    annotaded = pasbed.intersect(genomebed,s=True, loj=True)
     annotaded.saveas(annotatedbed_dir)
     
     annotated_frame = pd.read_csv(annotatedbed_dir, delimiter="\t", header=None)
