@@ -35,7 +35,6 @@ def find_close(posbed_dir=directory_config.posbed,
     genes_frame = genes_frame.set_index(genes_frame.columns[0])
     mask = genes_frame != "."
     genes_frame = genes_frame[mask].dropna()
-
     return genes_frame
 
 if __name__ == "__main__":
