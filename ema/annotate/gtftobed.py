@@ -36,10 +36,13 @@ def gtf_bed(endbeddir= dc.endbed,
 
                 match strand:
                     case "+":
-                        start = end - 1
+                        end += 5000
                     
                     case "-":
-                        end = start + 1
+                        if start > 5000:
+                            start -= 5000
+                        else:
+                            start = 1
 
                 bed_info = f"{chro}\t{start}\t{end}\t{id}\t{score}\t{strand}\n"
                 endbed.write(bed_info)\

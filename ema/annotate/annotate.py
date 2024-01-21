@@ -13,7 +13,7 @@ def annotate(countmatrix:pd.DataFrame(),
     countmatrix.index = range(1, len(countmatrix) + 1)
     print(countmatrix)
     #get genes has annotated and has not been filter matrix filter module
-    annotated_frame = pd.concat([genes, countmatrix], axis=1, join="outer")
+    annotated_frame = pd.merge(genes, countmatrix, left_index=True,right_index=True, how="outer")
     ann_gene = annotated_frame.iloc[:, 0]
     ann_gene.to_csv(directory_config.pas_geneid, index=True, header=False, sep="\t")
     # remove gene_id column 
