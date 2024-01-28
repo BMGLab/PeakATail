@@ -13,8 +13,8 @@ def main():
     filter_cb()
     gtf_bed()
     genes = find_close()
-    annotated_frame = make_dataframe()
-    matrix_df = annotate(countmatrix=annotated_frame, genes=genes)
+    matrix_df = make_dataframe()
+    annotated_frame = annotate(countmatrix=matrix_df, genes=genes)
     adata = preprocessing(df=matrix_df)
     clustering(adata=adata)
     
