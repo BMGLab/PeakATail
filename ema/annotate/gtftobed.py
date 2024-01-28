@@ -44,7 +44,7 @@ def gtf_bed(endbeddir= dc.endbed,
                         else:
                             start = 1
 
-                bed_info = f"{chro}\t{start}\t{end}\t{id}\t{score}\t{strand}\n"
+                bed_info = f"{chro}\t{start}\t{end}\t{id}\t{symbol}\t{strand}\n"
                 endbed.write(bed_info)\
                 
                 feature = f"{id}\t{symbol}\n"
