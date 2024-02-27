@@ -15,7 +15,7 @@ def main():
     genes = find_close()
     matrix_df = make_dataframe()
     annotated_frame = annotate(countmatrix=matrix_df, genes=genes)
-    adata = preprocessing(df=matrix_df)
+    adata = preprocessing(df=annotated_frame)
     clustering(adata=adata)
     
 if __name__ == "__main__":
