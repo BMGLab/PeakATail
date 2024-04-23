@@ -1,4 +1,4 @@
-from multiprocessing import pool
+from multiprocessing import Pool
 from scipy.stats import fisher_exact
 import pandas as pd
 import numpy as np
@@ -17,8 +17,8 @@ def fishertest(selected_cells:pd.DataFrame, result_dir:str, level:str='Ensemble_
     None
     """
     cluster1, cluster2 = selected_cells.columns
-    with pool() as p:
-        all_results = p.map(process_gene, 
+    with Pool() as p:
+        all_results = p.starmap(process_gene, 
                         [(gene, group, cluster1, cluster2) for gene, group in selected_cells.groupby(level= level)])
         
     with open(result_dir, 'w') as f:
