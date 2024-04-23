@@ -46,5 +46,5 @@ def process_gene(gene:str, group:pd.DataFrame, cluster1:str, cluster2:str)->list
         results.append(f"{gene}\t{pas[1]}\t{cluster1}\t{cluster2}\t{res[1]}\n")
     return results
 
-if __name__ == "__masin__":
+if __name__ == "__main__":
     fishertest()
