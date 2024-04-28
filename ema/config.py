@@ -6,7 +6,9 @@ args = cli()
 @dataclass
 class directory_config:
     output_dir = os.path.join(os.getcwd(), "emaout")
+    switch_dir = os.path.join(output_dir, "switch_out")
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(switch_dir, exist_ok=True)
     posmatrixpath = os.path.join(output_dir, "posmatrix.mtx")
     negmatrixpath = os.path.join(output_dir, "negmatrix.mtx")
     matrixpath = os.path.join(output_dir, "pascountmatrix.mtx")
@@ -23,6 +25,9 @@ class directory_config:
     annotatedbed = os.path.join(output_dir, "annotatedpas.bed")
     bam_dir = args.bam_dir
     gtf_dir = args.gtf_dir
+
+    def get_fisher_dir(self, cluster1, cluster2):
+        return os.path.join(self.switch_dir, f"fisherresults_{cluster1}_{cluster2}.tsv")
     
 @dataclass
 class variable_config:
