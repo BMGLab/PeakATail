@@ -1,7 +1,7 @@
 from .pop_apa import pop_apa
 from .groupby import groupby_cb
 from .fishertest import fishertest
-from multiprocessing import Pool
+from ema.config import directory_config
 
 def apa_switch(cell_combine: list) -> None:
     """
@@ -19,7 +19,7 @@ def apa_switch(cell_combine: list) -> None:
 
     for clusters in cell_combine:
         selected_cells = matrix[clusters]
-        result_dir = f"fisherresults_{clusters[0]}_{clusters[1]}.tsv"
+        result_dir = directory_config.get_fisher_dir(clusters[0], clusters[1])
         fishertest(selected_cells=selected_cells, result_dir=result_dir)
 
 if __name__ == "__main__":
