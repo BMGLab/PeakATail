@@ -2,7 +2,7 @@ from ema.config import directory_config as dc
 def gtf_bed(endbeddir= dc.endbed,
              gtfdir=dc.gtf_dir,
              featuresdir=dc.raw_features,
-             biotypes=("protein_coding", "lncRNA", "snRNA", "antisense",  "miRNA", "processed_transcript"), 
+             biotypes=("protein_coding", "lncRNA", "snRNA", "antisense",  "miRNA", "processed_transcript", "lincRNA"), 
              source_tuple=("gene"),
              id_head=("ENSG"),
              chro_index=0,
