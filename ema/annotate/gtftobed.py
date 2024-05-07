@@ -3,16 +3,18 @@ def gtf_bed(endbeddir= dc.endbed,
              gtfdir=dc.gtf_dir,
              featuresdir=dc.raw_features,
              biotypes=("protein_coding", "lncRNA", "snRNA", "antisense",  "miRNA", "processed_transcript", "lincRNA"), 
-             source_tuple=("gene"),
+             source_tuple=("three_prime_utr"),
              id_head=("ENSG"),
+             transcript_id_head = ("ENST"),
              chro_index=0,
              source_index=2,
              start_index=3,
              end_index=4,
              strand_index=6,
              id_index=9,
-             biotype_index=17,
-             symbol_index=13,
+             transcript_id = 13,
+             biotype_index=21,#TODO might be wrong
+             symbol_index=17,
              score=0
              ) -> None:
     """
@@ -49,9 +51,9 @@ def gtf_bed(endbeddir= dc.endbed,
             info = line.split()
             # get necessary data from gtf line
             # ex : suorce = "gene", id = "ENSG", gene_biotype = "protein_coding" 
-            source, id, gene_biotype = info[source_index], info[id_index].replace('"','').replace(";",''), info[biotype_index].replace('"','').replace(";",'')
+            source, id,t_script_id, gene_biotype = info[source_index], info[id_index].replace('"','').replace(";",''),info[id_index].replace('"','').replace(";",''), info[biotype_index].replace('"','').replace(";",'')
 
-            if source in source_tuple and id[:4] in id_head and gene_biotype in biotypes:
+            if source in source_tuple and t_script_id[:4] in transcript_id_head and gene_biotype in biotypes:
                 chro, start, end, strand, symbol = info[chro_index], int(info[start_index]), int(info[end_index]), info[strand_index], info[symbol_index].replace('"','').replace(";",'')
 
                 match strand:
@@ -64,10 +66,10 @@ def gtf_bed(endbeddir= dc.endbed,
                         else:
                             start = 1
 
-                bed_info = f"{chro}\t{start}\t{end}\t{id}\t{symbol}\t{strand}\n"
+                bed_info = f"{chro}\t{start}\t{end}\t{t_script_id}\t{symbol}\t{strand}\n"
                 endbed.write(bed_info)
                 
-                feature = f"{id}\t{symbol}\n"
+                feature = f"{t_script_id}\t{symbol}\n"
                 features.write(feature)
 
 if __name__ == "__main__":
