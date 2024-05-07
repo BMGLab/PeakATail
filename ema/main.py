@@ -1,7 +1,7 @@
 from ema.countmatrix.peackcalling import peak_calling
 from ema.config import directory_config, variable_config
 from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
-from ema.clustering import clustering
+from ema.clustering.clustering import clustering
 from ema.annotate.annotate import annotate
 from ema.annotate.find_close import find_close
 from ema.annotate.gtftobed import gtf_bed

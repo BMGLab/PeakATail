@@ -4,7 +4,7 @@ import scipy.io as sci
 from ema.matrixfilter import filter_cb, make_dataframe, preprocessing, filtered_cb_list
 from ema.countmatrix.indexing import cb_total
 from ema.config import directory_config, variable_config, filter_config
-from ema.clustering import clustering
+from ema.clustering.clustering import clustering
 from ema.countmatrix.peackcalling import peak_calling
 
 """ cb =open("/home/user/D/BAMdata/proje/ProjectEMA/ema/cbtotal.py", "w")

@@ -3,11 +3,11 @@ import pandas as pd
 import scipy.sparse as sp
 from scipy.io import mmwrite
 
-def annotate(countmatrix:pd.DataFrame(), 
-            genes:pd.DataFrame(), 
+def annotate(countmatrix:pd.DataFrame, 
+            genes:pd.DataFrame, 
             annotated_matrix= directory_config.filterd_matrix,
             pasbed_dir = directory_config.pasbed,
-            ) -> pd.DataFrame():
+            ) -> pd.DataFrame:
 
     # set row names as index number
     countmatrix.index = range(1, len(countmatrix) + 1)

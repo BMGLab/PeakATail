@@ -1,9 +1,9 @@
 import anndata as ad
 import scanpy as sc
 import pandas as pd
-from .config import directory_config
+from ..config import directory_config
 
-def clustering(adata:ad.AnnData(), outputpath=directory_config.cluster_labels,
+def clustering(adata:ad.AnnData, outputpath=directory_config.cluster_labels,
                 result_file=directory_config.cluster_output):
     """TODO
     """
