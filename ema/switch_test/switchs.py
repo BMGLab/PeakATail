@@ -19,7 +19,8 @@ def apa_switch(cell_combine: list) -> None:
 
     for clusters in cell_combine:
         selected_cells = matrix[clusters]
-        result_dir = directory_config.get_fisher_dir(clusters[0], clusters[1])
+        print(clusters)
+        result_dir = directory_config.get_fisher_dir(directory_config,cluster1=clusters[0], cluster2=clusters[1])
         fishertest(selected_cells=selected_cells, result_dir=result_dir)
 
 if __name__ == "__main__":
