@@ -20,6 +20,7 @@ class directory_config:
     cluster_output = os.path.join(output_dir, "write", "pbmc3k.h5ad")
     cluster_labels = os.path.join(output_dir, "clusterlabels.csv")
     endbed = os.path.join(output_dir, "gene_end.bed")
+    utr_bed = os.path.join(output_dir, "three_utr.bed")
     pas_geneid = os.path.join(output_dir, "pas_gene.tsv")
     raw_features = os.path.join(output_dir, "raw_feature.tsv")
     annotatedbed = os.path.join(output_dir, "annotatedpas.bed")

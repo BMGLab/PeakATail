@@ -1,6 +1,7 @@
 import pybedtools
 from ema.config import directory_config as dc
 def bed_merge(bed_file= dc.endbed, 
+              output_bed_file = dc.utr_bed,
              chro_index=0,
              start_index=1,
              end_index=2,
@@ -16,10 +17,10 @@ def bed_merge(bed_file= dc.endbed,
     
     # Merge overlapping intervals and retain IDs and all columns after the ID column
     retained_index_tuple = tuple( map( lambda n:n+1 , [transcript_id , symbol_index , strand_index]) )
-    merged_bed = sorted_bed.merge(c=retained_index_tuple, o="collapse")
+    merged_bed = sorted_bed.merge(s = True , c=retained_index_tuple, o="collapse")
     
     
-    merged_bed.saveas(bed_file)
+    merged_bed.saveas(output_bed_file)
 
 
     
