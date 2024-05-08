@@ -16,6 +16,7 @@ def cli():
     parser.add_argument("--BarcodeTag", type=str, dest="barcode_tag")
 
     parser.add_argument("--gtfDir", dest="gtf_dir", type=str)
+    parser.add_argument("--cell_combinations", type=str, required=False)
     return parser.parse_args()
     
     
