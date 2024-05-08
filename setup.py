@@ -15,7 +15,8 @@ setup(
                       "pybedtools>=0.9.0"],
                       entry_points={
                           'console_scripts':[
-                              'ema=ema.main:main'
+                              'ema=ema.main:main',
+                                'ema_switch=ema.switch_test.cli:cli',
                           ]
                       },
                       author="Amir Amiri Tabat",

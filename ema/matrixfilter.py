@@ -90,7 +90,7 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=filtered_
     print("frame ok")
     return df
 
-def preprocessing(df:pd.DataFrame(), min_cells=filter_config.min_cells, 
+def preprocessing(df:pd.DataFrame, min_cells=filter_config.min_cells, 
                   min_genes=filter_config.min_genes):
     
     #each Cell pas count

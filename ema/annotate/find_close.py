@@ -10,7 +10,7 @@ def find_close(posbed_dir=directory_config.posbed,
              pas_col=3,
              gene_col=9,
              drop_col=[4,5,6,7,8]
-             ) -> pd.DataFrame():
+             ) -> pd.DataFrame:
     
     #TODO this 5 line will be other module 
     posbed = pybedtools.BedTool(posbed_dir)
