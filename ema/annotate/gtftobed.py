@@ -13,7 +13,7 @@ def gtf_bed(endbeddir= dc.endbed,
              strand_index=6,
              id_index=9,
              transcript_id = 13,
-             biotype_index=21,#TODO might be wrong
+             biotype_index=21,
              symbol_index=17,
              score=0
              ) -> None:
