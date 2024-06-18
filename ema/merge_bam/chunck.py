@@ -9,7 +9,7 @@ def process_chuncks(file_dir:str, chunck_size:int):
     chuncks = calculate_chunck(file_dir, chunck_size, sample_id)
 
     with mp.Pool(mp.cpu_count()) as pool:
-        for reads in pool.imap(tag_chunck, chuncks):
+        for reads in pool.starmap(tag_chunck, chuncks):
             yield from reads
 
 

@@ -17,6 +17,7 @@ def cli():
 
     parser.add_argument("--gtfDir", dest="gtf_dir", type=str)
     parser.add_argument("--cell_combinations", type=str, required=False)
+    parser.add_argument("--BAMcsv", dest="csv_directory", type=str, required=False)
     return parser.parse_args()
     
     

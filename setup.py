@@ -18,7 +18,7 @@ setup(
                               'ema=ema.main:main',
                                 'ema_switch=ema.switch_test.cli:cli',
                               
-                              'ema-merge=ema.merge_bam.cli:cli',
+                              'ema_merge=ema.merge_bam.cli:cli',
                           ]
                       },
                       author="Amir Amiri Tabat",
