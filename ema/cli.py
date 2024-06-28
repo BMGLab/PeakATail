@@ -17,6 +17,9 @@ def cli():
 
     parser.add_argument("--gtfDir", dest="gtf_dir", type=str)
     parser.add_argument("--cell_combinations", type=str, required=False)
+    parser.add_argument("--bamFiles", dest="bam_files", type=str, required=False)
+    parser.add_argument("--threads", dest="threads", type=int, required=False)
+
     return parser.parse_args()
     
     
