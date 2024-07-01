@@ -13,7 +13,7 @@ def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcod
     except:
         return 0, 0, 0, 0, 0
     
-    read_chro, read_start, read_end, read_strand = read.reference_name, read.reference_start, read.reference_end, read.is_reverse
+    read_chro, read_start, read_end, read_strand, sample_id = read.reference_name, read.reference_start, read.reference_end, read.is_reverse, read.query_name.split('.')[0]#sample id is srr id
 
     #skip reverse directions
     if direction != read_strand:
@@ -35,6 +35,7 @@ def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcod
     elif read_end - read_start < seq_len:
         read_end = read_start + seq_len
     
+    cb = f"{sample_id}_{cb}"
     return read_chro, read_start, read_end, read_strand, cb
     
 if __name__ == "__main__":
