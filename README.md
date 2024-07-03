@@ -25,6 +25,7 @@
     ```bash
     python3.10 -m venv .venv
     ```
+[Venv](https://docs.python.org/3/library/venv.html)
 - activate environment 
     ```bash 
     source ,venv/bin/activate
