@@ -7,7 +7,7 @@ def ratio_score(bed_file , result_dir):#TODO change the parameter from bed to da
     grouped = df.groupby(5)#TODO add .filter
     with Pool() as p:
         all_results = p.starmap(process_pas_group, 
-                        [(group) for key, group in grouped])
+                        [(group,) for key, group in grouped])
         
     with open(result_dir, 'w') as f:
         f.write(''.join(sum(all_results, [])))
@@ -20,11 +20,10 @@ def process_pas_group(group):
     group_distance = (((group[1] + group[2])/2) - group[8])
     group_c = group_distance.sum()
     group_ratio_scores = group_distance / group_c
-    print(group_ratio_scores)
     group['group_ratio_scores'] = group_ratio_scores
     for x in range(len(group)):
         row_as_string = '\t'.join(group.iloc[x].astype(str))
-        result.append(row_as_string)
+        result.append(row_as_string+"\n")
 
 
         
@@ -58,8 +57,10 @@ def add_random_gene_range_to_example_data(bed_file_input , bed_file_output):
       
         
 
-ratio_score(r"example_bed_2.bed" , r"result.bed")
+
 #add_random_coverage_to_example_data1(r"example_bed.bed" , r"example_bed_2.bed")
+if __name__ == "__main__":
+    ratio_score(r"example_bed_2.bed" , r"result.bed")
 
 
 
