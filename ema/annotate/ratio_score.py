@@ -3,8 +3,9 @@ import pandas as pd
 from multiprocessing import Pool
 
 def ratio_score(bed_file , result_dir):#TODO change the parameter from bed to dataframe
-    df = pd.read_csv(bed_file, sep='\t', header=None)#TODO name the columns based on correct file example
-    grouped = df.groupby(5)#TODO add .filter()
+    df = pd.read_csv(bed_file, sep='\t', header=None)
+    df.columns= ["chromosomes" , "PAS_start" , "PAS_end" , " " , "ID" , "name" , "strand" , "coverage" , "gene_start", "gene_end"]#TODO name the columns based on correct file example
+    grouped = df.groupby("ID")#TODO add .filter() 
     with Pool() as p:
         all_results = p.starmap(process_pas_group, 
                         [(group,) for key,group in grouped])
@@ -16,7 +17,7 @@ def process_pas_group(group):
     if len(group) < 1:
         return
     result = []
-    group_distance = (((group[1] + group[2])/2) - group[8])
+    group_distance = (((group["PAS_start"] + group["PAS_end"])/2) - group["gene_start"])
     group_c = group_distance.sum()
     group_ratio_scores = group_distance / group_c
     group['group_ratio_scores'] = group_ratio_scores
