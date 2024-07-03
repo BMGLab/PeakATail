@@ -2,8 +2,8 @@
 import pandas as pd
 from multiprocessing import Pool
 
-def ratio_score(bed_file , result_dir):#TODO change the parameter from bed to dataframe
-    df = pd.read_csv(bed_file, sep='\t', header=None)
+def ratio_score(df , result_dir):
+
     df.columns= ["chromosomes" , "PAS_start" , "PAS_end" , " " , "ID" , "name" , "strand" , "coverage" , "gene_start", "gene_end"]#TODO name the columns based on correct file example
     grouped = df.groupby("ID")#TODO add .filter() 
     with Pool() as p:
@@ -26,8 +26,12 @@ def process_pas_group(group):
         result.append(row_as_string+"\n") 
     return result
 
+def bed_to_df(bed_file):
+    df = pd.read_csv(bed_file, sep='\t', header=None)
+    return df
+
 if __name__ == "__main__":
-    ratio_score(r"example_bed_2.bed" , r"result.bed")
+    ratio_score()
 
 
 
