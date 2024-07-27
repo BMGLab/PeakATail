@@ -50,7 +50,7 @@ def peak_calling(
 
                 if pas_1 != 0:
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    pas_write(chro=chro1, peak_start=peak.peak_start, peak_end=peak.peak_end, pas_start=pas_2, pas_end=pas_1, read_count=peak.read_count, strand=strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
             
             elif len(peak.peak_list) != 0:# TODO thsi block has code reaptition
@@ -59,7 +59,7 @@ def peak_calling(
 
                 if pas_1 != 0: # if pasfind method return don't False mean peak have valid pas
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    pas_write(chro=chro1, peak_start=peak.peak_start, peak_end=peak.peak_end, pas_start=pas_2, pas_end=pas_1, read_count=peak.read_count, strand=strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
             signal = False
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={},last_peak_end=0) #make new instance of Peak class
@@ -103,7 +103,7 @@ def peak_calling(
 
                 if pas_1 != 0: # if pasfind method return don't  mean peak have valid pas
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    pas_write(chro=chro1, peak_start=peak.peak_start, peak_end=peak.peak_end, pas_start=pas_2, pas_end=pas_1, read_count=peak.read_count, strand=strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
 
                 peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0) #make new instance of Peak class

@@ -81,4 +81,9 @@ class Peak():
 
         except:
             return 0, 0
-        
+    
+    def peak_end(self):
+        return self.peak_list[-1][0]
+    
+    def read_count(self):
+        return len(self.peak_list)

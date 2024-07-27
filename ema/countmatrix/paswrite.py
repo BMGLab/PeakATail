@@ -2,9 +2,11 @@ from ema.countmatrix.indexing import indexing
 
 direction_dict = {True:[1,"-"], False:[-1, "+"]}
 score = 0
-def pas_write(chro:int, peak_start:int, l_end:int, strand:bool, pasnumber, output):
-    pas_list = [peak_start, l_end][::-direction_dict[strand][0]]
-    peak_bed = f"{chro}\t{pas_list[0]}\t{pas_list[1]}\t{pasnumber}\t{score}\t{direction_dict[strand][1]}\n"
+def pas_write(chro:int, peak_start:int, peak_end:int, pas_start:int, pas_end:int, strand:bool, read_count:int, pasnumber, output):
+    peak_list = [peak_start, peak_end][::direction_dict[strand][0]]
+    pas_list = [pas_start, pas_end][::-direction_dict[strand][0]]
+    
+    peak_bed = f"{chro}\t{peak_list[0]}\t{peak_list[1]}\t{pasnumber}\t{score}\t{direction_dict[strand][1]}\t{pas_list[0]}\t{pas_list[1]}\n"
     output.write(peak_bed)
 
 
