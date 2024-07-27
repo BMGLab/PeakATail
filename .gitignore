@@ -11,3 +11,4 @@
 *.mtx
 **/.vscode
 Emaenv
+.venv/
