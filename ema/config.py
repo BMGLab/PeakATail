@@ -34,7 +34,7 @@ class variable_config:
     seqlen = args.seqlen
     cb_len = args.cb_len
     default_threshold = 5
-    merge_len = 100
+    merge_len = args.pas_gap #was 100
     ignore_chro = ["MT", "mt"]
     barcode_tag = args.barcode_tag
     time = 0
@@ -42,7 +42,7 @@ class variable_config:
 
 @dataclass
 class filter_config:
-    min_read = 2000
-    min_cells = 3
-    min_genes = 200
+    min_read = args.min_read #2000
+    min_cells = args.min_cells #3
+    min_genes = args.min_genes #200
 
