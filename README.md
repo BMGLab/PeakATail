@@ -1,5 +1,5 @@
 # ProjectEMA
-![image](https://github.com/user-attachments/assets/da4284d7-5aa8-4301-bef1-72c8c446ec20)
+![LOGO](https://github.com/user-attachments/assets/9fcae81d-59f9-4bd4-aa22-1d09a03bf2b1)
 
 ### Base installation 
 - you should have samtools and bedtools installed
