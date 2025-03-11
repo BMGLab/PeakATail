@@ -1,4 +1,4 @@
-# ProjectEMA
+# PeakATail
 ![LOGO](https://github.com/user-attachments/assets/9fcae81d-59f9-4bd4-aa22-1d09a03bf2b1)
 
 ### Base installation 
