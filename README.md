@@ -16,11 +16,11 @@
 
 - clone repo 
     ```bash
-    git clone https://github.com/BMGLab/ProjectEMA.git
+    git clone [https://github.com/BMGLab/ProjectEMA.git](https://github.com/BMGLab/PeakATail.git)
     ```
 - go to project directory
     ```bash
-    cd ProjectEMA
+    cd PeakATail
     ```
 - open python env
     ```bash
