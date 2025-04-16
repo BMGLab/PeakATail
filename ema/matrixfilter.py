@@ -5,6 +5,7 @@ import pandas as pd
 import scipy.io as sci
 import anndata as ad
 import scanpy as sc
+from scipy.sparse import coo_matrix
 
 filtered_cb_list = []
 
@@ -86,7 +87,11 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=filtered_
     sparsematrix = sci.mmread(matrixpath)
     print(type(sparsematrix))
     print(sparsematrix)
-    df = pd.DataFrame(sparsematrix.toarray(), columns=collist)
+    #df = pd.DataFrame(sparsematrix.toarray(), columns=collist)
+    print(len(collist))
+    
+    df = pd.DataFrame.sparse.from_spmatrix(sparsematrix, columns=collist)
+
     print("frame ok")
     return df
 

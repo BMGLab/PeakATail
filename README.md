@@ -44,6 +44,7 @@
 
 - ema merge
 - use to merge multiple bam files 
+- IMPORTANT! Please, keep the file names of the bams different as they will be used as read group (RG) tag when merged.
     ```bash
     ema_merge --bamFiles bamfiles.yaml --threads 4
     ```
