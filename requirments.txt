@@ -20,7 +20,7 @@ packaging==24.1
 pandas==2.2.2
 patsy==0.5.6
 pillow==10.3.0
-pybedtools==0.10.0
+pybedtools==0.12.0
 pynndescent==0.5.13
 pyparsing==3.1.2
 pysam==0.22.1
