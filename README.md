@@ -28,7 +28,7 @@
 [Venv](https://docs.python.org/3/library/venv.html)
 - activate environment 
     ```bash 
-    source ,venv/bin/activate
+    source .venv/bin/activate
     ```
 - install requierments
     ```bash
