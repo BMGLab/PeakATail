@@ -12,3 +12,4 @@
 **/.vscode
 Emaenv
 .venv/
+.emaenv/
