@@ -53,6 +53,12 @@ def filter_cb(negativematrixpath=directory_config.negmatrixpath,
                 lines_to_keep.append(item)
                 pas_set.add(item[0])
     
+    if pas_set:
+        matrix_pas_header = max(pas_set)
+    else:
+        matrix_pas_header = 0
+
+
     #get headers for countmatrix
     #sort lines by cb index 
     #looping over list and write them

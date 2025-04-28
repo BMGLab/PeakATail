@@ -23,6 +23,7 @@ class directory_config:
     pas_geneid = os.path.join(output_dir, "pas_gene.tsv")
     raw_features = os.path.join(output_dir, "raw_feature.tsv")
     annotatedbed = os.path.join(output_dir, "annotatedpas.bed")
+    utrbed = os.path.join(output_dir, "regions_3utr.bed")
     bam_dir = args.bam_dir
     gtf_dir = args.gtf_dir
 
