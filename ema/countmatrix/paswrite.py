@@ -20,7 +20,8 @@ def matrix_write(cb_dict:dict, pasnumber:int, output):
     global cb_total
     cb_num = len(cb_total)
     new_cb_set = set(cb_dict.keys())
-    cleaned_cb_set = new_cb_set - cb_total
+    cb_total_list = set(cb_total.keys())
+    cleaned_cb_set = new_cb_set - cb_total_list
     index_map = {cb: cb_num+i for i, cb in enumerate(dict.fromkeys(cleaned_cb_set))}
     cb_total = cb_total | index_map
     for cb in cb_dict:
