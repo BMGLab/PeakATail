@@ -18,12 +18,18 @@ def matrix_write(cb_dict:dict, pasnumber:int, output):
     Write count matrix in MatrixMarket Format
     '''
     global cb_total
-    cb_num = len(cb_total)
-    new_cb_set = set(cb_dict.keys())
-    cb_total_list = set(cb_total.keys())
-    cleaned_cb_set = new_cb_set - cb_total_list
-    index_map = {cb: cb_num+i for i, cb in enumerate(dict.fromkeys(cleaned_cb_set))}
-    cb_total = cb_total | index_map
+    next_index = len(cb_total)
+
+    # Create a set of existing barcodes for fast membership checking
+    existing_barcodes = set(cb_total.keys())
+
+    # Add new barcodes that don't already exist in the global dictionary
+    for barcode in cb_dict:
+        if barcode not in existing_barcodes:
+            cb_total[barcode] = next_index
+            next_index += 1
+            existing_barcodes.add(barcode)
+
     for cb in cb_dict:
 
 
