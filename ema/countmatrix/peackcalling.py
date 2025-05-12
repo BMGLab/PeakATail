@@ -60,7 +60,7 @@ for read in bamfile:
 
                 if pas_1 != 0:
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile, bedfile_queue)
+                    pas_write(chro1, pas_2, pas_1, strand,bedfile_queue, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix, matrix_queue)
             
             elif len(peak.peak_list) != 0:# TODO thsi block has code reaptition
@@ -69,7 +69,7 @@ for read in bamfile:
 
                 if pas_1 != 0: # if pasfind method return don't False mean peak have valid pas
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile, bedfile_queue)
+                    pas_write(chro1, pas_2, pas_1, strand, bedfile_queue, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix, matrix_queue)
             signal = False
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={},last_peak_end=0) #make new instance of Peak class
@@ -113,7 +113,7 @@ for read in bamfile:
 
                 if pas_1 != 0: # if pasfind method return don't  mean peak have valid pas
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile, bedfile_queue)
+                    pas_write(chro1, pas_2, pas_1, strand, bedfile_queue, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(peak.cb_dict, Peak.pasnumber, matrix, matrix_queue)
 
                 peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0) #make new instance of Peak class
