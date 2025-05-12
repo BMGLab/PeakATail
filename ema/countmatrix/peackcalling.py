@@ -116,6 +116,8 @@ def peak_calling(
 
         chro = chro1# will check for chro check
 
+    queue.put("DONE")
+    writer_process.join()
     bamfile.close()
 
 if __name__ == "__main__":
