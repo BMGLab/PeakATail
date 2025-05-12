@@ -11,10 +11,10 @@ def writer(queue, output_file):
             break
         output_file.write(line)
 
-def pas_write(chro:int, peak_start:int, l_end:int, strand:bool, pasnumber, output):
+def pas_write(chro:int, peak_start:int, l_end:int, strand:bool, pasnumber, output, queue):
     pas_list = [peak_start, l_end][::-direction_dict[strand][0]]
     peak_bed = f"{chro}\t{pas_list[0]}\t{pas_list[1]}\t{pasnumber}\t{score}\t{direction_dict[strand][1]}\n"
-    output.write(peak_bed)
+    queue.put(peak_bed)
 
 
 def matrix_write(cb_dict:dict, pasnumber:int, output, queue):
