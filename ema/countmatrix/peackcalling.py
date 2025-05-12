@@ -3,8 +3,9 @@ import bisect
 import time
 from ema.countmatrix.peak import Peak
 from ema.countmatrix.read import read_check
-from ema.countmatrix.paswrite import matrix_write, pas_write
+from ema.countmatrix.paswrite import matrix_write, pas_write, writer
 from ema.config import directory_config, variable_config
+from multiprocessing import Process, Queue
 
 start_time = time.time()
 
@@ -29,6 +30,9 @@ def peak_calling(
     timercount = 0
     peak = Peak(peak_strand=direction)
     i = 0 # I forgot what is this but use in peakstarting block
+    queue = Queue()
+    writer_process = Process(target=writer, args=(queue, matrix))
+    writer_process.start()
 
     for read in bamfile:
         if timercount%1000000 == 0:#controling time
@@ -51,7 +55,7 @@ def peak_calling(
                 if pas_1 != 0:
                     Peak.pasnumber += 1
                     pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix, queue)
             
             elif len(peak.peak_list) != 0:# TODO thsi block has code reaptition
 
@@ -60,7 +64,7 @@ def peak_calling(
                 if pas_1 != 0: # if pasfind method return don't False mean peak have valid pas
                     Peak.pasnumber += 1
                     pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix, queue)
             signal = False
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={},last_peak_end=0) #make new instance of Peak class
             i_end, l_end, data_array, i = 0, 0, [], 0
@@ -104,7 +108,7 @@ def peak_calling(
                 if pas_1 != 0: # if pasfind method return don't  mean peak have valid pas
                     Peak.pasnumber += 1
                     pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix, queue)
 
                 peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0) #make new instance of Peak class
             else:
