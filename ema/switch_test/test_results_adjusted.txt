@@ -1,5 +1,0 @@
-gene1	pas1	cluster1	cluster2	0.99	0.99
-gene1	pas2	cluster1	cluster2	0.02	0.075
-gene2	pas1	cluster1	cluster2	0.03	0.075
-gene2	pas2	cluster1	cluster2	0.05	0.08333333333333334
-gene3	pas1	cluster1	cluster2	0.6	0.75
