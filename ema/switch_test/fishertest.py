@@ -1,9 +1,21 @@
 from multiprocessing import Pool
-from scipy.stats import fisher_exact
+from scipy.stats import fisher_exact, false_discovery_control
 import pandas as pd
 import numpy as np
 
 
+def benjamini_hochberg_test(result_file: str, out_file: str):
+    
+    df = pd.read_csv(result_file, sep="\t", header=None)
+    orig_p = df.iloc[:, 4].to_numpy()
+
+    adj_p = false_discovery_control(orig_p, method="bh")
+
+    df.loc[:, 5] = adj_p
+
+    df.to_csv(out_file, sep="\t", header=False, index=False)
+
+     
 def fishertest(selected_cells:pd.DataFrame, result_dir:str, level:str='Ensemble_ID')->None:
     """
     Perform Fisher's exact test on selected cells.
@@ -48,3 +60,6 @@ def process_gene(gene:str, group:pd.DataFrame, cluster1:str, cluster2:str)->list
 
 if __name__ == "__main__":
     fishertest()
+
+    #benjamini_hochberg_test("../../../fisherresults_3_4.tsv","../../../fisherresults_adjusted.tsv")
+    #benjamini_hochberg_test("./test_results.txt","./test_results_adjusted.txt")
