@@ -23,6 +23,7 @@ class directory_config:
     pas_geneid = os.path.join(output_dir, "pas_gene.tsv")
     raw_features = os.path.join(output_dir, "raw_feature.tsv")
     annotatedbed = os.path.join(output_dir, "annotatedpas.bed")
+    annotated_matrix = os.path.join(output_dir, "annotated_matrix.mtx")
     utr_lengths = os.path.join(output_dir, "utr_lengths.tsv")
     bam_dir = args.bam_dir
     gtf_dir = args.gtf_dir
@@ -46,4 +47,5 @@ class filter_config:
     min_read = 2000
     min_cells = 3
     min_genes = 50
+    min_pas_per_cell = args.min_pas_per_cell
 

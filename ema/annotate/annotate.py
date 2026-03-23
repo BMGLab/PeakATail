@@ -6,7 +6,7 @@ from scipy.io import mmwrite
 
 
 def annotate(sparse_matrix, pas_ids, collist, genes,
-             annotated_matrix=directory_config.filterd_matrix,
+             annotated_matrix=directory_config.annotated_matrix,
              pasbed_dir=directory_config.pasbed,
              ):
     """Annotate PAS with gene assignments and filter the count matrix.
