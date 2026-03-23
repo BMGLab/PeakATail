@@ -44,5 +44,5 @@ class variable_config:
 class filter_config:
     min_read = 2000
     min_cells = 3
-    min_genes = 200
+    min_genes = 50
 

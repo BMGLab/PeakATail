@@ -10,7 +10,7 @@ def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcod
         cb = read.get_tag(barcode)
         if len(cb) != barcode_len:
             return 0, 0, 0, 0, 0
-    except:
+    except KeyError:
         return 0, 0, 0, 0, 0
     
     read_chro, read_start, read_end, read_strand, sample_id = read.reference_name, read.reference_start, read.reference_end, read.is_reverse, read.query_name.split('.')[0]#sample id is srr id
