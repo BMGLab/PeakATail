@@ -54,6 +54,14 @@ def cli():
     parser.add_argument("--min-pas-per-cell", dest="min_pas_per_cell", type=int, default=50,
                         help="Minimum PAS per cell for filtering (default: 50)")
 
+    # Gene annotation / find_close parameters
+    parser.add_argument("--max-gene-distance", dest="max_gene_distance", type=int, default=5000,
+                        help="Maximum distance (bp) for PAS-to-gene assignment (default: 5000)")
+    parser.add_argument("--utr-multiplier", dest="utr_multiplier", type=float, default=2.0,
+                        help="Multiplier for 3'UTR length to define TIER_2 boundary (default: 2.0)")
+    parser.add_argument("--include-extended", dest="include_extended", action="store_true", default=False,
+                        help="Include TIER_3 PAS (within max-gene-distance but beyond UTR x multiplier)")
+
     # Dynamic lambda-based threshold parameters
     parser.add_argument("--dynamic-threshold", dest="dynamic_threshold", action="store_true", default=False,
                         help="Use dynamic lambda-based threshold instead of fixed (default: off)")

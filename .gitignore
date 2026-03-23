@@ -1,4 +1,5 @@
 /test/testdata
+/data/
 **/__pycache__
 **/*.egg-info
 **/emaout
@@ -12,3 +13,4 @@
 **/.vscode
 Emaenv
 .venv/
+prompts/

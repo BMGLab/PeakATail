@@ -1,6 +1,7 @@
 import pysam as ps
 import bisect
 import time
+from collections import deque
 from ema.countmatrix.peak import Peak
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
@@ -8,21 +9,49 @@ from ema.config import directory_config, variable_config
 
 start_time = time.time()
 
-def peak_calling(   
-                    direction:bool, bedfilepath:str,
-                    matrixpath:str, bamfile_dir = directory_config.bam_dir ,
-                    default_threshold=variable_config.default_threshold, merge_len=variable_config.merge_len
+
+def peak_calling(
+                    direction: bool, bedfilepath: str,
+                    matrixpath: str, bamfile_dir=directory_config.bam_dir,
+                    default_threshold=variable_config.default_threshold, merge_len=variable_config.merge_len,
+                    strategy=None,
+                    dynamic_threshold: bool = False,
+                    floor_threshold: int = 3,
+                    lambda_fold_change: float = 2.0,
+                    lambda_window: int = 10000,
                 ):
 
     '''
-    
-    data_array
+    Stream a BAM file and call peaks using a sliding coverage window.
+
+    Args:
+        direction: Strand direction (True = reverse/negative, False = forward/positive).
+        bedfilepath: Output path for BED file.
+        matrixpath: Output path for count matrix.
+        bamfile_dir: Path to indexed BAM file.
+        default_threshold: Fixed peak height threshold when dynamic_threshold is off (default: 5).
+        merge_len: Max gap between sub-peaks before splitting (default: 100).
+        strategy: PeakFinderStrategy instance. Defaults to 'original'.
+        dynamic_threshold: When True, use window-based local lambda for threshold.
+        floor_threshold: Absolute minimum threshold in dynamic mode (default: 3).
+        lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
+        lambda_window: Window size in bp for local lambda estimation (default: 10000).
     '''
+    if strategy is None:
+        from ema.strategies import get_strategy
+        strategy = get_strategy("original")
+
+    current_threshold = default_threshold
+
+    # Window-based local lambda tracking (deque of recent read positions)
+    # Only used when dynamic_threshold=True
+    background_deque = deque()
+
     print(bamfile_dir)
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb')
     matrix = open(matrixpath, "w")
     bedfile = open(bedfilepath, "w")
-    data_array = [] 
+    data_array = []
     signal = False
     chro = "1"
     l_end, i_end = 0, 0
@@ -43,33 +72,49 @@ def peak_calling(
         if chro1 == 0:
             continue
         
-        if chro1 != chro:#TODO COMPLETE
+        if chro1 != chro:  # TODO COMPLETE
             if signal:
 
-                pas_1, pas_2 = peak.pasfind()
-
-                if pas_1 != 0:
+                pas_results = strategy.find_pas(peak)
+                for pas_1, pas_2 in pas_results:
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
-            
-            elif len(peak.peak_list) != 0:# TODO thsi block has code reaptition
+                    pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
+                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
-                pas_1, pas_2 = peak.pasfind()
+            elif len(peak.peak_list) != 0:  # TODO this block has code repetition
 
-                if pas_1 != 0: # if pasfind method return don't False mean peak have valid pas
+                pas_results = strategy.find_pas(peak)
+                for pas_1, pas_2 in pas_results:
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+                    pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
+                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+
             signal = False
-            peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={},last_peak_end=0) #make new instance of Peak class
+            peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={})  # make new instance of Peak class
             i_end, l_end, data_array, i = 0, 0, [], 0
 
-        if signal:
-            l_end = data_array[-default_threshold] # it takes -5 from end in default it means where heghit is more than threshold
-            peak.cb_counting(cb=cb)
+            # Clear background deque on chromosome change
+            if dynamic_threshold:
+                background_deque.clear()
+                current_threshold = floor_threshold
 
-        
+        # Update window-based local lambda from trailing deque of read positions
+        if dynamic_threshold:
+            background_deque.append(end1)
+            while background_deque and (end1 - background_deque[0]) > lambda_window:
+                background_deque.popleft()
+            if len(background_deque) > 10:  # need minimum reads for stable estimate
+                local_lambda = len(background_deque) / lambda_window
+                current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))
+
+        if signal:
+            l_end = data_array[-current_threshold]  # it takes -N from end, where N is the active threshold
+            peak.cb_counting(cb=cb)
+            peak.cb_position_counting(end1, cb)
+
+
         '''
         If newread start_point is more than l_end(where heghit is more than threshold)
         it means peak has been finisfhed
@@ -91,22 +136,22 @@ def peak_calling(
 
         height = len(data_array)
 
-        if signal == False and height >= default_threshold:
+        if signal == False and height >= current_threshold:
             signal = True
             i += 1  #I forgot what is this but will fix TODO
 
             if start1 - peak.last_peak_end > merge_len and i!=1:
-                #Peak has been completed so find pas 
+                #Peak has been completed so find pas
                 #write pas
                 #make new instance of peak
-                pas_1, pas_2 = peak.pasfind()
-
-                if pas_1 != 0: # if pasfind method return don't  mean peak have valid pas
+                pas_results = strategy.find_pas(peak)
+                for pas_1, pas_2 in pas_results:
                     Peak.pasnumber += 1
-                    pas_write(chro1, pas_2, pas_1, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(peak.cb_dict, Peak.pasnumber, matrix)
+                    pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
+                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
-                peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0) #make new instance of Peak class
+                peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={}) #make new instance of Peak class
             else:
                 peak.peak_start = start1 #Peak has not been complete so will continue to ass items to peak_list
 
