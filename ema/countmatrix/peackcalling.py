@@ -18,7 +18,7 @@ def peak_calling(
                     dynamic_threshold: bool = False,
                     floor_threshold: int = 3,
                     lambda_fold_change: float = 2.0,
-                    lambda_window: int = 10000,
+                    lambda_window: int = 5000,
                 ):
 
     '''
@@ -35,7 +35,7 @@ def peak_calling(
         dynamic_threshold: When True, use window-based local lambda for threshold.
         floor_threshold: Absolute minimum threshold in dynamic mode (default: 3).
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
-        lambda_window: Window size in bp for local lambda estimation (default: 10000).
+        lambda_window: Window size in bp for local lambda estimation (default: 5000).
     '''
     if strategy is None:
         from ema.strategies import get_strategy
@@ -72,23 +72,23 @@ def peak_calling(
         if chro1 == 0:
             continue
         
-        if chro1 != chro:  # TODO COMPLETE
+        if chro1 != chro:  # Chromosome changed — flush peaks from OLD chromosome
             if signal:
 
                 pas_results = strategy.find_pas(peak)
                 for pas_1, pas_2 in pas_results:
                     Peak.pasnumber += 1
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
-            elif len(peak.peak_list) != 0:  # TODO this block has code repetition
+            elif len(peak.peak_list) != 0:
 
                 pas_results = strategy.find_pas(peak)
                 for pas_1, pas_2 in pas_results:
                     Peak.pasnumber += 1
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+                    pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
                     matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
             signal = False
@@ -111,8 +111,9 @@ def peak_calling(
 
         if signal:
             l_end = data_array[-current_threshold]  # it takes -N from end, where N is the active threshold
-            peak.cb_counting(cb=cb)
-            peak.cb_position_counting(end1, cb)
+            if start1 <= l_end:  # only count if read is still within peak
+                peak.cb_counting(cb=cb)
+                peak.cb_position_counting(end1, cb)
 
 
         '''
@@ -159,7 +160,26 @@ def peak_calling(
 
     bamfile.close()
 
+    # Final flush for last chromosome — without this, the last peak is dropped
+    if signal:
+        pas_results = strategy.find_pas(peak)
+        for pas_1, pas_2 in pas_results:
+            Peak.pasnumber += 1
+            pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
+            pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+            matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+    elif len(peak.peak_list) != 0:
+        pas_results = strategy.find_pas(peak)
+        for pas_1, pas_2 in pas_results:
+            Peak.pasnumber += 1
+            pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
+            pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
+            matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+
+    matrix.close()
+    bedfile.close()
+
 if __name__ == "__main__":
-    peak_calling() 
+    peak_calling()
 
 
