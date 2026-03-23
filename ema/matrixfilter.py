@@ -23,6 +23,7 @@ def filter_cb(negativematrixpath=directory_config.negmatrixpath,
     and writes the filtered MatrixMarket file.
     """
     global filtered_cb_list
+    filtered_cb_list = []  # reset on each call to avoid cross-call accumulation
     cb_list = list(get_mapping().keys())
     cb_counts = defaultdict(int)
 
@@ -95,14 +96,16 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=None):
     sparse_coo = sci.mmread(matrixpath)
     sparse_csc = sp.csc_matrix(sparse_coo)
 
-    # Extract unique PAS IDs (row indices) from the COO matrix
+    # Extract actual PAS IDs (row indices) from the COO matrix
     # MatrixMarket is 1-based; scipy mmread converts to 0-based
     # We need the original 1-based PAS IDs for downstream annotation
-    if sp.issparse(sparse_coo):
-        coo = sparse_coo.tocoo()
-        pas_ids = np.arange(1, sparse_csc.shape[0] + 1)
+    # CRITICAL: use actual non-zero row indices, NOT sequential arange
+    coo = sparse_coo if not sp.issparse(sparse_coo) else sparse_coo.tocoo()
+    if sp.issparse(coo):
+        pas_ids = np.sort(np.unique(coo.row + 1))  # +1: mmread converts 1-based to 0-based
     else:
-        pas_ids = np.arange(1, sparse_csc.shape[0] + 1)
+        # Dense fallback: rows with any non-zero value
+        pas_ids = np.sort(np.where(np.any(coo != 0, axis=1))[0] + 1)
 
     return sparse_csc, pas_ids, collist
 
