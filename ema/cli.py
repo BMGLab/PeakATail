@@ -4,12 +4,10 @@ def cli():
 
     parser = argparse.ArgumentParser(prog="ema")
 
-    parser.add_argument("--bamDir", dest="bam_dir", type=str, 
+    parser.add_argument("--bamDir", dest="bam_dir", type=str,
                         help="directory of bamfile examplebam.bam")
-    print("bam")
 
     parser.add_argument("--sequenceLen", dest="seqlen", type=int)
-    print("seq")
 
     parser.add_argument("--CellBarcodeLen", dest="cb_len", type=int)
 
