@@ -14,3 +14,10 @@
 Emaenv
 .venv/
 prompts/
+other_repos/
+references/
+test_run/
+logs/
+reports/figures/*.png
+reports/PeakATail_Technical_Report.pdf
+uv.lock

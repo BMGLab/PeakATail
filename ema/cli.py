@@ -68,6 +68,19 @@ def cli():
     parser.add_argument("--lambda-fold-change", dest="lambda_fold_change", type=float, default=2.0,
                         help="Fold change above background lambda for dynamic threshold (default: 2.0)")
 
+    # Clustering parameters
+    parser.add_argument("--clustering-method", dest="clustering_method", type=str, default="leiden_tfidf",
+                        choices=["leiden_tfidf", "leiden_libsize", "external"],
+                        help="Clustering strategy (default: leiden_tfidf)")
+    parser.add_argument("--resolution", type=float, default=1.0,
+                        help="Leiden clustering resolution (default: 1.0)")
+    parser.add_argument("--n-pcs", dest="n_pcs", type=int, default=40,
+                        help="Number of dimensions for neighbor computation (default: 40)")
+    parser.add_argument("--external-clusters", dest="external_clusters", type=str, default=None,
+                        help="Path to pre-computed cluster labels CSV (for --clustering-method external)")
+    parser.add_argument("--random-seed", dest="random_seed", type=int, default=42,
+                        help="Random seed for reproducibility (default: 42)")
+
     return parser.parse_args()
     
     
