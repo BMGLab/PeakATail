@@ -71,6 +71,12 @@ def cli():
     parser.add_argument("--lambda-fold-change", dest="lambda_fold_change", type=float, default=2.0,
                         help="Fold change above background lambda for dynamic threshold (default: 2.0)")
 
+    # Atlas merge strategy parameters
+    parser.add_argument("--atlas", type=str, default=None,
+                        help="Path to reference PAS atlas BED for atlas merge strategy")
+    parser.add_argument("--atlas-distance", dest="atlas_distance", type=int, default=50,
+                        help="Max snap distance in bp for atlas strategy (default: 50)")
+
     # Clustering parameters
     parser.add_argument("--clustering-method", dest="clustering_method", type=str, default="leiden_tfidf",
                         choices=["leiden_tfidf", "leiden_libsize", "external"],
@@ -93,7 +99,7 @@ def cli():
             cfg = yaml.safe_load(f)
         args.datasets = cfg.get('datasets', [])
         # Override CLI defaults with YAML values if present
-        for key in ['seqlen', 'cb_len', 'barcode_tag', 'min_read', 'min_cells', 'min_pas_per_cell', 'pas_gap', 'gtf_dir']:
+        for key in ['seqlen', 'cb_len', 'barcode_tag', 'min_read', 'min_cells', 'min_pas_per_cell', 'pas_gap', 'gtf_dir', 'atlas', 'atlas_distance']:
             yaml_key = 'gtf' if key == 'gtf_dir' else key
             if yaml_key in cfg:
                 setattr(args, key, cfg[yaml_key])

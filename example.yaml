@@ -32,3 +32,7 @@ min_read: 1500
 min_cells: 3
 min_pas_per_cell: 1
 pas_gap: 100
+
+# Optional: snap PAS to reference atlas instead of merging called PAS coordinates
+# atlas: references/polyasite_2.0_GRCh38_sorted.bed
+# atlas_distance: 50

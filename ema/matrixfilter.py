@@ -10,55 +10,127 @@ import scanpy as sc
 filtered_cb_list = []
 
 
-def filter_cb(negativematrixpath=directory_config.negmatrixpath,
-                positivematrixpath=directory_config.posmatrixpath,
-                sorted_corrected_sparse_path=directory_config.filterd_matrix,
-                min_read=filter_config.min_read,
-                filter_cb_file=directory_config.filtered_cb):
-
+def filter_cb(input_matrix_paths: list = None,
+              cb_list: list = None,
+              negativematrixpath=directory_config.negmatrixpath,
+              positivematrixpath=directory_config.posmatrixpath,
+              sorted_corrected_sparse_path=directory_config.filterd_matrix,
+              min_read=filter_config.min_read,
+              filter_cb_file=directory_config.filtered_cb):
     """Filter cell barcodes by minimum read count and write a corrected sparse matrix.
 
-    Reads positive and negative matrices, sums counts per barcode, keeps only
-    barcodes with total counts >= min_read, re-indexes columns contiguously,
-    and writes the filtered MatrixMarket file.
+    Reads one or more matrices, sums counts per barcode column index, keeps only
+    barcodes with total counts >= min_read, re-indexes columns contiguously, and
+    writes the filtered MatrixMarket file.
+
+    Args:
+        input_matrix_paths: Optional list of MatrixMarket file paths to read.
+            When provided, only these files are read (multi-sample path).
+            When None, falls back to reading negativematrixpath + positivematrixpath
+            (legacy single-sample behaviour).
+        cb_list: Optional list of CB strings, indexed by (column_index - 1).
+            When provided, this is used as the authoritative CB lookup instead
+            of get_mapping(). Required when input_matrix_paths is given and the
+            global barcode index no longer reflects the correct per-dataset CBs.
+        negativematrixpath: Legacy negative-strand matrix path (single-sample).
+        positivematrixpath: Legacy positive-strand matrix path (single-sample).
+        sorted_corrected_sparse_path: Output path for the filtered MatrixMarket file.
+        min_read: Minimum total read count for a barcode to be kept.
+        filter_cb_file: Output path for the filtered CB list (one CB per line).
     """
     global filtered_cb_list
     filtered_cb_list = []  # reset on each call to avoid cross-call accumulation
-    cb_list = list(get_mapping().keys())
-    cb_counts = defaultdict(int)
 
-    with open(negativematrixpath, "r") as negativematrix, open(positivematrixpath, "r") as positivematrix:
-        for line in negativematrix:
-            columns = line.split()
-            if len(columns) >= 3:
+    # Determine the CB lookup list (indexed by column_index - 1)
+    if cb_list is not None:
+        _cb_lookup = list(cb_list)
+    else:
+        _cb_lookup = list(get_mapping().keys())
+
+    # Determine which matrix files to read
+    if input_matrix_paths is not None:
+        matrix_paths = [str(p) for p in input_matrix_paths]
+    else:
+        matrix_paths = [negativematrixpath, positivematrixpath]
+
+    # Pass 1: sum counts per column index (1-based in file)
+    cb_counts: dict[str, int] = defaultdict(int)
+    for path in matrix_paths:
+        with open(path, "r") as fh:
+            first_data_line = True
+            for line in fh:
+                if not line.strip() or line.startswith("%"):
+                    continue
+                columns = line.split()
+                if len(columns) < 3:
+                    continue
+                # When reading MatrixMarket files (from concat_matrices output),
+                # the first non-% line is the dimension header — skip it.
+                # Legacy per-BAM matrices written by peackcalling have no header.
+                # Detect header: all three tokens are numeric digits AND it is the
+                # first such line.  We use the `first_data_line` flag per file.
+                if first_data_line:
+                    first_data_line = False
+                    # Heuristic: if column[2] is suspiciously large compared to a
+                    # normal count value AND columns[0] and [1] are also large, it
+                    # is likely the dimension header.  Simpler: just check whether
+                    # reading it as a data entry would produce a valid col index.
+                    # Actually, we must be careful — for legacy files there is NO
+                    # header.  Use: if the number of non-zero entries (col[2]) is
+                    # much larger than any realistic single-cell count, it is a
+                    # header.  More robust: always try to use the line as data;
+                    # if col_index (columns[1]) would be out of range for _cb_lookup
+                    # treat as header and skip.
+                    try:
+                        col_idx = int(columns[1])
+                    except ValueError:
+                        continue  # not numeric at all — skip
+                    if col_idx > len(_cb_lookup) and len(_cb_lookup) > 0:
+                        # Column index exceeds CB count — this is a dimension header.
+                        continue
+                    # Otherwise treat as data
+                    cb_counts[columns[1]] += int(columns[2])
+                    continue
                 cb_counts[columns[1]] += int(columns[2])
 
-        for line in positivematrix:
-            columns = line.split()
-            if len(columns) >= 3:
-                cb_counts[columns[1]] += int(columns[2])
-
-    # Filter out cb with counts less than min_read
+    # Filter: keep column indices whose total count meets threshold
     keep_cb = {int(cb) for cb, count in cb_counts.items() if count >= min_read}
 
+    # Pass 2: collect data rows for kept CBs
     lines_to_keep = []
-    pas_set = set()
-    with open(negativematrixpath, "r") as negativematrix, open(positivematrixpath, "r") as positivematrix:
-        for line in negativematrix:
-            item = [int(item) for item in line.split()]
-            if len(item) >= 3 and item[1] in keep_cb:
-                lines_to_keep.append(item)
-                pas_set.add(item[0])
+    pas_set: set[int] = set()
+    for path in matrix_paths:
+        with open(path, "r") as fh:
+            first_data_line = True
+            for line in fh:
+                if not line.strip() or line.startswith("%"):
+                    continue
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                if first_data_line:
+                    first_data_line = False
+                    try:
+                        col_idx = int(parts[1])
+                    except ValueError:
+                        continue
+                    if col_idx > len(_cb_lookup) and len(_cb_lookup) > 0:
+                        continue  # dimension header
+                    # Fall through to process as data
+                try:
+                    item = [int(x) for x in parts[:3]]
+                except ValueError:
+                    continue
+                if item[1] in keep_cb:
+                    lines_to_keep.append(item)
+                    pas_set.add(item[0])
 
-        for line in positivematrix:
-            item = [int(item) for item in line.split()]
-            if len(item) >= 3 and item[1] in keep_cb:
-                lines_to_keep.append(item)
-                pas_set.add(item[0])
-
-    matrix_pas_header, matrix_cb_header, matrix_nzero_header = max(pas_set), len(keep_cb), len(lines_to_keep)
+    matrix_pas_header = max(pas_set) if pas_set else 0
+    matrix_cb_header = len(keep_cb)
+    matrix_nzero_header = len(lines_to_keep)
     sorted_spars_matrix = sorted(lines_to_keep, key=lambda x: x[1])
     last_corrected_index, corrected_index = 0, 0
+
     with open(sorted_corrected_sparse_path, "w") as sorted_corrected_sparse_list:
         sorted_corrected_sparse_list.write(variable_config.matrixmarketheader)
         sorted_corrected_sparse_list.write(f"{matrix_pas_header} {matrix_cb_header} {matrix_nzero_header}\n")
@@ -68,10 +140,10 @@ def filter_cb(negativematrixpath=directory_config.negmatrixpath,
             if item[1] != last_corrected_index:
                 corrected_index += 1
                 last_corrected_index = col_index
-                filtered_cb_list.append(cb_list[col_index - 1])
+                # Use provided cb_list or the get_mapping() fallback
+                filtered_cb_list.append(_cb_lookup[col_index - 1])
                 item[1] = corrected_index
                 sorted_corrected_sparse_list.write(f"{item[0]} {item[1]} {item[2]}\n")
-
             else:
                 item[1] = corrected_index
                 sorted_corrected_sparse_list.write(f"{item[0]} {item[1]} {item[2]}\n")
