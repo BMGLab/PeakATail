@@ -4,6 +4,9 @@ def cli():
 
     parser = argparse.ArgumentParser(prog="ema")
 
+    parser.add_argument("--config", dest="config", type=str, default=None,
+                        help="Path to YAML configuration file")
+
     parser.add_argument("--bamDir", dest="bam_dir", type=str,
                         help="directory of bamfile examplebam.bam")
 
@@ -81,7 +84,25 @@ def cli():
     parser.add_argument("--random-seed", dest="random_seed", type=int, default=42,
                         help="Random seed for reproducibility (default: 42)")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Load YAML config if provided
+    if args.config:
+        import yaml
+        with open(args.config) as f:
+            cfg = yaml.safe_load(f)
+        args.datasets = cfg.get('datasets', [])
+        # Override CLI defaults with YAML values if present
+        for key in ['seqlen', 'cb_len', 'barcode_tag', 'min_read', 'min_cells', 'min_pas_per_cell', 'pas_gap', 'gtf_dir']:
+            yaml_key = 'gtf' if key == 'gtf_dir' else key
+            if yaml_key in cfg:
+                setattr(args, key, cfg[yaml_key])
+    elif args.bam_dir:
+        args.datasets = [{"id": "default", "merge_strategy": "none", "bams": [args.bam_dir]}]
+    else:
+        args.datasets = []
+
+    return args
     
     
 if __name__ == "__main__":

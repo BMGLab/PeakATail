@@ -13,7 +13,11 @@ def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcod
     except KeyError:
         return 0, 0, 0, 0, 0
     
-    read_chro, read_start, read_end, read_strand, sample_id = read.reference_name, read.reference_start, read.reference_end, read.is_reverse, read.query_name.split('.')[0]#sample id is srr id
+    read_chro, read_start, read_end, read_strand = read.reference_name, read.reference_start, read.reference_end, read.is_reverse
+    try:
+        sample_id = read.get_tag('RG')
+    except (KeyError, ValueError):
+        sample_id = "default"
 
     #skip reverse directions
     if direction != read_strand:

@@ -27,6 +27,7 @@ class directory_config:
     utr_lengths = os.path.join(output_dir, "utr_lengths.tsv")
     bam_dir = args.bam_dir
     gtf_dir = args.gtf_dir
+    datasets = args.datasets  # list of dicts: [{id, merge_strategy, bams}]
 
     def get_fisher_dir(self, cluster1, cluster2):
         return os.path.join(self.switch_dir, f"fisherresults_{cluster1}_{cluster2}.tsv")
