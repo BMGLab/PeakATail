@@ -190,18 +190,21 @@ def cli():
     # PDUI
     pdui_methods = [m.strip() for m in args.pdui_method.split(",") if m.strip() and m.strip() != "none"]
     if pdui_methods:
-        # Build pas_isoform_map only if any per_isoform aggregation requested
-        pas_isoform_map: dict = {}
-        if args.pdui_isoform_agg == "per_isoform":
-            if not args.gtf or not args.pasbed:
-                print("[ema_switch] WARNING: --pdui-isoform-agg=per_isoform needs "
-                      "--gtf and --pasbed; falling back to per_gene")
-            else:
-                from ema.annotate.gtf2isoform_utr import parse_isoform_utrs
-                from ema.quantification.pas_to_isoform import map_pas_to_isoforms
-                isoform_utrs = parse_isoform_utrs(Path(args.gtf))
-                pas_isoform_map = map_pas_to_isoforms(Path(args.pasbed), isoform_utrs)
-                print(f"[ema_switch] isoform map: {len(pas_isoform_map)} PAS")
+        # PDUI strategies need pas_isoform_map for gene grouping (even per_gene aggregation
+        # uses the gene_id from the map). Auto-default --pasbed/--gtf if not given.
+        pasbed = args.pasbed or "emaout/pasbed.bed"
+        gtf = args.gtf or "data/Homo_sapiens.GRCh38.99.gtf"
+        if not Path(pasbed).exists() or not Path(gtf).exists():
+            print(f"[ema_switch] PDUI requires --gtf and --pasbed (or default paths). "
+                  f"pasbed={pasbed} (exists={Path(pasbed).exists()}), "
+                  f"gtf={gtf} (exists={Path(gtf).exists()}). Skipping PDUI.")
+            pdui_methods = []
+        else:
+            from ema.annotate.gtf2isoform_utr import parse_isoform_utrs
+            from ema.quantification.pas_to_isoform import map_pas_to_isoforms
+            isoform_utrs = parse_isoform_utrs(Path(gtf))
+            pas_isoform_map = map_pas_to_isoforms(Path(pasbed), isoform_utrs)
+            print(f"[ema_switch] isoform map: {len(pas_isoform_map)} PAS mapped")
 
         for method in pdui_methods:
             strat = get_pdui_strategy(method)

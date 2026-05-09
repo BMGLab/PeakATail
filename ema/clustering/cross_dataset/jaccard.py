@@ -65,7 +65,12 @@ def _strip_prefix(barcode: str) -> str:
         >>> _strip_prefix("ACGT-1")
         'ACGT-1'
     """
-    return barcode.split("#")[-1]
+    # Try '#' first (Cell Ranger convention), then '_' (PeakATail convention)
+    if "#" in barcode:
+        return barcode.split("#")[-1]
+    if "_" in barcode:
+        return barcode.split("_", 1)[-1]
+    return barcode
 
 
 def _cluster_cb_sets(adata: ad.AnnData) -> dict[str, set[str]]:
