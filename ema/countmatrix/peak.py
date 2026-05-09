@@ -5,6 +5,17 @@ class Peak():
     TODO
     '''
 
+    @classmethod
+    def reset_pasnumber(cls):
+        """Reset the global PAS number counter to 0.
+
+        Call between independent peak-calling runs (e.g. between datasets in
+        multi-sample mode) so per-run pasnumbers start at 1. Safe to call;
+        downstream code that keys on (dataset_id, pasnumber) tuples remains
+        correct because dataset_id provides global uniqueness.
+        """
+        cls.pasnumber = 0
+
     def __init__(self, peak_list=None, peak_start=0, last_peak_end=0, peak_strand=True, cb_dict=None, cb_positions=None):
         '''
         :param peak_list: [[read_end1, height1], [read_end2, height]...., [read_endn, heightendn]]

@@ -1,12 +1,36 @@
 from pathlib import Path
+import subprocess
 import pysam
 import tempfile
 
 
+def _check_samtools_version(min_version: tuple[int, int] = (1, 10)) -> None:
+    """Raise RuntimeError if samtools is missing or < min_version."""
+    try:
+        result = subprocess.run(
+            ["samtools", "--version"], capture_output=True, text=True, check=True
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        raise RuntimeError("samtools not found in PATH") from e
+    # Parse first line: "samtools 1.13" or "samtools 1.10.1"
+    first_line = result.stdout.split("\n")[0]
+    parts = first_line.split()
+    if len(parts) < 2:
+        raise RuntimeError(f"Cannot parse samtools version from: {first_line}")
+    version_str = parts[1]
+    version_parts = tuple(int(x) for x in version_str.split(".")[:2])
+    if version_parts < min_version:
+        raise RuntimeError(
+            f"samtools >= {'.'.join(map(str, min_version))} required, got {version_str}"
+        )
+
+
 class DatasetManager:
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, threads: int = 4):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.threads = threads
+        _check_samtools_version()
 
     def prepare(self, datasets: list[dict]) -> list[tuple[str, Path]]:
         """
@@ -57,20 +81,38 @@ class DatasetManager:
         return sorted_path
 
     def _tag_bam_with_rg(self, bam_path: Path, dataset_id: str) -> Path:
-        """
-        Writes a new BAM with RG header entry and RG tag set on every read.
+        """Tag all reads with RG=dataset_id via `samtools addreplacerg`.
+
+        Falls back to a clear error if samtools is missing or version < 1.10.
+
+        Args:
+            bam_path: Path to the input BAM file.
+            dataset_id: Read-group ID (and SM) to stamp on every read.
+
+        Returns:
+            Path to the newly written, tagged BAM file.
+
+        Raises:
+            RuntimeError: If samtools is not on PATH or the command exits non-zero.
         """
         out_path = self.output_dir / f"tagged_{dataset_id}_{bam_path.stem}.bam"
-        with pysam.AlignmentFile(str(bam_path), "rb") as bam_in:
-            header = bam_in.header.to_dict()
-            rg_entry = {"ID": dataset_id, "SM": dataset_id}
-            header.setdefault("RG", [])
-            if not any(rg["ID"] == dataset_id for rg in header["RG"]):
-                header["RG"].append(rg_entry)
-
-            with pysam.AlignmentFile(str(out_path), "wb", header=header) as bam_out:
-                for read in bam_in:
-                    read.set_tag("RG", dataset_id)
-                    bam_out.write(read)
-
+        threads = getattr(self, 'threads', 4)
+        cmd = [
+            "samtools", "addreplacerg",
+            "-r", f"ID:{dataset_id}\tSM:{dataset_id}",
+            "-m", "overwrite_all",   # ensures any existing RG is replaced, not appended
+            "-@", str(threads),
+            "-o", str(out_path),
+            str(bam_path),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                "samtools not found in PATH. Install samtools >= 1.10."
+            ) from e
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"samtools addreplacerg failed: {e.stderr}"
+            ) from e
         return out_path
