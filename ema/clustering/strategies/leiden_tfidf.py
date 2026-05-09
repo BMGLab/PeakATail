@@ -134,6 +134,11 @@ class LeidenTfidfStrategy(ClusteringStrategy):
             adata.n_vars - 1,
             adata.n_obs - 1,
         )
+        if n_components < 2:
+            raise ValueError(
+                f"Dataset too small for LSI: n_obs={adata.n_obs}, n_vars={adata.n_vars}. "
+                f"Need at least 3 cells and 3 features."
+            )
 
         svd = TruncatedSVD(
             n_components=n_components,

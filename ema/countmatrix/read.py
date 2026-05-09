@@ -1,5 +1,16 @@
 from ema.config import variable_config
 
+# Fallback sample_id used when a read has no RG tag. main.py sets this to the
+# current dataset_id before each peak_calling call so multi-sample BAMs without
+# pre-existing RG tags still produce unique CB prefixes per dataset.
+_default_sample_id = "default"
+
+
+def set_default_sample_id(sample_id: str) -> None:
+    global _default_sample_id
+    _default_sample_id = sample_id
+
+
 def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcode_len=variable_config.cb_len ,seq_len=variable_config.seqlen, ignore_chro=variable_config.ignore_chro):
     '''
     fuction check read useubility 
@@ -17,7 +28,7 @@ def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcod
     try:
         sample_id = read.get_tag('RG')
     except (KeyError, ValueError):
-        sample_id = "default"
+        sample_id = _default_sample_id
 
     #skip reverse directions
     if direction != read_strand:

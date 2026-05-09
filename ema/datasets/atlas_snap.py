@@ -178,20 +178,37 @@ def snap_beds_to_atlas(
                     cols[_IDX_ATLAS_STRAND],
                 )
 
-    # Step 6: Write mapping TSV
-    with open(mapping_path, "w") as f:
-        f.write("dataset_id\told_pasnumber\tnew_pas_id\n")
-        for dataset_id, old_pasnumber, new_pas_id in mapping_rows:
-            f.write(f"{dataset_id}\t{old_pasnumber}\t{new_pas_id}\n")
-
-    # Step 7: Write snapped BED — one row per unique atlas PAS hit, sorted
+    # Step 6: Re-key atlas PAS IDs as sequential integers so they match MTX rows
+    # for annotate.py join. Keep the original atlas_pas_id in a sidecar lookup.
     sorted_atlas_hits = sorted(
         atlas_hits.values(),
         key=lambda row: (row[0], int(row[1])),
     )
+    atlas_str_to_int: dict[str, str] = {}
+    for i, hit in enumerate(sorted_atlas_hits, start=1):
+        atlas_str_to_int[hit[3]] = str(i)
+
+    # Step 6b: Write mapping TSV using integer new_pas_id
+    with open(mapping_path, "w") as f:
+        f.write("dataset_id\told_pasnumber\tnew_pas_id\n")
+        for dataset_id, old_pasnumber, atlas_pas_id in mapping_rows:
+            new_int_id = atlas_str_to_int.get(atlas_pas_id)
+            if new_int_id is None:
+                continue
+            f.write(f"{dataset_id}\t{old_pasnumber}\t{new_int_id}\n")
+
+    # Step 6c: Sidecar lookup so atlas string IDs are preserved
+    lookup_path = output_dir / "atlas_pas_id_lookup.tsv"
+    with open(lookup_path, "w") as f:
+        f.write("integer_id\tatlas_pas_id\n")
+        for atlas_id, int_id in atlas_str_to_int.items():
+            f.write(f"{int_id}\t{atlas_id}\n")
+
+    # Step 7: Write snapped BED — col 4 is the integer ID (matches MTX rows)
     with open(snapped_bed_path, "w") as f:
         for chrom, start, end, pas_id, score, strand in sorted_atlas_hits:
-            f.write(f"{chrom}\t{start}\t{end}\t{pas_id}\t{score}\t{strand}\n")
+            int_id = atlas_str_to_int[pas_id]
+            f.write(f"{chrom}\t{start}\t{end}\t{int_id}\t{score}\t{strand}\n")
 
     # Step 8: Clean up temp files
     for tmp in (input_bed, sorted_input, sorted_atlas, closest_raw):

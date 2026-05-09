@@ -7,6 +7,7 @@ import scipy.sparse as sp
 
 from ema.countmatrix.peackcalling import peak_calling
 from ema.countmatrix.indexing import get_mapping, reset_index
+from ema.countmatrix.read import set_default_sample_id
 from ema.config import directory_config, variable_config, args, filter_config
 from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
 from ema.clustering.clustering import clustering
@@ -124,6 +125,7 @@ def main():
         dataset_bam_indices[dataset_id] = idx + 1
 
         reset_index()  # CRITICAL: isolate CB column space per (dataset, bam)
+        set_default_sample_id(dataset_id)  # fallback when BAM has no RG tag
 
         pos_bed = peakcalling_dir / f"{dataset_id}_{idx}.pos.bed"
         neg_bed = peakcalling_dir / f"{dataset_id}_{idx}.neg.bed"
@@ -322,8 +324,18 @@ def main():
         ) from gtf_error["exception"]
     utr_lengths = gtf_result.get("utr_lengths", {})
 
-    # Run find_close ONCE on the unified PAS coordinate set
+    # Run find_close ONCE on the unified PAS coordinate set.
+    # find_close expects pos+neg BED inputs (it cats them) — split unified BED by strand.
     shutil.copy(str(unified_bed), directory_config.pasbed)
+    with open(unified_bed) as _u, \
+         open(directory_config.posbed, "w") as _p, \
+         open(directory_config.negbed, "w") as _n:
+        for line in _u:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 6 and parts[5] == "+":
+                _p.write(line)
+            elif len(parts) >= 6 and parts[5] == "-":
+                _n.write(line)
     genes = find_close(
         utr_lengths=utr_lengths,
         max_distance=getattr(args, "max_gene_distance", 5000),
@@ -403,10 +415,15 @@ def main():
         cluster_h5ad = ds_dir / "clusters.h5ad"
         clustering(adata=adata, output_h5ad=str(cluster_h5ad))
 
-        output_mgr.save_stats(f"clustering_{ds_id}", {
-            "final_cells": adata.n_obs,
-            "final_pas": adata.n_vars,
-        })
+        # Save per-dataset stats as a JSON next to the h5ad (OutputManager only
+        # has predefined slots for the single-sample pipeline).
+        import json
+        with open(ds_dir / "clustering_stats.json", "w") as f:
+            json.dump({
+                "dataset_id": ds_id,
+                "final_cells": int(adata.n_obs),
+                "final_pas": int(adata.n_vars),
+            }, f, indent=2)
 
         print(f"[multi-sample] Dataset '{ds_id}': {adata.n_obs} cells, {adata.n_vars} PAS -> {cluster_h5ad}")
 

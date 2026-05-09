@@ -96,7 +96,9 @@ def merge_pas_beds(
             score = parts[4]
             strand = parts[5]
 
-            new_pas_id = f"PAS_{new_id}"
+            # Use plain integer string so BED col 4 matches MTX row indices
+            # (integer-keyed). annotate.py joins on these directly.
+            new_pas_id = str(new_id)
             new_id += 1
 
             # Write one mapping row per original entry.
@@ -288,12 +290,17 @@ def _pas_sort_key(pas_id: str) -> tuple[int, str]:
     lexicographic order via a high sentinel integer so they sort after numeric
     entries consistently.
     """
+    # Bare integer (current format from merge_pas_beds and atlas_snap)
+    try:
+        return (int(pas_id), "")
+    except ValueError:
+        pass
+    # "PAS_<int>" style (legacy)
     parts = pas_id.rsplit("_", 1)
     if len(parts) == 2:
         try:
             return (int(parts[1]), "")
         except ValueError:
             pass
-    # Non-numeric suffix — place after all numeric entries, then sort
-    # lexicographically among themselves.
+    # Non-numeric — place after all numeric entries.
     return (10**18, pas_id)
