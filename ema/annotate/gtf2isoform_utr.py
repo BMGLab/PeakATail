@@ -275,14 +275,22 @@ def parse_isoform_utrs(
         return {}
 
     # Determine worker count
-    cpu = os.cpu_count() or 1
+    # ResourceManager-aware worker count to avoid oversubscribing under load
+    try:
+        from ema.utils import ResourceManager
+        cpu = ResourceManager().get_n_jobs(per_worker_mb=500)
+    except ImportError:
+        cpu = os.cpu_count() or 1
     n_w = min(n_workers or cpu, len(chrom_chunks), cpu)
 
     # Parse chunks in parallel
     args = [(chunk,) for chunk in chrom_chunks]
 
     if n_w > 1:
-        with multiprocessing.Pool(processes=n_w) as pool:
+        # Use 'spawn' to avoid fork() inheriting locks/threads from the parent,
+        # which can deadlock downstream BLAS / scanpy / igraph operations.
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(processes=n_w) as pool:
             partials = pool.map(_parse_chunk, args)
     else:
         partials = [_parse_chunk(a) for a in args]

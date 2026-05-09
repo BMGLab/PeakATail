@@ -25,6 +25,10 @@ except ImportError:
     merge_pas_beds = None  # type: ignore[assignment]
     concat_matrices = None  # type: ignore[assignment]
 
+# New strategy registries (Phase 1 of feature/apa-completeness)
+# PDUI + diff strategies are imported by ema_switch (separate command), not here.
+from ema.clustering.cross_dataset import get_match_strategy
+
 try:
     from ema.datasets.atlas_snap import snap_beds_to_atlas
 except ImportError:
@@ -426,6 +430,32 @@ def main():
             }, f, indent=2)
 
         print(f"[multi-sample] Dataset '{ds_id}': {adata.n_obs} cells, {adata.n_vars} PAS -> {cluster_h5ad}")
+
+        # NOTE: PDUI and differential APA are NOT run here — they belong to the
+        # separate `ema_switch` command. That command lets the user select which
+        # cluster pairs to test and which marker-PAS subset to use, instead of
+        # running all 20K PAS x all C(K,2) pairs unconditionally.
+
+    # Cross-dataset cluster matching (only meaningful if >1 dataset)
+    if len(unique_ds_ids) > 1:
+        try:
+            h5ad_paths = [per_dataset_dir / ds / "clusters.h5ad" for ds in unique_ds_ids]
+            existing = [(p, ds) for p, ds in zip(h5ad_paths, unique_ds_ids) if p.exists()]
+            if len(existing) > 1:
+                match_strategy = get_match_strategy(args.cluster_match_method)
+                match_df = match_strategy.match(
+                    h5ad_paths=[p for p, _ in existing],
+                    dataset_ids=[ds for _, ds in existing],
+                    n_top_markers=args.n_top_markers,
+                )
+                cross_dir = output_dir / "cross_dataset"
+                cross_dir.mkdir(exist_ok=True)
+                match_df.to_csv(cross_dir / "canonical_cluster_map.tsv", sep="\t", index=False)
+                n_canonical = match_df['canonical_cluster'].nunique() if 'canonical_cluster' in match_df.columns else 0
+                print(f"[multi-sample] Cross-dataset matching ({args.cluster_match_method}): "
+                      f"{len(match_df)} cluster entries → {n_canonical} canonical clusters")
+        except Exception as e:
+            print(f"[multi-sample] Cross-dataset matching failed: {e}")
 
     return  # done with multi-sample path
 

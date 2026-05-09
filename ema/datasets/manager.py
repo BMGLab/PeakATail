@@ -8,12 +8,13 @@ def _check_samtools_version(min_version: tuple[int, int] = (1, 10)) -> None:
     """Raise RuntimeError if samtools is missing or < min_version."""
     try:
         result = subprocess.run(
-            ["samtools", "--version"], capture_output=True, text=True, check=True
+            ["samtools", "--version"], capture_output=True, check=True
         )
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         raise RuntimeError("samtools not found in PATH") from e
     # Parse first line: "samtools 1.13" or "samtools 1.10.1"
-    first_line = result.stdout.split("\n")[0]
+    # Decode with errors='replace' since samtools' license blurb may include non-UTF8 chars
+    first_line = result.stdout.decode("utf-8", errors="replace").split("\n")[0]
     parts = first_line.split()
     if len(parts) < 2:
         raise RuntimeError(f"Cannot parse samtools version from: {first_line}")
