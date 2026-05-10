@@ -28,40 +28,20 @@ class RunYamlError(ValueError):
 
 _VALID_MERGE_STRATEGIES = {"before", "after", "none"}
 
-# Live keys: every YAML key the wizard or `ema run` may emit.  Any key
-# missing here triggers a false "unknown YAML key" warning even though
-# the value is honoured downstream.  Part B will derive this set from
-# the centralised schema (RunConfig); pre-Part-B we hand-extend it to
-# cover every accepted key:
-#   - every key the wizard writes (threads, output_dir, cluster_method,
-#     resolution, n_pcs, random_seed, external_clusters, peak_strategy
-#     and its hyperparameters, ...)
-#   - every key main.py reads (`peak_strategy`, `bam_threads`, `tiles`,
-#     ...)
-_LIVE_KEYS = {
-    # Inputs / outputs
-    "datasets", "gtf", "output_dir", "atlas", "atlas_distance",
-    # Read processing
-    "seqlen", "cb_len", "barcode_tag",
-    # Concurrency / runtime
-    "threads", "bam_threads", "pipeline", "batch_size",
-    "tiles", "tile_size", "tile_overlap",
-    # Peak calling
-    "peak_strategy", "lambda_window", "lambda_method",
-    "lambda_fold_change", "max_pas", "smoothing_window",
-    "min_prominence", "dynamic_threshold", "floor_threshold",
-    "pas_gap",
-    # Filters
-    "ip_filter", "genome_fasta", "annot_filter", "ip_a_stretch",
-    "min_pas_per_cell", "min_read", "min_cells", "min_genes",
-    # Annotation
-    "max_gene_distance", "utr_multiplier", "include_extended",
-    # Clustering
-    "cluster_method", "resolution", "n_pcs",
-    "external_clusters", "random_seed",
-    # Cross-dataset matching
-    "match_method", "cluster_match_method", "n_top_markers",
-}
+
+def _build_live_keys() -> set[str]:
+    """Derive the live YAML key set from the RunConfig schema.
+
+    Adds two keys the schema does not model:
+      * ``datasets`` -- dict-shaped, validated structurally below.
+      * any future schema gaps caught by tests/test_config_schema.py.
+    """
+    from ema.cli.config_schema import RunConfig, yaml_keys_from_schema
+    return {"datasets"} | yaml_keys_from_schema(RunConfig)
+
+
+# Single source of truth -- never hand-edit this set; modify the schema.
+_LIVE_KEYS = _build_live_keys()
 
 # Dead keys: were used by old `ema` but moved to `ema switch ...`
 _DEAD_KEYS = {
