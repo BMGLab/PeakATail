@@ -1,6 +1,9 @@
+import logging
 import threading
 import shutil
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from ema.countmatrix.peackcalling import peak_calling
 from ema.countmatrix.indexing import get_mapping, reset_index
@@ -176,9 +179,9 @@ def main():
             per_bam_tile_sizes=per_bam_tile_sizes if _tile_size_is_auto else None,
         )
 
-        print(
-            f"[tile-pool] {len(bam_list)} dataset(s) → {len(jobs)} jobs "
-            f"through Pool({n_workers})"
+        log.info(
+            "%d dataset(s) -> %d jobs through Pool(%d)",
+            len(bam_list), len(jobs), n_workers,
         )
 
         # Dispatch all jobs through one global pool
@@ -434,10 +437,11 @@ def main():
         output_cb=unified_cb,
     )
 
-    print(
-        f"[multi-sample] Unified {len(bam_list)} BAMs "
-        f"({'atlas' if directory_config.atlas else 'merge'}) "
-        f"-> {unified_bed}"
+    log.info(
+        "Unified %d BAMs (%s) -> %s",
+        len(bam_list),
+        "atlas" if directory_config.atlas else "merge",
+        unified_bed,
     )
 
     # Read the concatenated CB list once — used for per-dataset column selection
@@ -499,9 +503,13 @@ def main():
         run_one_dataset_downstream,
         downstream_worker_star,
     )
+    from ema.logging_config import get_log_queue
 
     # Serialise the genes DataFrame once; each worker deserialises its own copy.
     genes_pkl: bytes = pickle.dumps(genes)
+
+    # Grab the parent's log queue so spawn workers can route records back.
+    _log_queue = get_log_queue()
 
     # Build worker argument tuples (skip datasets with no cells).
     worker_args: list[tuple] = []
@@ -511,7 +519,7 @@ def main():
             if cb.startswith(f"{ds_id}_")
         ]
         if not sub_indices:
-            print(f"[multi-sample] WARNING: no cells found for dataset '{ds_id}' — skipping")
+            log.warning("no cells found for dataset '%s' — skipping", ds_id)
             continue
         sub_cbs = [all_cb_strings[i] for i in sub_indices]
         worker_args.append((
@@ -524,6 +532,7 @@ def main():
             filter_config.min_read,
             filter_config.min_cells,
             filter_config.min_genes,
+            _log_queue,
         ))
 
     # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
@@ -533,15 +542,16 @@ def main():
         get_resource_manager().get_n_jobs(per_worker_mb=500, stage="downstream"),
     )
 
-    print(
-        f"[multi-sample] Per-dataset downstream: {n_datasets} datasets, "
-        f"n_workers={n_workers}"
+    log.info(
+        "Per-dataset downstream: %d datasets, n_workers=%d",
+        n_datasets, n_workers,
     )
 
     if n_workers <= 1 or n_datasets == 1:
         # Inline path: no spawn overhead, backward-compatible.
         for arg_tuple in worker_args:
-            run_one_dataset_downstream(*arg_tuple)
+            *pos, lq = arg_tuple
+            run_one_dataset_downstream(*pos, log_queue=lq)
     else:
         ctx = multiprocessing.get_context("spawn")
         with ctx.Pool(processes=n_workers) as pool:
@@ -571,10 +581,12 @@ def main():
                 cross_dir.mkdir(exist_ok=True)
                 match_df.to_csv(cross_dir / "canonical_cluster_map.tsv", sep="\t", index=False)
                 n_canonical = match_df['canonical_cluster'].nunique() if 'canonical_cluster' in match_df.columns else 0
-                print(f"[multi-sample] Cross-dataset matching ({args.cluster_match_method}): "
-                      f"{len(match_df)} cluster entries → {n_canonical} canonical clusters")
+                log.info(
+                    "Cross-dataset matching (%s): %d cluster entries -> %d canonical clusters",
+                    args.cluster_match_method, len(match_df), n_canonical,
+                )
         except Exception as e:
-            print(f"[multi-sample] Cross-dataset matching failed: {e}")
+            log.warning("Cross-dataset matching failed: %s", e)
 
     return  # done with multi-sample path
 
