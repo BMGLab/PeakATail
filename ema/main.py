@@ -569,11 +569,18 @@ def _run_pipeline_body(progress=None) -> None:
             "cell_count": len(result.collist),
         })
 
-        # Preprocess and cluster
+        # Preprocess and cluster.
+        # Pass min_cells/min_genes EXPLICITLY: matrixfilter.preprocessing's
+        # default kwargs are evaluated at function-def time, so they snapshot
+        # filter_config.min_cells/min_genes from import.  Without this explicit
+        # forward, YAML overrides applied to filter_config above would be
+        # silently ignored on the single-sample path.
         adata = preprocessing(
             sparse_matrix=result.sparse_matrix,
             pas_ids=result.pas_ids,
             collist=collist,
+            min_cells=filter_config.min_cells,
+            min_genes=filter_config.min_genes,
         )
 
         # Save preprocessing stats
