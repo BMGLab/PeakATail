@@ -257,6 +257,15 @@ def _dispatch_run(cfg: dict) -> int:
     from ema.cli.run import run as run_cmd
     # Re-construct argv-style invocation. Cleanest path: write cfg to a temp
     # YAML and pass --config to the click command.
+    # Pull non-YAML keys out of cfg into explicit CLI flags so they actually
+    # take effect.  Without this, wizard-collected `threads` would be written
+    # into the temp YAML, the loader would log "unknown YAML key", and the
+    # user's choice would be silently dropped.
+    extra_args: list[str] = []
+    threads = cfg.pop("threads", None)
+    if threads is not None:
+        extra_args += ["--threads", str(threads)]
+
     import tempfile, yaml
     tf = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
     yaml.safe_dump(cfg, tf)
@@ -264,7 +273,9 @@ def _dispatch_run(cfg: dict) -> int:
     try:
         from click.testing import CliRunner
         runner = CliRunner()
-        result = runner.invoke(run_cmd, ["--config", tf.name], standalone_mode=False)
+        result = runner.invoke(
+            run_cmd, ["--config", tf.name, *extra_args], standalone_mode=False
+        )
         return result.exit_code
     finally:
         Path(tf.name).unlink(missing_ok=True)
