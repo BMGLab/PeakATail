@@ -114,7 +114,7 @@ def run_one_dataset_downstream(
     # 1. Extract per-dataset sub-matrix from unified MTX                  #
     # ------------------------------------------------------------------ #
     pre_filter_mtx = ds_dir / "pre_filter.mtx"
-    print(f"{prefix} extracting {len(sub_indices)} columns from unified MTX")
+    print(f"{prefix} extracting {len(sub_indices)} columns from unified MTX", flush=True)
     extract_per_dataset_mtx(
         input_mtx=Path(unified_mtx),
         keep_col_indices=sub_indices,
@@ -126,7 +126,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     filtered_mtx = ds_dir / "filtered_matrix.mtx"
     filtered_cb_path = ds_dir / "filtered_cb.tsv"
-    print(f"{prefix} filtering barcodes (min_read={min_read})")
+    print(f"{prefix} filtering barcodes (min_read={min_read})", flush=True)
     filter_cb(
         input_matrix_paths=[str(pre_filter_mtx)],
         cb_list=sub_cbs,
@@ -138,7 +138,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 3. Build sparse matrix                                              #
     # ------------------------------------------------------------------ #
-    print(f"{prefix} building sparse matrix")
+    print(f"{prefix} building sparse matrix", flush=True)
     sparse_matrix, pas_ids, _ = make_dataframe(matrixpath=str(filtered_mtx))
 
     with open(filtered_cb_path) as fh:
@@ -147,7 +147,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 4. Annotate PAS with gene assignments                               #
     # ------------------------------------------------------------------ #
-    print(f"{prefix} annotating PAS")
+    print(f"{prefix} annotating PAS", flush=True)
     result = annotate(
         sparse_matrix=sparse_matrix,
         pas_ids=pas_ids,
@@ -158,7 +158,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 5. Preprocess (filter cells/PAS)                                    #
     # ------------------------------------------------------------------ #
-    print(f"{prefix} preprocessing")
+    print(f"{prefix} preprocessing", flush=True)
     adata = preprocessing(
         sparse_matrix=result.sparse_matrix,
         pas_ids=result.pas_ids,
@@ -171,7 +171,7 @@ def run_one_dataset_downstream(
     # 6. Cluster                                                          #
     # ------------------------------------------------------------------ #
     cluster_h5ad = ds_dir / "clusters.h5ad"
-    print(f"{prefix} clustering ({adata.n_obs} cells x {adata.n_vars} PAS)")
+    print(f"{prefix} clustering ({adata.n_obs} cells x {adata.n_vars} PAS)", flush=True)
     clustering(adata=adata, output_h5ad=str(cluster_h5ad))
 
     # ------------------------------------------------------------------ #
@@ -185,7 +185,7 @@ def run_one_dataset_downstream(
     with open(ds_dir / "clustering_stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
 
-    print(f"{prefix} done — {adata.n_obs} cells, {adata.n_vars} PAS -> {cluster_h5ad}")
+    print(f"{prefix} done — {adata.n_obs} cells, {adata.n_vars} PAS -> {cluster_h5ad}", flush=True)
     return stats
 
 
