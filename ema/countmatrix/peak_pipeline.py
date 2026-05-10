@@ -383,6 +383,7 @@ def run_pipeline(
     bam_threads: int = 4,
     batch_size: int = 10000,
     default_sample_id: str = "default",
+    progress_client=None,
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
 
@@ -413,6 +414,13 @@ def run_pipeline(
         batch_size: Number of validated reads per reader batch (default 10000).
         default_sample_id: Fallback sample ID for reads without an RG tag
             (default ``"default"``).
+        progress_client: Optional :class:`~ema.progress.ProgressClient` for
+            progress reporting.  When provided, ``advance(1)`` is called after
+            the pipeline completes (one tick per direction call).  Pass ``None``
+            (default) to disable — all callers without a ``ProgressManager``
+            remain unaffected.  This replaces the tqdm-based per-batch progress
+            that was planned for this stage; a single tick per strand pass is
+            the safe, no-overhead alternative for the spawn-subprocess design.
 
     Raises:
         RuntimeError: If any subprocess exits with a non-zero exit code.
@@ -489,3 +497,7 @@ def run_pipeline(
         raise RuntimeError(
             "Pipeline subprocess failure(s):\n" + "\n".join(failed)
         )
+
+    # Advance the progress bar by one tick (one strand pass complete).
+    if progress_client is not None:
+        progress_client.advance(1)
