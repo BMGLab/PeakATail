@@ -285,6 +285,14 @@ def run_length(
     n_jobs = rm.get_n_jobs(per_worker_mb=300, stage="run_length")
     log.info("run_length: resources: %s", rm.report())
 
+    # Loud warning for the documented no-op flag rather than silent acceptance.
+    if cluster_pairs is not None and cluster_pairs != "":
+        log.warning(
+            "ema switch length: --cluster-pairs is currently unused for length "
+            "analysis (your value %r will NOT filter the output).",
+            cluster_pairs,
+        )
+
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
