@@ -76,8 +76,13 @@ DEFAULTS: dict[str, object] = {
     "per-worker-mb": 300,
 
     # ─── switch length ───
-    "isoform-agg": "gene",
-    "isoform-collapse": "weighted",
+    # Vocabulary must match ema/quantification/strategies/base.py:
+    #   AggregationMode = Literal["per_isoform", "per_gene"]
+    #   IsoformCollapseMode = Literal["none", "mean", "majority"]
+    # Earlier values "gene" / "weighted" silently exercised the WRONG branch
+    # because strategy code only matched the per_* tokens.
+    "isoform-agg": "per_gene",
+    "isoform-collapse": "none",
 
     # ─── validation ───
     "benchmark": False,

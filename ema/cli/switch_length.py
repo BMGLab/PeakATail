@@ -35,14 +35,20 @@ def _list_strategies_callback(ctx, param, value):
 @click.option("--h5ad", "-i", "h5ad", multiple=True, required=True,
               type=click.Path(exists=True, dir_okay=False))
 @click.option("--gtf", type=click.Path(exists=True, dir_okay=False), default=None,
-              help="Required when isoform-agg=isoform.")
+              help="Required when --isoform-agg=per_isoform.")
 @click.option("--cluster-pairs", "cluster_pairs", type=str, default=None)
 @click.option("--cluster-key", "cluster_key", type=str, default="leiden")
 @click.option("--strategy", "-s", "strategy", type=str, default="classic")
-@click.option("--isoform-agg", "isoform_agg", type=click.Choice(["gene", "isoform"]),
-              default=DEFAULTS["isoform-agg"])
-@click.option("--isoform-collapse", "isoform_collapse", type=str,
-              default=DEFAULTS["isoform-collapse"])
+@click.option("--isoform-agg", "isoform_agg",
+              type=click.Choice(["per_gene", "per_isoform"]),
+              default=DEFAULTS["isoform-agg"], show_default=True,
+              help="Aggregation level — must match strategy vocabulary "
+                   "(per_gene collapses isoforms, per_isoform keeps them).")
+@click.option("--isoform-collapse", "isoform_collapse",
+              type=click.Choice(["none", "mean", "majority"]),
+              default=DEFAULTS["isoform-collapse"], show_default=True,
+              help="How to collapse multiple isoforms when --isoform-agg=per_gene "
+                   "and the strategy tracks isoforms internally.")
 def length(**kwargs) -> None:
     """3'UTR shortening / lengthening quantification (PDUI variants)."""
     valid = _list_pdui_strategies()

@@ -272,11 +272,33 @@ def run_length(
         cluster_pairs: Reserved for future filtering; currently unused.
         cluster_key: adata.obs column with cluster labels.
         strategy: PDUI strategy name (classic / proportion / shannon).
-        isoform_agg: Aggregation level — ``"gene"`` or ``"isoform"``.
+        isoform_agg: Aggregation level — ``"per_gene"`` or ``"per_isoform"``.
+            Legacy values ``"gene"`` / ``"isoform"`` are translated to the
+            ``per_*`` form so existing scripts/YAMLs do not silently invoke
+            the wrong branch.
         isoform_collapse: How to summarise isoforms — ``"none"`` / ``"mean"`` /
             ``"majority"``.
         threads: Max parallel workers ceiling (or None for auto).
     """
+    # Backward-compat: translate legacy {"gene","isoform"} tokens to the
+    # canonical {"per_gene","per_isoform"} the strategy code branches on.
+    # Without this, isoform_agg="gene" silently runs the per_isoform path.
+    _LEGACY_AGG = {"gene": "per_gene", "isoform": "per_isoform"}
+    if isoform_agg in _LEGACY_AGG:
+        log.warning(
+            "isoform_agg=%r is a legacy alias; using %r. Please update callers.",
+            isoform_agg, _LEGACY_AGG[isoform_agg],
+        )
+        isoform_agg = _LEGACY_AGG[isoform_agg]
+    if isoform_agg not in ("per_gene", "per_isoform"):
+        raise ValueError(
+            f"isoform_agg={isoform_agg!r} invalid; expected per_gene or per_isoform"
+        )
+    if isoform_collapse not in ("none", "mean", "majority"):
+        raise ValueError(
+            f"isoform_collapse={isoform_collapse!r} invalid; expected none|mean|majority"
+        )
+
     reset_resource_manager()
     rm = ResourceManager(user_max_threads=threads)
     import ema.utils as _ema_utils
@@ -320,9 +342,9 @@ def run_length(
                 pas_isoform_map = map_pas_to_isoforms(pasbed_default, isoform_utrs)
                 log.info("run_length: isoform map: %d PAS mapped", len(pas_isoform_map))
         else:
-            if isoform_agg == "isoform":
-                log.warning("run_length: --isoform-agg=isoform requires --gtf; falling back to gene")
-                isoform_agg = "gene"
+            if isoform_agg == "per_isoform":
+                log.warning("run_length: --isoform-agg=per_isoform requires --gtf; falling back to per_gene")
+                isoform_agg = "per_gene"
 
         for method in pdui_methods:
             strat = get_pdui_strategy(method)
