@@ -1,0 +1,717 @@
+"""Single source of truth for every parameter ``ema run`` consumes.
+
+This module defines :class:`RunConfig`, a dataclass whose fields hold the
+canonical defaults, types, choices, CLI flag names, and YAML keys for
+*every* parameter the pipeline accepts.  Click options, the wizard,
+the YAML loader, and the pipeline body all derive from this single
+source so the surfaces cannot drift.
+
+Adding a new flag is a one-liner: append a new ``field()`` entry to
+:class:`RunConfig` with the right :class:`FieldSpec` metadata, and
+Click options + YAML keys + the legacy bridge pick it up automatically.
+
+Design constraints
+------------------
+* Fields are organised by section comments so the auto-generated --help
+  groups stay readable.
+* Field defaults must match the previously-shipped behaviour exactly so
+  Part B is a refactor, not a behaviour change.  The atlas baseline in
+  reports/baseline_apa_completeness/ is computed against these defaults;
+  changing any default requires regenerating the baseline.
+* The schema does NOT validate dataset structure (that is the YAML
+  loader's job); it only knows about scalar/path parameters.
+
+Why a dataclass and not a TypedDict?
+------------------------------------
+* Dataclasses give us ``fields(cls)`` reflection for free.
+* :func:`dataclasses.field` accepts ``metadata=`` to attach the FieldSpec
+  without bloating the type annotation.
+* mypy / IDE autocompletion works on attribute access.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+from typing import Any, Callable, Iterable, Optional
+
+
+# ---------------------------------------------------------------------------
+# Sentinel: marks "no default value supplied" without conflicting with None
+# (which IS a valid default for optional path / str fields).
+# ---------------------------------------------------------------------------
+class _Unset:
+    def __repr__(self) -> str:  # pragma: no cover -- diagnostic only
+        return "<UNSET>"
+
+
+UNSET = _Unset()
+
+
+# ---------------------------------------------------------------------------
+# Per-field metadata: tells the generators (Click, wizard, YAML, bridge)
+# everything they need to know about a field.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FieldSpec:
+    """Per-field metadata held in dataclass field() metadata.
+
+    Attributes:
+        cli_flag: CLI flag (e.g. ``"--min-read"``).  ``None`` means the
+            field is not exposed on the CLI.
+        yaml_key: YAML key (e.g. ``"min_read"``).  ``None`` means the
+            field is not loadable from YAML.
+        description: Human-readable help text used by Click ``--help``
+            and the wizard.
+        choice: Tuple of valid string values, or ``None`` for free-form.
+        is_flag: True if the CLI flag is a boolean ``--xxx/--no-xxx``.
+        legacy_alias: Optional legacy YAML key/CLI flag to accept for
+            backward compatibility (e.g. ``min_genes`` → ``min_pas_per_cell``).
+        click_type: Override the auto-derived Click type.  Use a
+            ``click.Path`` instance for path fields that need
+            ``exists=True``.
+        click_kwargs: Extra keyword args forwarded to ``click.option``.
+        legacy_args_attr: Name of the attribute on the legacy ``args``
+            namespace this field should be bridged to (when the names
+            differ -- e.g. ``peak_strategy`` → ``args.strategy``).
+        legacy_dataclass_attr: ``"<which_dataclass>.<attr>"`` for fields
+            that bridge into ``directory_config`` / ``variable_config`` /
+            ``filter_config`` rather than the catch-all ``args`` namespace.
+        skip_legacy_bridge: If True, the bridge does not touch the legacy
+            globals (used for purely CLI-only fields like ``--config``).
+    """
+    cli_flag: Optional[str] = None
+    yaml_key: Optional[str] = None
+    description: str = ""
+    choice: Optional[tuple[str, ...]] = None
+    is_flag: bool = False
+    legacy_alias: Optional[str] = None
+    click_type: Any = None
+    click_kwargs: Optional[dict] = None
+    legacy_args_attr: Optional[str] = None
+    legacy_dataclass_attr: Optional[str] = None
+    skip_legacy_bridge: bool = False
+
+
+def _spec(**kwargs: Any) -> dict[str, FieldSpec]:
+    """Convenience factory: ``metadata={"spec": FieldSpec(**kwargs)}``."""
+    return {"spec": FieldSpec(**kwargs)}
+
+
+# ---------------------------------------------------------------------------
+# RunConfig: the schema.  ORDER MATTERS for the auto-generated --help
+# layout (Click renders flags top-to-bottom in declaration order).
+# ---------------------------------------------------------------------------
+@dataclass
+class RunConfig:
+    """Canonical parameter container for ``ema run``.
+
+    Use :meth:`from_click_kwargs` to construct from a Click invocation,
+    :meth:`from_yaml` to construct from a YAML file, and
+    :meth:`apply_to_legacy_globals` to push the values into the legacy
+    ``ema.config`` module-level dataclasses the pipeline body reads.
+    """
+
+    # ─── inputs / outputs ────────────────────────────────────────────────
+    config: Optional[Path] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--config", yaml_key=None, skip_legacy_bridge=True,
+            description="YAML config; CLI flags override individual keys.",
+        ),
+    )
+    output: str = field(
+        default="emaout",
+        metadata=_spec(
+            cli_flag="--output", yaml_key="output_dir",
+            legacy_dataclass_attr="directory_config.output_dir",
+            description="Output directory (timestamp suffix added automatically).",
+        ),
+    )
+    bam_dir: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--bam-dir", yaml_key=None,
+            legacy_dataclass_attr="directory_config.bam_dir",
+            description="Single-BAM convenience.",
+        ),
+    )
+    bam_files: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--bam-files", yaml_key=None, skip_legacy_bridge=True,
+            description="Comma-separated multi-BAM list.",
+        ),
+    )
+    gtf: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--gtf", yaml_key="gtf",
+            legacy_dataclass_attr="directory_config.gtf_dir",
+            description="GTF annotation file.",
+        ),
+    )
+    atlas: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--atlas", yaml_key="atlas",
+            legacy_dataclass_attr="directory_config.atlas",
+            description="Reference PAS atlas BED.",
+        ),
+    )
+    atlas_distance: int = field(
+        default=50,
+        metadata=_spec(
+            cli_flag="--atlas-distance", yaml_key="atlas_distance",
+            legacy_dataclass_attr="directory_config.atlas_distance",
+            description="Atlas snap distance (bp).",
+        ),
+    )
+
+    # ─── read processing ─────────────────────────────────────────────────
+    seq_len: Optional[int] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--seq-len", yaml_key="seqlen",
+            legacy_dataclass_attr="variable_config.seqlen",
+            description="Sequencing read length.",
+        ),
+    )
+    cb_len: Optional[int] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--cb-len", yaml_key="cb_len",
+            legacy_dataclass_attr="variable_config.cb_len",
+            description="Cell-barcode length (bp).",
+        ),
+    )
+    barcode_tag: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--barcode-tag", yaml_key="barcode_tag",
+            legacy_dataclass_attr="variable_config.barcode_tag",
+            description="BAM tag holding the cell barcode (default CB).",
+        ),
+    )
+
+    # ─── concurrency / runtime ──────────────────────────────────────────
+    threads: Optional[int] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--threads", yaml_key="threads", skip_legacy_bridge=True,
+            description="Max parallel workers (auto-detected if not set).",
+        ),
+    )
+    bam_threads: int = field(
+        default=4,
+        metadata=_spec(
+            cli_flag="--bam-threads", yaml_key="bam_threads",
+            legacy_args_attr="bam_threads",
+            description="pysam decompression threads per BAM.",
+        ),
+    )
+    pipeline: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--pipeline", yaml_key="pipeline", is_flag=True,
+            legacy_args_attr="pipeline",
+            description="Pipeline mode (currently only used by --tiles).",
+        ),
+    )
+    batch_size: int = field(
+        default=10000,
+        metadata=_spec(
+            cli_flag="--batch-size", yaml_key="batch_size",
+            legacy_args_attr="batch_size",
+            description="Worker batch size for streaming reads.",
+        ),
+    )
+    tiles: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--tiles", yaml_key="tiles", is_flag=True,
+            legacy_args_attr="tiles",
+            description="Enable tile-based peak calling (parallel pool).",
+        ),
+    )
+    tile_size: Optional[int] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--tile-size", yaml_key="tile_size",
+            legacy_args_attr="tile_size",
+            description="Tile size in bp (auto if unset).",
+        ),
+    )
+    tile_overlap: int = field(
+        default=10000,
+        metadata=_spec(
+            cli_flag="--tile-overlap", yaml_key="tile_overlap",
+            legacy_args_attr="tile_overlap",
+            description="Tile overlap in bp.",
+        ),
+    )
+
+    # ─── peak calling ────────────────────────────────────────────────────
+    peak_strategy: str = field(
+        default="original",
+        metadata=_spec(
+            cli_flag="--peak-strategy", yaml_key="peak_strategy",
+            legacy_args_attr="strategy",
+            description="Peak-calling strategy (run --list-strategies to see).",
+        ),
+    )
+    lambda_window: int = field(
+        default=5000,
+        metadata=_spec(
+            cli_flag="--lambda-window", yaml_key="lambda_window",
+            legacy_args_attr="lambda_window",
+            description="Background lambda estimation window (bp).",
+        ),
+    )
+    lambda_method: str = field(
+        default="median",
+        metadata=_spec(
+            cli_flag="--lambda-method", yaml_key="lambda_method",
+            legacy_args_attr="lambda_method",
+            description="Lambda estimator (median / mean / ...).",
+        ),
+    )
+    lambda_fold_change: float = field(
+        default=2.0,
+        metadata=_spec(
+            cli_flag="--lambda-fold-change", yaml_key="lambda_fold_change",
+            legacy_args_attr="lambda_fold_change",
+            description="Lambda fold-change cutoff for peak detection.",
+        ),
+    )
+    max_pas: int = field(
+        default=5,
+        metadata=_spec(
+            cli_flag="--max-pas", yaml_key="max_pas",
+            legacy_args_attr="max_pas",
+            description="Maximum PAS sites kept per peak.",
+        ),
+    )
+    smoothing_window: int = field(
+        default=50,
+        metadata=_spec(
+            cli_flag="--smoothing-window", yaml_key="smoothing_window",
+            legacy_args_attr="smoothing_window",
+            description="Coverage smoothing window (bp).",
+        ),
+    )
+    min_prominence: float = field(
+        default=5.0,
+        metadata=_spec(
+            cli_flag="--min-prominence", yaml_key="min_prominence",
+            legacy_args_attr="min_prominence",
+            description="scipy.signal.find_peaks prominence threshold.",
+        ),
+    )
+    dynamic_threshold: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--dynamic-threshold", yaml_key="dynamic_threshold",
+            is_flag=True, legacy_args_attr="dynamic_threshold",
+            description="Use a per-window dynamic peak threshold.",
+        ),
+    )
+    floor_threshold: int = field(
+        default=3,
+        metadata=_spec(
+            cli_flag="--floor-threshold", yaml_key="floor_threshold",
+            legacy_args_attr="floor_threshold",
+            description="Minimum peak height (clamps dynamic threshold).",
+        ),
+    )
+    pas_gap: int = field(
+        default=100,
+        metadata=_spec(
+            cli_flag="--pas-gap", yaml_key="pas_gap",
+            legacy_args_attr="pas_gap",
+            description="Minimum gap between PAS within a peak (bp).",
+        ),
+    )
+
+    # ─── filters ─────────────────────────────────────────────────────────
+    ip_filter: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--ip-filter", yaml_key="ip_filter", is_flag=True,
+            skip_legacy_bridge=True,  # currently a no-op in `ema run`
+            description="Enable internal-priming filter (currently no-op).",
+        ),
+    )
+    genome_fasta: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--genome-fasta", yaml_key="genome_fasta",
+            skip_legacy_bridge=True,
+            description="Genome FASTA for --ip-filter (currently no-op).",
+        ),
+    )
+    annot_filter: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--annot-filter", yaml_key="annot_filter", is_flag=True,
+            skip_legacy_bridge=True,
+            description="Annotation filter (currently no-op).",
+        ),
+    )
+    ip_a_stretch: int = field(
+        default=6,
+        metadata=_spec(
+            cli_flag="--ip-a-stretch", yaml_key="ip_a_stretch",
+            skip_legacy_bridge=True,
+            description="A-stretch length for --ip-filter (currently no-op).",
+        ),
+    )
+    min_pas_per_cell: int = field(
+        default=50,
+        metadata=_spec(
+            cli_flag="--min-pas-per-cell", yaml_key="min_pas_per_cell",
+            legacy_alias="min_genes",
+            legacy_dataclass_attr="filter_config.min_pas_per_cell",
+            description="Minimum PAS per cell (also bridges to filter_config.min_genes).",
+        ),
+    )
+    min_read: int = field(
+        default=1500,
+        metadata=_spec(
+            cli_flag="--min-read", yaml_key="min_read",
+            legacy_dataclass_attr="filter_config.min_read",
+            description="Minimum reads per cell barcode.",
+        ),
+    )
+    min_cells: int = field(
+        default=3,
+        metadata=_spec(
+            cli_flag="--min-cells", yaml_key="min_cells",
+            legacy_dataclass_attr="filter_config.min_cells",
+            description="Minimum cells expressing a PAS.",
+        ),
+    )
+
+    # ─── annotation ──────────────────────────────────────────────────────
+    max_gene_distance: int = field(
+        default=5000,
+        metadata=_spec(
+            cli_flag="--max-gene-distance", yaml_key="max_gene_distance",
+            legacy_args_attr="max_gene_distance",
+            description="Max distance for gene-end annotation (bp).",
+        ),
+    )
+    utr_multiplier: float = field(
+        default=2.0,
+        metadata=_spec(
+            cli_flag="--utr-multiplier", yaml_key="utr_multiplier",
+            legacy_args_attr="utr_multiplier",
+            description="3'UTR length multiplier for extended-3' annotation.",
+        ),
+    )
+    include_extended: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--include-extended", yaml_key="include_extended",
+            is_flag=True, legacy_args_attr="include_extended",
+            description="Include extended-3' annotations.",
+        ),
+    )
+
+    # ─── clustering ──────────────────────────────────────────────────────
+    cluster_method: str = field(
+        default="leiden_tfidf",
+        metadata=_spec(
+            cli_flag="--cluster-method", yaml_key="cluster_method",
+            legacy_args_attr="clustering_method",
+            description="Clustering strategy (leiden_tfidf / leiden_libsize / external).",
+        ),
+    )
+    resolution: float = field(
+        default=1.0,
+        metadata=_spec(
+            cli_flag="--resolution", yaml_key="resolution",
+            legacy_args_attr="resolution",
+            description="Leiden resolution.",
+        ),
+    )
+    n_pcs: int = field(
+        default=40,
+        metadata=_spec(
+            cli_flag="--n-pcs", yaml_key="n_pcs",
+            legacy_args_attr="n_pcs",
+            description="Number of principal components.",
+        ),
+    )
+    external_clusters: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--external-clusters", yaml_key="external_clusters",
+            legacy_args_attr="external_clusters",
+            description="Path to external cluster labels TSV.",
+        ),
+    )
+    random_seed: int = field(
+        default=42,
+        metadata=_spec(
+            cli_flag="--random-seed", yaml_key="random_seed",
+            legacy_args_attr="random_seed",
+            description="RNG seed for clustering reproducibility.",
+        ),
+    )
+
+    # ─── cross-dataset matching ─────────────────────────────────────────
+    match_method: str = field(
+        default="marker_overlap",
+        metadata=_spec(
+            cli_flag="--match-method", yaml_key="match_method",
+            legacy_alias="cluster_match_method",
+            legacy_args_attr="cluster_match_method",
+            description="Cross-dataset cluster match strategy.",
+        ),
+    )
+    n_top_markers: int = field(
+        default=50,
+        metadata=_spec(
+            cli_flag="--n-top-markers", yaml_key="n_top_markers",
+            legacy_args_attr="n_top_markers",
+            description="Number of top marker PAS per cluster.",
+        ),
+    )
+
+    # ─── validation (warn-only knobs, no behaviour) ────────────────────
+    benchmark: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--benchmark", yaml_key="benchmark", is_flag=True,
+            skip_legacy_bridge=True,
+            description="No-op (use scripts/validate_strategies.py).",
+        ),
+    )
+    validate_db: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--validate-db", yaml_key="validate_db",
+            skip_legacy_bridge=True,
+            description="No-op (use scripts/validate_strategies.py).",
+        ),
+    )
+
+    # ─── runtime / observability (CLI-only) ────────────────────────────
+    log_level: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--log-level", yaml_key=None, skip_legacy_bridge=True,
+            description="Logger level or `name=LEVEL` (comma-separated).",
+        ),
+    )
+    no_log_file: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--no-log-file", yaml_key=None, is_flag=True,
+            skip_legacy_bridge=True,
+            description="Don't write peakatail_<ts>.log next to outputs.",
+        ),
+    )
+    no_progress: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--no-progress", yaml_key=None, is_flag=True,
+            skip_legacy_bridge=True,
+            description="Suppress Rich progress bars.",
+        ),
+    )
+    verbose: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--verbose", yaml_key=None, skip_legacy_bridge=True,
+            description="Verbosity counter (-v / -vv).",
+        ),
+    )
+    quiet: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--quiet", yaml_key=None, is_flag=True,
+            skip_legacy_bridge=True,
+            description="WARNING-and-up only.",
+        ),
+    )
+
+    # ---------------------------------------------------------------------
+    # Constructors
+    # ---------------------------------------------------------------------
+    @classmethod
+    def from_yaml_dict(cls, cfg: dict[str, Any]) -> "RunConfig":
+        """Build a RunConfig from a YAML-loaded dict.
+
+        Honours :attr:`FieldSpec.legacy_alias` so old YAMLs (e.g. with
+        ``min_genes`` instead of ``min_pas_per_cell``) keep working.
+        Unknown keys are ignored here -- the YAML loader is responsible
+        for warning on them.
+        """
+        kwargs: dict[str, Any] = {}
+        yaml_to_field = yaml_key_to_field_name(cls)
+        legacy_to_field = legacy_alias_to_field_name(cls)
+        for key, val in cfg.items():
+            if key in yaml_to_field:
+                kwargs[yaml_to_field[key]] = val
+            elif key in legacy_to_field:
+                kwargs[legacy_to_field[key]] = val
+            # else: silent skip (loader will have warned)
+        return cls(**kwargs)
+
+    # ---------------------------------------------------------------------
+    # Apply to legacy module-level config dataclasses
+    # ---------------------------------------------------------------------
+    def apply_to_legacy_globals(
+        self,
+        user_set: Iterable[str] | None = None,
+    ) -> None:
+        """Push field values into ``ema.config`` module-level dataclasses.
+
+        This is the *only* bridge between the new schema and the legacy
+        pipeline body.  The body still reads ``args.<attr>``,
+        ``filter_config.<attr>``, ``directory_config.<attr>`` etc.
+
+        Args:
+            user_set: Set of field names the user explicitly supplied
+                (from Click ParameterSource).  When ``None`` we apply
+                every non-default field; when given, only those fields
+                are bridged so values left at the dataclass default do
+                not trample YAML-set globals.
+        """
+        from ema import config as _cfg
+        targets = {
+            "directory_config": _cfg.directory_config,
+            "variable_config": _cfg.variable_config,
+            "filter_config": _cfg.filter_config,
+            "args": _cfg.args,
+        }
+        for f in fields(self):
+            spec: FieldSpec = f.metadata.get("spec")  # type: ignore[assignment]
+            if spec is None or spec.skip_legacy_bridge:
+                continue
+            value = getattr(self, f.name)
+            if user_set is not None and f.name not in user_set:
+                # Skip fields the user didn't set so YAML wins.
+                continue
+            if spec.legacy_dataclass_attr:
+                holder, attr = spec.legacy_dataclass_attr.split(".")
+                setattr(targets[holder], attr, value)
+                # min_pas_per_cell is read by preprocessing() as
+                # filter_config.min_genes; bridge that too.
+                if spec.legacy_alias == "min_genes":
+                    setattr(targets["filter_config"], "min_genes", value)
+            elif spec.legacy_args_attr:
+                setattr(targets["args"], spec.legacy_args_attr, value)
+
+
+# ---------------------------------------------------------------------------
+# Reflection helpers used by Click / wizard / YAML loader generators
+# ---------------------------------------------------------------------------
+def field_specs(cls: type) -> dict[str, FieldSpec]:
+    """Return ``{field_name: FieldSpec}`` for every field on ``cls``."""
+    out: dict[str, FieldSpec] = {}
+    for f in fields(cls):
+        spec = f.metadata.get("spec")
+        if spec is not None:
+            out[f.name] = spec
+    return out
+
+
+def yaml_keys_from_schema(cls: type = RunConfig) -> set[str]:
+    """All YAML keys the schema accepts.
+
+    Used by :mod:`ema.cli.yaml_loader` to drive the unknown-key warning.
+    """
+    keys: set[str] = set()
+    for spec in field_specs(cls).values():
+        if spec.yaml_key is not None:
+            keys.add(spec.yaml_key)
+        if spec.legacy_alias is not None:
+            keys.add(spec.legacy_alias)
+    return keys
+
+
+def yaml_key_to_field_name(cls: type = RunConfig) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for name, spec in field_specs(cls).items():
+        if spec.yaml_key is not None:
+            out[spec.yaml_key] = name
+    return out
+
+
+def legacy_alias_to_field_name(cls: type = RunConfig) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for name, spec in field_specs(cls).items():
+        if spec.legacy_alias is not None:
+            out[spec.legacy_alias] = name
+    return out
+
+
+def cli_defaults(cls: type = RunConfig) -> dict[str, Any]:
+    """Return ``{cli_flag_kebab: default}`` (e.g. ``{"min-read": 1500}``).
+
+    Used by :mod:`ema.cli.defaults` so DEFAULTS is derived from the
+    schema instead of being a hand-maintained second copy.
+    """
+    out: dict[str, Any] = {}
+    for f in fields(cls):
+        spec: FieldSpec = f.metadata.get("spec")  # type: ignore[assignment]
+        if spec is None or spec.cli_flag is None:
+            continue
+        kebab = spec.cli_flag.lstrip("-")
+        out[kebab] = f.default
+    return out
+
+
+def click_options_from_schema(
+    cls: type = RunConfig,
+    skip: Iterable[str] = (),
+) -> Callable:
+    """Decorator factory that adds ``@click.option(...)`` for every
+    schema field with a ``cli_flag``.
+
+    Use ``skip`` to omit fields handled separately (e.g. ``--config`` /
+    ``--output`` / common-options that ``common_options()`` already
+    attaches).
+
+    Click runs decorators in reverse of declaration order, so we apply
+    in reverse to preserve schema ordering in --help.
+    """
+    import click
+
+    skip_set = set(skip)
+
+    def decorator(fn: Callable) -> Callable:
+        opts = []
+        for f in fields(cls):
+            spec: FieldSpec = f.metadata.get("spec")  # type: ignore[assignment]
+            if spec is None or spec.cli_flag is None or f.name in skip_set:
+                continue
+            opt_kwargs: dict = {"default": f.default, "help": spec.description}
+            if spec.is_flag:
+                opt_kwargs["is_flag"] = True
+            elif spec.choice is not None:
+                opt_kwargs["type"] = click.Choice(list(spec.choice))
+            elif spec.click_type is not None:
+                opt_kwargs["type"] = spec.click_type
+            else:
+                # Derive type from the dataclass annotation default
+                ann = f.type
+                if ann in (int, "int", "Optional[int]", "int | None"):
+                    opt_kwargs["type"] = int
+                elif ann in (float, "float"):
+                    opt_kwargs["type"] = float
+                elif ann is bool or ann == "bool":
+                    opt_kwargs["is_flag"] = True
+                # else: leave Click to default to str
+            if spec.click_kwargs:
+                opt_kwargs.update(spec.click_kwargs)
+            # Variable name in callback kwargs is the field name (snake_case)
+            opts.append(click.option(spec.cli_flag, f.name, **opt_kwargs))
+
+        for opt in reversed(opts):
+            fn = opt(fn)
+        return fn
+
+    return decorator
