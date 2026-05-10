@@ -15,10 +15,10 @@ def set_default_sample_id(sample_id: str) -> None:
 def read_check(
     read,
     direction: bool,
-    barcode=variable_config.barcode_tag,
-    barcode_len=variable_config.cb_len,
-    seq_len=variable_config.seqlen,
-    ignore_chro=variable_config.ignore_chro,
+    barcode=None,
+    barcode_len=None,
+    seq_len=None,
+    ignore_chro=None,
     *,
     sample_id: str | None = None,
 ):
@@ -47,6 +47,22 @@ def read_check(
         A 5-tuple ``(chro, start, end, strand, cb)`` for valid reads, or
         ``(0, 0, 0, 0, 0)`` for reads that should be skipped.
     """
+    # Look up defaults from variable_config at CALL time (not at function
+    # definition time) so that the value reflects the live YAML/CLI bridge.
+    # Previously these were captured as Python default arguments at module
+    # import — meaning a None at import time was frozen forever, causing
+    # `pysam.AlignedSegment.get_tag(None)` to crash with
+    # "expected bytes, NoneType found" when the user did not pass
+    # --barcode-tag.
+    if barcode is None:
+        barcode = variable_config.barcode_tag
+    if barcode_len is None:
+        barcode_len = variable_config.cb_len
+    if seq_len is None:
+        seq_len = variable_config.seqlen
+    if ignore_chro is None:
+        ignore_chro = variable_config.ignore_chro
+
     try:  # do not calculate reads don't have CB
         cb = read.get_tag(barcode)
         if len(cb) != barcode_len:
