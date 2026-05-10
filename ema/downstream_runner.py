@@ -129,6 +129,8 @@ def run_one_dataset_downstream(
         keep_col_indices=sub_indices,
         output_mtx=pre_filter_mtx,
     )
+    if progress_client is not None:
+        progress_client.advance(1)  # tick 1/6: extract
 
     # ------------------------------------------------------------------ #
     # 2. Filter barcodes by minimum read count                            #
@@ -143,6 +145,8 @@ def run_one_dataset_downstream(
         filter_cb_file=str(filtered_cb_path),
         min_read=min_read,
     )
+    if progress_client is not None:
+        progress_client.advance(1)  # tick 2/6: filter
 
     # ------------------------------------------------------------------ #
     # 3. Build sparse matrix                                              #
@@ -152,6 +156,8 @@ def run_one_dataset_downstream(
 
     with open(filtered_cb_path) as fh:
         collist = [line.strip() for line in fh if line.strip()]
+    if progress_client is not None:
+        progress_client.advance(1)  # tick 3/6: build_sparse
 
     # ------------------------------------------------------------------ #
     # 4. Annotate PAS with gene assignments                               #
@@ -163,6 +169,8 @@ def run_one_dataset_downstream(
         collist=collist,
         genes=genes,
     )
+    if progress_client is not None:
+        progress_client.advance(1)  # tick 4/6: annotate
 
     # ------------------------------------------------------------------ #
     # 5. Preprocess (filter cells/PAS)                                    #
@@ -175,6 +183,8 @@ def run_one_dataset_downstream(
         min_cells=filter_min_cells,
         min_genes=filter_min_genes,
     )
+    if progress_client is not None:
+        progress_client.advance(1)  # tick 5/6: preprocess
 
     # ------------------------------------------------------------------ #
     # 6. Cluster                                                          #
@@ -182,6 +192,8 @@ def run_one_dataset_downstream(
     cluster_h5ad = ds_dir / "clusters.h5ad"
     log.info("%s clustering (%d cells x %d PAS)", prefix, adata.n_obs, adata.n_vars)
     clustering(adata=adata, output_h5ad=str(cluster_h5ad))
+    if progress_client is not None:
+        progress_client.advance(1)  # tick 6/6: cluster
 
     # ------------------------------------------------------------------ #
     # 7. Persist stats                                                    #
@@ -207,14 +219,21 @@ def downstream_worker_star(args: tuple) -> dict:
     lambda or nested function) so it is picklable under the ``spawn`` context.
 
     Args:
-        args: Tuple of positional arguments for ``run_one_dataset_downstream``,
-            optionally followed by a ``log_queue`` value as the 10th element
-            (or as a ``{"log_queue": ...}`` dict appended to the tuple).
+        args: Tuple of positional arguments for ``run_one_dataset_downstream``.
+            Supported arities:
+
+            - 10 elements: ``(*pos_args[9], log_queue)`` — no progress client
+            - 11 elements: ``(*pos_args[9], log_queue, progress_client)`` —
+              progress client added by Phase 10 wiring
 
     Returns:
         The stats dict returned by ``run_one_dataset_downstream``.
     """
-    # Support optional log_queue appended as last element of the tuple.
+    if len(args) == 11:
+        *pos_args, log_queue, progress_client = args
+        return run_one_dataset_downstream(
+            *pos_args, log_queue=log_queue, progress_client=progress_client
+        )
     if len(args) == 10:
         *pos_args, log_queue = args
         return run_one_dataset_downstream(*pos_args, log_queue=log_queue)

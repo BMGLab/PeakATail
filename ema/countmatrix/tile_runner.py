@@ -631,6 +631,7 @@ def build_job_specs(
 def run_all_jobs(
     jobs: list[JobSpec],
     n_workers: int,
+    progress_client=None,
 ) -> dict[tuple[str, bool], list[dict[str, Any]]]:
     """Dispatch all jobs through a single global ``multiprocessing.Pool``.
 
@@ -642,6 +643,10 @@ def run_all_jobs(
         jobs: Flat list of :class:`JobSpec` instances produced by
             :func:`build_job_specs`.
         n_workers: Number of parallel worker processes.
+        progress_client: Optional :class:`~ema.progress.ProgressClient`.
+            When supplied, ``advance(1)`` is called after each tile result is
+            collected.  Pass ``None`` (default) to disable progress ticking —
+            all callers without a ``ProgressManager`` remain unaffected.
 
     Returns:
         Dict mapping ``(dataset_id, direction)`` → list of tile-result dicts
@@ -666,6 +671,8 @@ def run_all_jobs(
             for result in pool.imap_unordered(tile_worker, jobs, chunksize=1):
                 key = (result["dataset_id"], result["direction"])
                 grouped.setdefault(key, []).append(result)
+                if progress_client is not None:
+                    progress_client.advance(1)
         except Exception:
             pool.terminate()
             raise

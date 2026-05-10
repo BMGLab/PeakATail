@@ -41,7 +41,148 @@ except ImportError:
 from ema.downstream_runner import extract_per_dataset_mtx  # noqa: E402
 
 
-def main():
+def run(
+    cfg: dict | None = None,
+    out_dir=None,
+    progress=None,
+    **kwargs,
+) -> int:
+    """Entry point called by ``ema run`` (Click CLI).
+
+    Bridges the Click-driven ``cfg`` dict and keyword overrides into the
+    module-level config dataclasses (``directory_config``, ``variable_config``,
+    ``filter_config``, ``args``) that the existing pipeline body reads, then
+    calls :func:`main` to execute the full pipeline.
+
+    When ``cfg`` is ``None`` this function behaves identically to the legacy
+    ``main()`` call — it consumes whatever the argparse-populated globals
+    already contain.
+
+    Args:
+        cfg: Resolved YAML/CLI config dict from ``ema.cli.run``.  Must contain
+            at minimum a ``"datasets"`` key.  Other recognised keys mirror the
+            YAML schema (``gtf``, ``atlas``, ``atlas_distance``, ``seqlen``,
+            ``cb_len``, ``barcode_tag``, ``min_read``, ``min_cells``,
+            ``min_pas_per_cell``, ``pas_gap``).
+        out_dir: Output directory (``pathlib.Path`` or ``str``).  When provided
+            the pipeline writes all outputs here instead of the default
+            ``emaout/`` directory.
+        progress: A :class:`~ema.progress.ProgressManager` instance (already
+            entered as a context manager).  When *None* progress wiring is a
+            no-op — no bars are rendered.
+        **kwargs: Additional per-run overrides forwarded from the Click command
+            (e.g. ``peak_strategy``, ``dynamic_threshold``, ``tiles``, etc.).
+
+    Returns:
+        Exit code (0 on success).
+    """
+    # ------------------------------------------------------------------ #
+    # 1. Bridge cfg + kwargs into module-level config dataclasses          #
+    # ------------------------------------------------------------------ #
+    if cfg is not None:
+        # Output directory
+        if out_dir is not None:
+            directory_config.output_dir = str(out_dir)
+
+        # Datasets list
+        if "datasets" in cfg:
+            directory_config.datasets = cfg["datasets"]
+
+        # Optional path overrides from YAML
+        if "gtf" in cfg:
+            directory_config.gtf_dir = cfg["gtf"]
+        if "atlas" in cfg:
+            directory_config.atlas = cfg["atlas"]
+        if "atlas_distance" in cfg:
+            directory_config.atlas_distance = cfg["atlas_distance"]
+
+        # variable_config scalars
+        if "seqlen" in cfg:
+            variable_config.seqlen = cfg["seqlen"]
+        if "cb_len" in cfg:
+            variable_config.cb_len = cfg["cb_len"]
+        if "barcode_tag" in cfg:
+            variable_config.barcode_tag = cfg["barcode_tag"]
+
+        # filter_config scalars
+        if "min_read" in cfg:
+            filter_config.min_read = cfg["min_read"]
+        if "min_cells" in cfg:
+            filter_config.min_cells = cfg["min_cells"]
+        if "min_pas_per_cell" in cfg:
+            filter_config.min_pas_per_cell = cfg["min_pas_per_cell"]
+
+        # Bridge kwargs into the argparse-style args namespace so the
+        # pipeline body can read them via the existing `args.<attr>` pattern.
+        _kwarg_to_args_map = {
+            "peak_strategy": "strategy",
+            "dynamic_threshold": "dynamic_threshold",
+            "floor_threshold": "floor_threshold",
+            "lambda_fold_change": "lambda_fold_change",
+            "lambda_window": "lambda_window",
+            "bam_threads": "bam_threads",
+            "tiles": "tiles",
+            "tile_size": "tile_size",
+            "tile_overlap": "tile_overlap",
+            "pipeline": "pipeline",
+            "batch_size": "batch_size",
+            "max_gene_distance": "max_gene_distance",
+            "utr_multiplier": "utr_multiplier",
+            "include_extended": "include_extended",
+            "min_pas_per_cell": "min_pas_per_cell",
+            "pas_gap": "pas_gap",
+            "cluster_method": "clustering_method",
+            "resolution": "resolution",
+            "n_pcs": "n_pcs",
+            "external_clusters": "external_clusters",
+            "random_seed": "random_seed",
+            "match_method": "cluster_match_method",
+            "n_top_markers": "n_top_markers",
+        }
+        for kw_key, args_attr in _kwarg_to_args_map.items():
+            if kw_key in kwargs and kwargs[kw_key] is not None:
+                setattr(args, args_attr, kwargs[kw_key])
+
+    # ------------------------------------------------------------------ #
+    # 2. Delegate to the pipeline body (progress wired inside)             #
+    # ------------------------------------------------------------------ #
+    _run_pipeline_body(progress=progress)
+    return 0
+
+
+def _run_pipeline_body(progress=None) -> None:
+    """Execute the full pipeline using the current module-level config state.
+
+    Args:
+        progress: Optional :class:`~ema.progress.ProgressManager`.  Bars are
+            registered here and :class:`~ema.progress.ProgressClient` handles
+            are passed into workers.  All wiring is no-op when *progress* is
+            ``None``.
+    """
+    # Helper: safely call add_stage even when progress is None
+    def _add_stage(name: str, total=None) -> int | None:
+        if progress is None:
+            return None
+        return progress.add_stage(name, total=total)
+
+    def _add_subtask(parent, name: str, total=None) -> int | None:
+        if progress is None or parent is None:
+            return None
+        return progress.add_subtask(parent, name, total=total)
+
+    def _client(task_id) -> object | None:
+        if progress is None or task_id is None:
+            return None
+        return progress.client(task_id)
+
+    def _advance(task_id, n: int = 1) -> None:
+        if progress is not None and task_id is not None:
+            progress.client(task_id).advance(n)
+
+    # ------------------------------------------------------------------
+    # From this point on the code is identical to the original main() body.
+    # ------------------------------------------------------------------
+
     # Set up output directory structure
     output_mgr = OutputManager(base_dir=directory_config.output_dir)
     output_mgr.setup()
@@ -89,6 +230,9 @@ def main():
     else:
         # Fallback: single BAM from legacy --bamDir
         bam_list = [("default", directory_config.bam_dir)]
+
+    # Register top-level progress stages now that we know bam_list length.
+    _peak_stage = _add_stage("Peak calling", total=len(bam_list))
 
     # -------------------------------------------------------------------------
     # Peak-calling — either global tile pool (--tiles) or sequential per-BAM.
@@ -185,7 +329,9 @@ def main():
         )
 
         # Dispatch all jobs through one global pool
-        grouped = run_all_jobs(jobs, n_workers=n_workers)
+        # Pass a progress client so run_all_jobs can advance the peak bar per tile.
+        _peak_client = _client(_peak_stage)
+        grouped = run_all_jobs(jobs, n_workers=n_workers, progress_client=_peak_client)
 
         # Merge per-(dataset_id, direction) group and reconstruct file paths
         _ds_bam_indices: dict[str, int] = {}
@@ -295,6 +441,9 @@ def main():
             all_neg_cbs.append(str(cb_tsv))
             all_dataset_ids_for_pos.append(dataset_id)
             all_dataset_ids_for_neg.append(dataset_id)
+
+            # Advance peak-calling bar once per dataset (sequential mode).
+            _advance(_peak_stage)
 
     # Save peak calling stats
     output_mgr.save_stats("peak_calling", {
@@ -408,6 +557,10 @@ def main():
     all_ds_ids = all_dataset_ids_for_pos + all_dataset_ids_for_neg
 
     # Dispatch atlas vs. coordinate-merge based on config
+    _atlas_stage = _add_stage(
+        "Atlas snap" if directory_config.atlas else "PAS merge",
+        total=None,  # indeterminate spinner — we don't know peak count yet
+    )
     if directory_config.atlas:
         if snap_beds_to_atlas is None:
             raise RuntimeError("ema.datasets.atlas_snap is not available")
@@ -425,6 +578,8 @@ def main():
             output_dir=unified_dir,
             gap=getattr(args, "pas_gap", 100),
         )
+    # Mark atlas/merge stage complete
+    _advance(_atlas_stage)
 
     unified_mtx = unified_dir / "concatenated.mtx"
     unified_cb = unified_dir / "concatenated_cbs.tsv"
@@ -511,8 +666,9 @@ def main():
     # Grab the parent's log queue so spawn workers can route records back.
     _log_queue = get_log_queue()
 
-    # Build worker argument tuples (skip datasets with no cells).
-    worker_args: list[tuple] = []
+    # Register downstream stage (total = number of non-empty datasets).
+    # We build worker_args first so we know n_datasets before adding the stage.
+    _raw_worker_args: list[tuple] = []
     for ds_id in unique_ds_ids:
         sub_indices = [
             i for i, cb in enumerate(all_cb_strings)
@@ -522,7 +678,7 @@ def main():
             log.warning("no cells found for dataset '%s' — skipping", ds_id)
             continue
         sub_cbs = [all_cb_strings[i] for i in sub_indices]
-        worker_args.append((
+        _raw_worker_args.append((
             ds_id,
             sub_indices,
             sub_cbs,
@@ -534,6 +690,21 @@ def main():
             filter_config.min_genes,
             _log_queue,
         ))
+
+    # Register downstream progress stage now that we know how many datasets.
+    _downstream_stage = _add_stage(
+        "Per-dataset downstream", total=len(_raw_worker_args)
+    )
+
+    # Build final worker_args — for inline path we add per-dataset progress
+    # clients (6 ticks per dataset: extract/filter/build/annotate/preprocess/cluster).
+    # For pool path we append the client to the tuple so downstream_worker_star can unpack it.
+    worker_args: list[tuple] = []
+    for _warg in _raw_worker_args:
+        _ds_id_for_sub = _warg[0]
+        _sub_stage = _add_subtask(_downstream_stage, _ds_id_for_sub, total=6)
+        _sub_client = _client(_sub_stage)
+        worker_args.append(_warg + (_sub_client,))
 
     # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
     n_datasets = len(worker_args)
@@ -550,15 +721,19 @@ def main():
     if n_workers <= 1 or n_datasets == 1:
         # Inline path: no spawn overhead, backward-compatible.
         for arg_tuple in worker_args:
-            *pos, lq = arg_tuple
-            run_one_dataset_downstream(*pos, log_queue=lq)
+            # arg_tuple has: ds_id, sub_indices, sub_cbs, unified_mtx,
+            #   per_dataset_dir, genes_pkl, min_read, min_cells, min_genes,
+            #   log_queue, progress_client  (11 elements)
+            *pos_args, lq, pc = arg_tuple
+            run_one_dataset_downstream(*pos_args, log_queue=lq, progress_client=pc)
+            _advance(_downstream_stage)
     else:
         ctx = multiprocessing.get_context("spawn")
         with ctx.Pool(processes=n_workers) as pool:
             for _stats in pool.imap_unordered(
                 downstream_worker_star, worker_args, chunksize=1
             ):
-                pass  # each worker already printed its summary line
+                _advance(_downstream_stage)  # one dataset complete
 
     # NOTE: PDUI and differential APA are NOT run here — they belong to the
     # separate `ema_switch` command. That command lets the user select which
@@ -589,6 +764,16 @@ def main():
             log.warning("Cross-dataset matching failed: %s", e)
 
     return  # done with multi-sample path
+
+
+def main() -> None:
+    """Legacy entry point: runs the pipeline using the argparse-populated globals.
+
+    Delegates to :func:`_run_pipeline_body` with no progress bars.
+    Retained for backward compatibility (``if __name__ == '__main__'`` and any
+    direct callers that have not yet migrated to :func:`run`).
+    """
+    _run_pipeline_body(progress=None)
 
 
 if __name__ == "__main__":
