@@ -2,9 +2,6 @@ import threading
 import shutil
 from pathlib import Path
 
-import scipy.io as sci
-import scipy.sparse as sp
-
 from ema.countmatrix.peackcalling import peak_calling
 from ema.countmatrix.indexing import get_mapping, reset_index
 from ema.countmatrix.read import set_default_sample_id
@@ -36,27 +33,9 @@ except ImportError:
     snap_beds_to_atlas = None  # type: ignore[assignment]
 
 
-def extract_per_dataset_mtx(
-    input_mtx: Path,
-    keep_col_indices: list[int],
-    output_mtx: Path,
-) -> None:
-    """Extract a column subset from a MatrixMarket COO file.
-
-    Reads the unified concatenated MTX (which has a proper MatrixMarket header
-    written by concat_matrices), keeps only entries whose 0-based column index is
-    in keep_col_indices, and re-numbers columns 1..N contiguously based on the
-    order in keep_col_indices.
-
-    Args:
-        input_mtx: Path to the input MatrixMarket file (with header).
-        keep_col_indices: Ordered list of 0-based column indices to retain.
-            The output column for keep_col_indices[i] will be i+1 (1-based).
-        output_mtx: Destination path for the filtered MatrixMarket file.
-    """
-    M = sci.mmread(str(input_mtx)).tocsc()  # CSC makes column slicing efficient
-    sub = M[:, keep_col_indices]
-    sci.mmwrite(str(output_mtx), sub.astype(int), field="integer")
+# extract_per_dataset_mtx is defined in downstream_runner to keep it
+# pickle-safe and importable without triggering ema.config initialisation.
+from ema.downstream_runner import extract_per_dataset_mtx  # noqa: E402
 
 
 def main():
@@ -507,79 +486,74 @@ def main():
     per_dataset_dir = output_dir / "per_dataset"
     per_dataset_dir.mkdir(parents=True, exist_ok=True)
 
-    for ds_id in unique_ds_ids:
-        ds_dir = per_dataset_dir / ds_id
-        ds_dir.mkdir(parents=True, exist_ok=True)
+    # ------------------------------------------------------------------ #
+    # Phase 6: parallel per-dataset downstream pipeline                   #
+    # ------------------------------------------------------------------ #
+    # Pre-build (sub_indices, sub_cbs) for every dataset in the parent
+    # process — O(n_cells) each, cheap.  Empty datasets are filtered out.
+    import json
+    import multiprocessing
+    import pickle
 
-        # Find which columns in the concatenated MTX belong to this dataset.
-        # CB strings are prefixed "{dataset_id}_{cb_seq}" by read.py.
+    from ema.downstream_runner import (
+        run_one_dataset_downstream,
+        downstream_worker_star,
+    )
+
+    # Serialise the genes DataFrame once; each worker deserialises its own copy.
+    genes_pkl: bytes = pickle.dumps(genes)
+
+    # Build worker argument tuples (skip datasets with no cells).
+    worker_args: list[tuple] = []
+    for ds_id in unique_ds_ids:
         sub_indices = [
             i for i, cb in enumerate(all_cb_strings)
             if cb.startswith(f"{ds_id}_")
         ]
-        sub_cbs = [all_cb_strings[i] for i in sub_indices]
-
         if not sub_indices:
             print(f"[multi-sample] WARNING: no cells found for dataset '{ds_id}' — skipping")
             continue
+        sub_cbs = [all_cb_strings[i] for i in sub_indices]
+        worker_args.append((
+            ds_id,
+            sub_indices,
+            sub_cbs,
+            str(unified_mtx),
+            str(per_dataset_dir),
+            genes_pkl,
+            filter_config.min_read,
+            filter_config.min_cells,
+            filter_config.min_genes,
+        ))
 
-        # Extract per-dataset sub-matrix from the unified concatenated MTX
-        pre_filter_mtx = ds_dir / "pre_filter.mtx"
-        extract_per_dataset_mtx(
-            input_mtx=unified_mtx,
-            keep_col_indices=sub_indices,
-            output_mtx=pre_filter_mtx,
-        )
+    # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
+    n_datasets = len(worker_args)
+    n_workers = min(
+        n_datasets,
+        get_resource_manager().get_n_jobs(per_worker_mb=500, stage="downstream"),
+    )
 
-        filtered_mtx = ds_dir / "filtered_matrix.mtx"
-        filtered_cb_path = ds_dir / "filtered_cb.tsv"
-        filter_cb(
-            input_matrix_paths=[str(pre_filter_mtx)],
-            cb_list=sub_cbs,
-            sorted_corrected_sparse_path=str(filtered_mtx),
-            filter_cb_file=str(filtered_cb_path),
-            min_read=filter_config.min_read,
-        )
+    print(
+        f"[multi-sample] Per-dataset downstream: {n_datasets} datasets, "
+        f"n_workers={n_workers}"
+    )
 
-        sparse_matrix, pas_ids, _ = make_dataframe(matrixpath=str(filtered_mtx))
+    if n_workers <= 1 or n_datasets == 1:
+        # Inline path: no spawn overhead, backward-compatible.
+        for arg_tuple in worker_args:
+            run_one_dataset_downstream(*arg_tuple)
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(processes=n_workers) as pool:
+            for _stats in pool.imap_unordered(
+                downstream_worker_star, worker_args, chunksize=1
+            ):
+                pass  # each worker already printed its summary line
 
-        # Read filtered CBs from the file written by filter_cb
-        with open(filtered_cb_path) as f:
-            collist = [line.strip() for line in f if line.strip()]
-
-        result = annotate(
-            sparse_matrix=sparse_matrix,
-            pas_ids=pas_ids,
-            collist=collist,
-            genes=genes,
-        )
-
-        adata = preprocessing(
-            sparse_matrix=result.sparse_matrix,
-            pas_ids=result.pas_ids,
-            collist=collist,
-        )
-
-        # Save per-dataset cluster output
-        cluster_h5ad = ds_dir / "clusters.h5ad"
-        clustering(adata=adata, output_h5ad=str(cluster_h5ad))
-
-        # Save per-dataset stats as a JSON next to the h5ad (OutputManager only
-        # has predefined slots for the single-sample pipeline).
-        import json
-        with open(ds_dir / "clustering_stats.json", "w") as f:
-            json.dump({
-                "dataset_id": ds_id,
-                "final_cells": int(adata.n_obs),
-                "final_pas": int(adata.n_vars),
-            }, f, indent=2)
-
-        print(f"[multi-sample] Dataset '{ds_id}': {adata.n_obs} cells, {adata.n_vars} PAS -> {cluster_h5ad}")
-
-        # NOTE: PDUI and differential APA are NOT run here — they belong to the
-        # separate `ema_switch` command. That command lets the user select which
-        # cluster pairs to test and which marker-PAS subset to use, instead of
-        # running all 20K PAS x all C(K,2) pairs unconditionally.
+    # NOTE: PDUI and differential APA are NOT run here — they belong to the
+    # separate `ema_switch` command. That command lets the user select which
+    # cluster pairs to test and which marker-PAS subset to use, instead of
+    # running all 20K PAS x all C(K,2) pairs unconditionally.
 
     # Cross-dataset cluster matching (only meaningful if >1 dataset)
     if len(unique_ds_ids) > 1:
