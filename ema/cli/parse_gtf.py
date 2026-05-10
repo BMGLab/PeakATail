@@ -13,8 +13,10 @@ log = logging.getLogger(__name__)
 
 @click.command(name="parse-gtf")
 @common_options(include_output=False)
-@click.option("--gtf", "-g", "gtf", required=True,
-              type=click.Path(exists=True, dir_okay=False))
+@click.option("--gtf", "-g", "gtf",
+              type=click.Path(exists=True, dir_okay=False),
+              default=None,
+              help="GTF file to pre-parse (required unless --show-cache).")
 @click.option("--cache-dir", "cache_dir", type=click.Path(file_okay=False),
               default=None, help="Override the global ~/.cache/peakatail/gtf/ location.")
 @click.option("--force", is_flag=True, default=False,
@@ -44,6 +46,13 @@ def parse_gtf(**kwargs) -> None:
                 size_mb = sum(p.stat().st_size for p in entry.rglob("*")) / 1024 / 1024
                 click.echo(f"  {entry.name}  ({size_mb:.1f} MB)")
         return
+
+    # --gtf is required when not showing the cache.  Surfaced here (rather than
+    # via Click's required=True) so --show-cache can be used standalone.
+    if not kwargs["gtf"]:
+        raise click.UsageError(
+            "Missing option '--gtf' / '-g' (required unless --show-cache is used)."
+        )
 
     from ema.annotate.gtf_cache import process_gtf_cached, lookup_global_cache
     if not kwargs["force"]:
