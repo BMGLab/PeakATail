@@ -3,6 +3,8 @@
 **/__pycache__
 **/*.egg-info
 **/emaout
+**/emaout_*
+peakatail_runs/
 **/cbtotal.py
 *.pyc
 /dist/

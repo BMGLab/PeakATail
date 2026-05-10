@@ -106,11 +106,37 @@ def parse_log_overrides(spec: str | None) -> dict[str, str]:
     return overrides
 
 
-def resolve_output_dir(base: str | Path) -> Path:
-    """Append a timestamp to the user-supplied output dir.
+_DEFAULT_PARENT_DIR = "peakatail_runs"
 
-    Returns a fresh Path; does NOT create the directory (caller decides when).
+
+def resolve_output_dir(base: str | Path, parent: str | Path | None = None) -> Path:
+    """Append a timestamp to the user-supplied output dir and nest under a parent.
+
+    Default layout: ``peakatail_runs/<base>_<timestamp>/`` so all runs are
+    grouped under one project-level dir instead of scattered at the repo root.
+
+    If ``base`` is an absolute path or already lives inside an explicit parent
+    (i.e. contains a path separator), the parent prefix is NOT applied — the
+    user knows exactly where they want the run to go.
+
+    Args:
+        base: Output dir name from the user (CLI ``--output`` or YAML
+            ``output_dir``). Plain name (e.g. ``"emaout"``) is nested under
+            ``peakatail_runs/``; a path with separators is used as-is.
+        parent: Override the default ``peakatail_runs`` parent dir. Use ``""``
+            to disable nesting entirely.
+
+    Returns:
+        A fresh ``Path``. Does NOT create the directory (caller decides when).
     """
     from datetime import datetime
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    return Path(f"{base}_{ts}")
+    base = Path(base)
+    leaf = Path(f"{base.name}_{ts}")
+    # Absolute paths or paths with explicit directories are passed through.
+    if base.is_absolute() or len(base.parts) > 1:
+        return base.parent / leaf
+    parent_dir = _DEFAULT_PARENT_DIR if parent is None else str(parent)
+    if not parent_dir:
+        return leaf
+    return Path(parent_dir) / leaf
