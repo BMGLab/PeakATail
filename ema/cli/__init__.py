@@ -55,89 +55,116 @@ main.add_command(_wizard_mod.wizard)
 
 
 # ---------------------------------------------------------------------------
-# Backward-compatibility shim for ema/config.py (Phase 9 will remove this)
-# ema/config.py does `from ema.cli import cli; args = cli()` at module level.
-# Until Phase 9 rewrites config.py, we provide a cli() that returns defaults.
+# Backward-compatibility shim for ema/config.py
 # ---------------------------------------------------------------------------
-def cli():  # noqa: D103
-    """Legacy argparse shim — returns a Namespace with all default values.
+# ema/config.py does ``args = cli()`` at module load time.  The 80-line
+# argparse parser this used to invoke was the original ``ema`` CLI; it has
+# been superseded by the Click subcommands above.  The remaining
+# responsibility of ``cli()`` is therefore minimal:
+#
+#   1. Return an object with the same attributes the legacy pipeline body
+#      reads (e.g. ``args.strategy``, ``args.bam_threads``, ...) so module
+#      load doesn't AttributeError.
+#   2. Honour ``--config <yaml>`` if provided on the actual command line so
+#      a power user can still bootstrap the legacy globals.
+#
+# Defaults are derived from RunConfig -- the schema is the single source.
+# Subsequent ``RunConfig.apply_to_legacy_globals()`` calls (from
+# ema.main.run) will override these starter values with the actual
+# user-supplied configuration.
+# ---------------------------------------------------------------------------
+def cli():
+    """Build the legacy ``args`` namespace from the RunConfig schema.
 
-    Phase 9 (legacy YAML loader extraction) will remove this shim once
-    ema/config.py no longer calls argparse at import time.
+    Returns:
+        argparse.Namespace -- carries every attribute the legacy globals
+        and pipeline body read.
+
+    Notes:
+        * Unknown CLI arguments (e.g. pytest's ``-x``) are ignored via
+          ``parse_known_args``; only ``--config`` is honoured.
+        * The Click CLI does not call this -- it is only loaded by the
+          import-time chain ``ema.config -> ema.cli.cli()``.  The clean
+          fix (lazy config) is tracked separately; this shim keeps the
+          legacy contract while we transition.
     """
     import argparse
-    import sys
 
+    from ema.cli.config_schema import RunConfig, field_specs
+
+    ns = argparse.Namespace()
+
+    # Seed every attribute the schema knows about.
+    specs = field_specs(RunConfig)
+    from dataclasses import fields as _fields
+    for f in _fields(RunConfig):
+        spec = specs[f.name]
+        # Map field -> legacy args attribute name.
+        attr = f.name
+        if spec.legacy_args_attr:
+            attr = spec.legacy_args_attr
+        setattr(ns, attr, f.default)
+
+    # Add the legacy attribute names that aren't 1:1 schema fields.
+    ns.datasets = []
+    ns.gtf_dir = None
+    ns.bam_dir = None
+    ns.atlas = None
+    ns.atlas_distance = 50
+    ns.seqlen = None
+    ns.cb_len = None
+    ns.barcode_tag = None
+    ns.min_pas_per_cell = 50
+
+    # Honour the small handful of legacy argparse flags some module-import
+    # smoke tests still rely on (test_region_fetch.py patches sys.argv with
+    # the original flag names so peak_calling can seed variable_config at
+    # import time).  Everything else flows through the Click subcommands.
     parser = argparse.ArgumentParser(prog="ema", add_help=False)
     parser.add_argument("--config", dest="config", type=str, default=None)
-    parser.add_argument("--bamDir", dest="bam_dir", type=str, default=None)
-    parser.add_argument("--sequenceLen", dest="seqlen", type=int, default=None)
-    parser.add_argument("--CellBarcodeLen", dest="cb_len", type=int, default=None)
-    parser.add_argument("--BarcodeTag", type=str, dest="barcode_tag", default=None)
-    parser.add_argument("--gtfDir", dest="gtf_dir", type=str, default=None)
-    parser.add_argument("--cell_combinations", type=str, default=None)
-    parser.add_argument("--bamFiles", dest="bam_files", type=str, default=None)
-    parser.add_argument("--threads", dest="threads", type=int, default=None)
-    parser.add_argument("--bam-threads", dest="bam_threads", type=int, default=4)
-    parser.add_argument("--pipeline", action="store_true", default=False)
-    parser.add_argument("--batch-size", dest="batch_size", type=int, default=10000)
-    parser.add_argument("--tiles", action="store_true", default=False)
-    parser.add_argument("--tile-size", dest="tile_size", type=int, default=25_000_000)
-    parser.add_argument("--tile-overlap", dest="tile_overlap", type=int, default=10_000)
-    parser.add_argument("--strategy", type=str, default="original")
-    parser.add_argument("--lambda-window", dest="lambda_window", type=int, default=5000)
-    parser.add_argument("--lambda-method", dest="lambda_method", type=str, default="median")
-    parser.add_argument("--max-pas", dest="max_pas", type=int, default=5)
-    parser.add_argument("--smoothing-window", dest="smoothing_window", type=int, default=50)
-    parser.add_argument("--min-prominence", dest="min_prominence", type=float, default=5.0)
-    parser.add_argument("--benchmark", action="store_true", default=False)
-    parser.add_argument("--validate-db", dest="validate_db", type=str, default=None)
-    parser.add_argument("--internal-priming-filter", dest="ip_filter", action="store_true", default=False)
-    parser.add_argument("--genome-fasta", dest="genome_fasta", type=str, default=None)
-    parser.add_argument("--annotation-filter", dest="annot_filter", action="store_true", default=False)
-    parser.add_argument("--ip-a-stretch", dest="ip_a_stretch", type=int, default=6)
-    parser.add_argument("--min-pas-per-cell", dest="min_pas_per_cell", type=int, default=50)
-    parser.add_argument("--max-gene-distance", dest="max_gene_distance", type=int, default=5000)
-    parser.add_argument("--utr-multiplier", dest="utr_multiplier", type=float, default=2.0)
-    parser.add_argument("--include-extended", dest="include_extended", action="store_true", default=False)
-    parser.add_argument("--dynamic-threshold", dest="dynamic_threshold", action="store_true", default=False)
-    parser.add_argument("--floor-threshold", dest="floor_threshold", type=int, default=3)
-    parser.add_argument("--lambda-fold-change", dest="lambda_fold_change", type=float, default=2.0)
-    parser.add_argument("--atlas", type=str, default=None)
-    parser.add_argument("--atlas-distance", dest="atlas_distance", type=int, default=50)
-    parser.add_argument("--clustering-method", dest="clustering_method", type=str, default="leiden_tfidf")
-    parser.add_argument("--resolution", type=float, default=1.0)
-    parser.add_argument("--n-pcs", dest="n_pcs", type=int, default=40)
-    parser.add_argument("--external-clusters", dest="external_clusters", type=str, default=None)
-    parser.add_argument("--random-seed", dest="random_seed", type=int, default=42)
-    parser.add_argument("--pdui-method", dest="pdui_method", type=str, default="classic")
-    parser.add_argument("--pdui-isoform-agg", dest="pdui_isoform_agg", type=str, default="per_gene")
-    parser.add_argument("--pdui-isoform-collapse", dest="pdui_isoform_collapse", type=str, default="none")
-    parser.add_argument("--diff-method", dest="diff_method", type=str, default="fisher")
-    parser.add_argument("--cluster-match-method", dest="cluster_match_method", type=str, default="marker_overlap")
-    parser.add_argument("--n-top-markers", dest="n_top_markers", type=int, default=50)
-
-    # parse_known_args ignores unknown args (pytest args) without exiting
-    args, _ = parser.parse_known_args()
-
-    # Load YAML config if provided
-    if args.config:
+    parser.add_argument("--bamDir", dest="_bam_dir", type=str, default=None)
+    parser.add_argument("--sequenceLen", dest="_seqlen", type=int, default=None)
+    parser.add_argument("--CellBarcodeLen", dest="_cb_len", type=int, default=None)
+    parser.add_argument("--BarcodeTag", dest="_barcode_tag", type=str, default=None)
+    parsed, _ = parser.parse_known_args()
+    if parsed._bam_dir is not None:
+        ns.bam_dir = parsed._bam_dir
+        ns.datasets = [{"id": "default", "merge_strategy": "none",
+                        "bams": [parsed._bam_dir]}]
+    if parsed._seqlen is not None:
+        ns.seqlen = parsed._seqlen
+    if parsed._cb_len is not None:
+        ns.cb_len = parsed._cb_len
+    if parsed._barcode_tag is not None:
+        ns.barcode_tag = parsed._barcode_tag
+    if parsed.config:
         import yaml
-        with open(args.config) as f:
-            cfg = yaml.safe_load(f)
-        args.datasets = cfg.get("datasets", [])
-        for key in [
-            "seqlen", "cb_len", "barcode_tag", "min_read", "min_cells",
-            "min_pas_per_cell", "pas_gap", "gtf_dir", "atlas", "atlas_distance",
-            "pdui_method", "pdui_isoform_agg", "pdui_isoform_collapse",
-            "diff_method", "cluster_match_method", "n_top_markers",
-        ]:
-            yaml_key = "gtf" if key == "gtf_dir" else key
-            if yaml_key in cfg:
-                setattr(args, key, cfg[yaml_key])
-    elif args.bam_dir:
-        args.datasets = [{"id": "default", "merge_strategy": "none", "bams": [args.bam_dir]}]
-    else:
-        args.datasets = []
+        with open(parsed.config) as f:
+            cfg = yaml.safe_load(f) or {}
+        # Bridge the YAML through RunConfig so legacy aliases / defaults
+        # are handled in one place.
+        rc = RunConfig.from_yaml_dict(cfg)
+        for f in _fields(RunConfig):
+            spec = specs[f.name]
+            attr = spec.legacy_args_attr or f.name
+            value = getattr(rc, f.name)
+            setattr(ns, attr, value)
+        # YAML-only attributes.
+        if "datasets" in cfg:
+            ns.datasets = cfg["datasets"]
+        if "gtf" in cfg:
+            ns.gtf_dir = cfg["gtf"]
+        if "seqlen" in cfg:
+            ns.seqlen = cfg["seqlen"]
+        if "cb_len" in cfg:
+            ns.cb_len = cfg["cb_len"]
+        if "barcode_tag" in cfg:
+            ns.barcode_tag = cfg["barcode_tag"]
+        if "atlas" in cfg:
+            ns.atlas = cfg["atlas"]
+        if "atlas_distance" in cfg:
+            ns.atlas_distance = cfg["atlas_distance"]
+        if "min_pas_per_cell" in cfg:
+            ns.min_pas_per_cell = cfg["min_pas_per_cell"]
 
-    return args
+    return ns
