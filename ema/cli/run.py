@@ -175,6 +175,19 @@ def run(**kwargs) -> None:
                 _flag, _default,
             )
 
+    # Wire --threads into the ResourceManager singleton.  Without this,
+    # the value the user supplied would silently be ignored: get_resource_manager()
+    # only reads ema.config.args.threads (set by the legacy argparse shim, which
+    # never sees Click flags).  Reset the singleton and re-create it with the
+    # explicit ceiling so downstream get_n_jobs() calls honour it.
+    if kwargs.get("threads") is not None:
+        from ema.utils import reset_resource_manager
+        from ema.utils.resource_manager import ResourceManager
+        import ema.utils as _utils_mod
+        reset_resource_manager()
+        _utils_mod._RM_INSTANCE = ResourceManager(user_max_threads=kwargs["threads"])
+        log.info("ResourceManager: --threads=%d (absolute ceiling)", kwargs["threads"])
+
     # Resolve output dir (with timestamp).
     # Precedence: CLI --output (when explicitly set) > YAML output_dir > default.
     # Click resolves --output to an absolute path, so compare basenames.
@@ -276,6 +289,9 @@ def _pipeline_kwargs(kwargs: dict) -> dict:
         "config", "output", "bam_dir", "bam_files",
         "verbose", "quiet", "log_level", "no_log_file", "no_progress",
         "list_strategies_flag",
+        # --threads is consumed by run() itself (wired into ResourceManager
+        # before pipeline dispatch); no need to forward downstream.
+        "threads",
         # Not-yet-wired flags (warned above) — strip so they don't end up
         # in args via _kwarg_to_args_map. Keeping the warn-loud-but-do-nothing
         # behavior visible in one place.
