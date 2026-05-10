@@ -61,7 +61,7 @@ def length(**kwargs) -> None:
 
     log.info("ema switch length: strategy=%s", kwargs["strategy"])
 
-    from ema.switch_test.cli import run_length
+    from ema.switch_test.runner import run_length
     run_length(
         h5ad_paths=list(kwargs["h5ad"]),
         gtf=kwargs["gtf"],

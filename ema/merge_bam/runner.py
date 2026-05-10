@@ -1,6 +1,13 @@
-import argparse
+"""Runner function for BAM merging.
+
+Provides the library-level ``run_merge`` entry point consumed by
+``ema/cli/merge.py``.  The old argparse ``cli()`` has been removed;
+use ``ema merge`` instead.
+"""
+from __future__ import annotations
+
 import logging
-import yaml
+
 from ema.merge_bam.merge import merge
 
 log = logging.getLogger(__name__)
@@ -21,22 +28,3 @@ def run_merge(bam_files: list[str], output: str, threads: int = 4) -> None:
     log.info("run_merge: merging %d BAM(s) -> %s (threads=%d)", len(bam_files), output, threads)
     merge(bam_files=bam_files, threads=threads)
     log.info("run_merge: done.")
-
-
-def cli():
-
-    parser = argparse.ArgumentParser(prog="ema_merge")
-
-    parser.add_argument("--bamFiles", dest="bam_files", type=str)
-    parser.add_argument("--threads", dest="threads", type=int, required=False)
-    
-    args = parser.parse_args()
-
-    with open(args.bam_files, "r") as yml:
-        bam_list = yaml.safe_load(yml)
-
-    if not args.threads:
-        merge(bam_files=bam_list)
-    
-    else:
-        merge(bam_files=bam_list, threads=args.threads)

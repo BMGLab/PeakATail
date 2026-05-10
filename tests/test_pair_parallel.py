@@ -25,7 +25,7 @@ import pandas as pd
 import pytest
 
 from ema.switch_test.pair_runner import run_one_pair
-from ema.switch_test.cli import _dispatch_pair
+from ema.switch_test.runner import _dispatch_pair
 
 
 # ---------------------------------------------------------------------------

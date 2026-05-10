@@ -66,10 +66,7 @@ def diff(**kwargs) -> None:
 
     log.info("ema switch diff: %d h5ad input(s); strategy=%s", len(kwargs["h5ad"]), kwargs["strategy"])
 
-    # Hand off to existing ema_switch logic; the function exists in
-    # ema.switch_test.cli today and will be promoted to a non-CLI runner
-    # function in Phase 9 (sweep). For now we call it directly.
-    from ema.switch_test.cli import run_diff
+    from ema.switch_test.runner import run_diff
     run_diff(
         h5ad_paths=list(kwargs["h5ad"]),
         pasbed=kwargs["pasbed"],

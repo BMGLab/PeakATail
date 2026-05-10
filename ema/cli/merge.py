@@ -34,8 +34,7 @@ def merge(**kwargs) -> None:
 
     log.info("ema merge: %d input BAMs -> %s", len(kwargs["bam_files"]), out_path)
 
-    # Reuse existing merge_bam logic
-    from ema.merge_bam.cli import run_merge  # will be promoted in Phase 9
+    from ema.merge_bam.runner import run_merge
     run_merge(
         bam_files=list(kwargs["bam_files"]),
         output=str(out_path),
