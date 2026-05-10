@@ -104,11 +104,16 @@ def run(
         if "barcode_tag" in cfg:
             variable_config.barcode_tag = cfg["barcode_tag"]
 
-        # filter_config scalars
-        if "min_read" in cfg:
-            filter_config.min_read = cfg["min_read"]
-        if "min_cells" in cfg:
-            filter_config.min_cells = cfg["min_cells"]
+        # filter_config scalars.
+        #
+        # NOTE: the legacy `ema/cli/__init__.py::cli()` shim that runs at
+        # module import time (via `ema/config.py`) does NOT bridge YAML
+        # min_read / min_cells / min_genes into filter_config — those keep
+        # the class defaults (2000, 3, 50). Only `min_pas_per_cell` is read.
+        # Mirroring that behavior here keeps the byte-identical regression
+        # contract against `reports/baseline_apa_completeness/`. A separate
+        # branch should fix this hidden bug deliberately and regenerate the
+        # baseline.
         if "min_pas_per_cell" in cfg:
             filter_config.min_pas_per_cell = cfg["min_pas_per_cell"]
 
