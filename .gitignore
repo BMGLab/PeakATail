@@ -20,4 +20,8 @@ test_run/
 logs/
 reports/figures/*.png
 reports/PeakATail_Technical_Report.pdf
-uv.lock
+
+# Local-only project notes / specs / plans (not for upstream)
+docs/superpowers/
+.peakatail/
+**/.claude/
