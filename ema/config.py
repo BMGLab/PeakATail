@@ -47,7 +47,13 @@ class variable_config:
 
 @dataclass
 class filter_config:
-    min_read = 2000
+    # Class defaults must match ema/cli/defaults.py::DEFAULTS so a bare
+    # `ema run` invocation (no --config and no --min-* flags) produces the
+    # same numbers regardless of which surface set them.  Pre-fix:
+    # DEFAULTS["min-read"] was 1500 but the class attribute was 2000, so
+    # the result you got depended on whether the YAML loader had run yet.
+    # Centralisation in Part B will derive these from the schema.
+    min_read = 1500
     min_cells = 3
     min_genes = 50
     min_pas_per_cell = args.min_pas_per_cell
