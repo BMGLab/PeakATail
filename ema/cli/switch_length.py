@@ -19,7 +19,18 @@ def _list_pdui_strategies() -> list[str]:
         return []
 
 
+def _list_strategies_callback(ctx, param, value):
+    if value:
+        for s in _list_pdui_strategies():
+            click.echo(s)
+        ctx.exit(0)
+
+
 @click.command(name="length")
+@click.option("--list-strategies", is_flag=True, default=False,
+              is_eager=True, expose_value=False,
+              callback=_list_strategies_callback,
+              help="Print available length strategies and exit.")
 @common_options(output_default="switch_out")
 @click.option("--h5ad", "-i", "h5ad", multiple=True, required=True,
               type=click.Path(exists=True, dir_okay=False))
@@ -32,14 +43,8 @@ def _list_pdui_strategies() -> list[str]:
               default=DEFAULTS["isoform-agg"])
 @click.option("--isoform-collapse", "isoform_collapse", type=str,
               default=DEFAULTS["isoform-collapse"])
-@click.option("--list-strategies", "list_flag", is_flag=True, default=False)
 def length(**kwargs) -> None:
     """3'UTR shortening / lengthening quantification (PDUI variants)."""
-    if kwargs["list_flag"]:
-        for s in _list_pdui_strategies():
-            click.echo(s)
-        return
-
     valid = _list_pdui_strategies()
     if valid and kwargs["strategy"] not in valid:
         raise click.BadParameter(

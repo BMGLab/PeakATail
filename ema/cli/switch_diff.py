@@ -19,7 +19,18 @@ def _list_diff_strategies() -> list[str]:
         return []
 
 
+def _list_strategies_callback(ctx, param, value):
+    if value:
+        for s in _list_diff_strategies():
+            click.echo(s)
+        ctx.exit(0)
+
+
 @click.command(name="diff")
+@click.option("--list-strategies", is_flag=True, default=False,
+              is_eager=True, expose_value=False,
+              callback=_list_strategies_callback,
+              help="Print available diff strategies and exit.")
 @common_options(output_default="switch_out")
 @click.option("--h5ad", "-i", "h5ad", multiple=True, required=True,
               type=click.Path(exists=True, dir_okay=False),
@@ -37,14 +48,8 @@ def _list_diff_strategies() -> list[str]:
               help="Differential APA strategy (run --list-strategies to see).")
 @click.option("--fdr", "fdr", type=float, default=DEFAULTS["fdr"])
 @click.option("--per-worker-mb", "per_worker_mb", type=int, default=DEFAULTS["per-worker-mb"])
-@click.option("--list-strategies", "list_flag", is_flag=True, default=False)
 def diff(**kwargs) -> None:
     """Differential APA test (Fisher / NB regression) across cluster pairs."""
-    if kwargs["list_flag"]:
-        for s in _list_diff_strategies():
-            click.echo(s)
-        return
-
     valid = _list_diff_strategies()
     if valid and kwargs["strategy"] not in valid:
         raise click.BadParameter(
