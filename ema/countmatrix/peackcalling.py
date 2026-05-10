@@ -2,6 +2,7 @@ import pysam as ps
 import bisect
 import time
 from collections import deque
+from sortedcontainers import SortedList
 from ema.countmatrix.peak import Peak
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
@@ -19,6 +20,7 @@ def peak_calling(
                     floor_threshold: int = 3,
                     lambda_fold_change: float = 2.0,
                     lambda_window: int = 5000,
+                    bam_threads: int = 4,
                 ):
 
     '''
@@ -36,6 +38,7 @@ def peak_calling(
         floor_threshold: Absolute minimum threshold in dynamic mode (default: 3).
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
         lambda_window: Window size in bp for local lambda estimation (default: 5000).
+        bam_threads: Number of threads for pysam BGZF block decompression (default: 4).
     '''
     if strategy is None:
         from ema.strategies import get_strategy
@@ -48,10 +51,10 @@ def peak_calling(
     background_deque = deque()
 
     print(bamfile_dir)
-    bamfile = ps.AlignmentFile(bamfile_dir, 'rb')
+    bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=bam_threads)
     matrix = open(matrixpath, "w")
     bedfile = open(bedfilepath, "w")
-    data_array = []
+    data_array = SortedList()
     signal = False
     chro = "1"
     l_end, i_end = 0, 0
@@ -93,7 +96,8 @@ def peak_calling(
 
             signal = False
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={})  # make new instance of Peak class
-            i_end, l_end, data_array, i = 0, 0, [], 0
+            i_end, l_end, i = 0, 0, 0
+            data_array = SortedList()
 
             # Clear background deque on chromosome change
             if dynamic_threshold:
@@ -125,14 +129,14 @@ def peak_calling(
             peak.last_peak_end = l_end
             peak.peak_start = 0
             
-        bisect.insort(data_array, end1)
+        data_array.add(end1)
 
         if start1 > i_end:
-        
-            slice_loc = bisect.bisect_left(data_array , start1)
+
+            slice_loc = data_array.bisect_left(start1)
             if signal:
                 peak.peak_add(data_array=data_array, slice_loc=slice_loc)
-            data_array = data_array[slice_loc: ]# update the list so the [0] index will always be i_end
+            del data_array[:slice_loc]  # in-place slice; faster than full copy
             i_end = data_array[0]
 
         height = len(data_array)

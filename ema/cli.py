@@ -20,6 +20,8 @@ def cli():
     parser.add_argument("--cell_combinations", type=str, required=False)
     parser.add_argument("--bamFiles", dest="bam_files", type=str, required=False)
     parser.add_argument("--threads", dest="threads", type=int, required=False)
+    parser.add_argument("--bam-threads", dest="bam_threads", type=int, default=4,
+                        help="Threads for pysam BGZF block decompression (default: 4)")
 
     # Strategy selection and parameters
     parser.add_argument("--strategy", type=str, default="original",
@@ -90,6 +92,29 @@ def cli():
     parser.add_argument("--random-seed", dest="random_seed", type=int, default=42,
                         help="Random seed for reproducibility (default: 42)")
 
+    # PDUI strategy parameters (multi-PAS isoform-aware)
+    parser.add_argument("--pdui-method", dest="pdui_method", type=str, default="classic",
+                        help="Comma-separated PDUI methods: classic, proportion, shannon (default: classic)")
+    parser.add_argument("--pdui-isoform-agg", dest="pdui_isoform_agg", type=str,
+                        default="per_gene", choices=["per_gene", "per_isoform"],
+                        help="PDUI aggregation level (default: per_gene)")
+    parser.add_argument("--pdui-isoform-collapse", dest="pdui_isoform_collapse", type=str,
+                        default="none", choices=["none", "mean", "majority"],
+                        help="When per_isoform: how to collapse isoforms for gene-level summary (default: none)")
+
+    # Differential APA strategy
+    parser.add_argument("--diff-method", dest="diff_method", type=str, default="fisher",
+                        choices=["fisher", "nb_pairwise", "nb_multi"],
+                        help="Differential APA test method (default: fisher)")
+
+    # Cross-dataset cluster matching strategy
+    parser.add_argument("--cluster-match-method", dest="cluster_match_method", type=str,
+                        default="marker_overlap",
+                        choices=["marker_overlap", "mnn", "jaccard"],
+                        help="Cross-dataset cluster matching strategy (default: marker_overlap)")
+    parser.add_argument("--n-top-markers", dest="n_top_markers", type=int, default=50,
+                        help="Top-N marker PAS for cluster matching (default: 50)")
+
     args = parser.parse_args()
 
     # Load YAML config if provided
@@ -99,7 +124,10 @@ def cli():
             cfg = yaml.safe_load(f)
         args.datasets = cfg.get('datasets', [])
         # Override CLI defaults with YAML values if present
-        for key in ['seqlen', 'cb_len', 'barcode_tag', 'min_read', 'min_cells', 'min_pas_per_cell', 'pas_gap', 'gtf_dir', 'atlas', 'atlas_distance']:
+        for key in ['seqlen', 'cb_len', 'barcode_tag', 'min_read', 'min_cells', 'min_pas_per_cell',
+                    'pas_gap', 'gtf_dir', 'atlas', 'atlas_distance',
+                    'pdui_method', 'pdui_isoform_agg', 'pdui_isoform_collapse',
+                    'diff_method', 'cluster_match_method', 'n_top_markers']:
             yaml_key = 'gtf' if key == 'gtf_dir' else key
             if yaml_key in cfg:
                 setattr(args, key, cfg[yaml_key])

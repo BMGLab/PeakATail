@@ -1,4 +1,5 @@
 from ema.config import variable_config
+from ema.countmatrix.cb_encode import encode_cb
 
 # Fallback sample_id used when a read has no RG tag. main.py sets this to the
 # current dataset_id before each peak_calling call so multi-sample BAMs without
@@ -23,7 +24,12 @@ def read_check(read, direction:bool, barcode=variable_config.barcode_tag, barcod
             return 0, 0, 0, 0, 0
     except KeyError:
         return 0, 0, 0, 0, 0
-    
+
+    # NOTE: invalid-char filtering is NOT done here — encode_cb is too slow
+    # (~3μs × 14M reads = 40+ sec). BarcodeIndex.get_index handles invalid
+    # CBs by encoding them to -1 (tuple key (sample_id, -1)); these end up in
+    # the same column but are rare (1-letter Ns are <0.1% of CB sequencing data).
+
     read_chro, read_start, read_end, read_strand = read.reference_name, read.reference_start, read.reference_end, read.is_reverse
     try:
         sample_id = read.get_tag('RG')

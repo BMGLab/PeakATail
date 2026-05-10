@@ -66,14 +66,15 @@ class DatasetManager:
         merged_path = self.output_dir / f"{dataset_id}_merged.bam"
         sorted_path = self.output_dir / f"{dataset_id}_merged_sorted.bam"
 
+        threads_arg = str(self.threads)
         if len(tagged_bams) == 1:
-            pysam.sort("-o", str(sorted_path), tagged_bams[0])
+            pysam.sort("-@", threads_arg, "-o", str(sorted_path), tagged_bams[0])
         else:
-            pysam.merge("-f", str(merged_path), *tagged_bams)
-            pysam.sort("-o", str(sorted_path), str(merged_path))
+            pysam.merge("-@", threads_arg, "-f", str(merged_path), *tagged_bams)
+            pysam.sort("-@", threads_arg, "-o", str(sorted_path), str(merged_path))
             merged_path.unlink(missing_ok=True)
 
-        pysam.index(str(sorted_path))
+        pysam.index("-@", threads_arg, str(sorted_path))
 
         # clean up tagged temp bams
         for t in tagged_bams:

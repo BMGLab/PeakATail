@@ -73,6 +73,7 @@ def main():
         floor_threshold=args.floor_threshold,
         lambda_fold_change=args.lambda_fold_change,
         lambda_window=args.lambda_window,
+        bam_threads=getattr(args, 'bam_threads', 4),
     )
 
     # Start GTF pre-processing in a background thread (with caching).
@@ -97,7 +98,10 @@ def main():
 
     # Prepare BAM list via DatasetManager (multi-sample support)
     if DatasetManager is not None and directory_config.datasets:
-        dm = DatasetManager(output_dir=directory_config.output_dir)
+        dm = DatasetManager(
+            output_dir=directory_config.output_dir,
+            threads=getattr(args, 'bam_threads', 4),
+        )
         bam_list = dm.prepare(directory_config.datasets)
     else:
         # Fallback: single BAM from legacy --bamDir
