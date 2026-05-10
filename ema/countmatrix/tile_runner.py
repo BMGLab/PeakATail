@@ -9,10 +9,12 @@ column indices for global uniqueness.
 
 Key design decisions
 --------------------
-* **Approach (c) from the plan**: each tile worker materialises a region BAM
-  via ``samtools view -bh``, then calls the existing monolithic
-  :func:`~ema.countmatrix.peackcalling.peak_calling` on it.  This minimises
-  blast radius — the calling logic is completely untouched.
+* **Phase 2 region fetch**: each tile worker calls the monolithic
+  :func:`~ema.countmatrix.peackcalling.peak_calling` with
+  ``region=(chrom, fetch_start, fetch_end)``.  This uses
+  ``pysam.AlignmentFile.fetch()`` to stream only the relevant reads directly
+  from the indexed source BAM, eliminating the extra disk write and read pass
+  that materialising a per-tile BAM required.  The source BAM must be indexed.
 * **Overlap buffer**: each tile fetches reads from
   ``[tile_start - OVERLAP, tile_end + OVERLAP]`` so peaks that straddle tile
   boundaries are detected with full context.  Only peaks whose *start*
@@ -32,11 +34,12 @@ Temp-file layout
 Each worker writes into its own ``tempfile.mkdtemp()`` directory::
 
     /tmp/tile_<tile_id>_<random>/
-        region.bam           — samtools-extracted region BAM (deleted after use)
-        region.bam.bai
         peaks.bed
         peaks.mtx
         barcodes.cb.tsv
+
+No region BAM is materialised — reads are fetched directly from the indexed
+source BAM via ``pysam.AlignmentFile.fetch(chrom, start, end)``.
 
 The directory is removed in a ``try/finally`` block so cleanup happens even on
 worker error.
@@ -49,7 +52,6 @@ import logging
 import multiprocessing
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -165,6 +167,12 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
             ``mtx_path`` (str) — per-tile MTX (only rows for retained peaks)
             ``cb_path`` (str)  — ordered CB list (TSV, one CB per line)
             ``workdir`` (str)  — temp directory; main process deletes after merge
+
+    Note:
+        Phase 2: reads are fetched via ``pysam.AlignmentFile.fetch()`` using
+        the ``region=(chrom, fetch_start, fetch_end)`` parameter of
+        :func:`~ema.countmatrix.peackcalling.peak_calling`.  No temp BAM is
+        written.  The source BAM must be indexed (``.bai`` must exist).
     """
     # --- per-worker imports (in spawned process, all modules are fresh) ---
     from ema.countmatrix.peackcalling import peak_calling
@@ -188,8 +196,6 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
 
     # Use a unique temporary directory so concurrent workers never collide
     workdir = Path(tempfile.mkdtemp(prefix=f"tile_{tile_id}_"))
-    region_bam = workdir / "region.bam"
-    region_bai = workdir / "region.bam.bai"
     raw_bed = workdir / "raw_peaks.bed"
     raw_mtx = workdir / "raw_peaks.mtx"
     final_bed = workdir / "peaks.bed"
@@ -198,34 +204,16 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
 
     try:
         # ----------------------------------------------------------------
-        # 1. Materialise region BAM via samtools view
-        # ----------------------------------------------------------------
-        region_spec = f"{chrom}:{fetch_start + 1}-{fetch_end}"  # samtools uses 1-based
-        subprocess.run(
-            [
-                "samtools", "view", "-bh",
-                "-o", str(region_bam),
-                bam_path,
-                region_spec,
-            ],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["samtools", "index", str(region_bam)],
-            check=True,
-            capture_output=True,
-        )
-
-        # ----------------------------------------------------------------
-        # 2. Run existing monolithic peak_calling on region BAM
+        # 1. Run peak_calling directly via region fetch (Phase 2).
+        #    The 10 kb overlap buffer [fetch_start, fetch_end) is passed as
+        #    the region so reads are fetched without materialising a temp BAM.
         # ----------------------------------------------------------------
         strategy = get_strategy(args["strategy_name"])
         peak_calling(
             args["direction"],
             str(raw_bed),
             str(raw_mtx),
-            bamfile_dir=str(region_bam),
+            bamfile_dir=bam_path,
             default_threshold=args["default_threshold"],
             merge_len=args["merge_len"],
             strategy=strategy,
@@ -234,10 +222,11 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
             lambda_fold_change=args["lambda_fold_change"],
             lambda_window=args["lambda_window"],
             bam_threads=args["bam_threads"],
+            region=(chrom, fetch_start, fetch_end),
         )
 
         # ----------------------------------------------------------------
-        # 3. Filter BED to core region [tile_start, tile_end)
+        # 2. Filter BED to core region [tile_start, tile_end)
         #    Collect the set of local pasnumbers that survive the filter
         #    so we can apply the same filter to the MTX rows.
         # ----------------------------------------------------------------
@@ -255,7 +244,7 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
                     kept_pasnumbers.add(pasnum)
 
         # ----------------------------------------------------------------
-        # 4. Filter MTX rows to kept pasnumbers
+        # 3. Filter MTX rows to kept pasnumbers
         # ----------------------------------------------------------------
         with open(raw_mtx, "r") as src, open(final_mtx, "w") as dst:
             for line in src:
@@ -266,7 +255,7 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
                     dst.write(line)
 
         # ----------------------------------------------------------------
-        # 5. Write ordered CB list (index → CB string)
+        # 4. Write ordered CB list (index → CB string)
         # ----------------------------------------------------------------
         mapping: dict[str, int] = get_mapping()
         # Sort by assigned column index to get canonical order
@@ -279,10 +268,8 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
                 f.write("\n")
 
         # ----------------------------------------------------------------
-        # 6. Remove region BAM to free disk space early
+        # 5. Remove raw temp files to free disk space early
         # ----------------------------------------------------------------
-        region_bam.unlink(missing_ok=True)
-        region_bai.unlink(missing_ok=True)
         raw_bed.unlink(missing_ok=True)
         raw_mtx.unlink(missing_ok=True)
 

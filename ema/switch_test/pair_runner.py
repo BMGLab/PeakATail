@@ -1,0 +1,67 @@
+"""Per-pair worker function for parallel differential APA testing.
+
+This module provides :func:`run_one_pair`, a top-level function that is
+pickle-safe and suitable for dispatch via ``multiprocessing.Pool``.
+
+Design notes
+------------
+- Top-level (module-level) function: required for ``spawn``-based
+  ``multiprocessing.Pool`` to pickle correctly.
+- Self-contained: imports the strategy registry internally so each worker
+  subprocess performs its own registration on import.
+- Stateless: receives all inputs by value (DataFrames passed directly, not
+  by path) so no shared memory is required.
+- ``n_jobs_inner`` lets the caller (cli.py) pass the inner-parallelism
+  budget that ResourceManager.split_jobs() computed, avoiding CPU
+  over-subscription when many pairs run in parallel.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+
+def run_one_pair(
+    strategy_name: str,
+    diff_df: pd.DataFrame,
+    cluster_labels: pd.Series,
+    c1: str,
+    c2: str,
+    n_jobs_inner: int = 1,
+    min_cells_per_group: int = 10,
+) -> tuple[str, str, pd.DataFrame]:
+    """Run a single cluster-pair differential APA test.
+
+    This function is intentionally a top-level module function (not a method
+    or closure) so that ``multiprocessing.Pool`` with ``spawn`` context can
+    pickle it without error.
+
+    Args:
+        strategy_name: Registry key for the differential strategy, e.g.
+            ``"fisher"`` or ``"nb_pairwise"``.
+        diff_df: Count matrix, shape ``(n_cells, n_pas)``.
+        cluster_labels: Series indexed by cell barcode with cluster labels.
+        c1: Label of the first cluster.
+        c2: Label of the second cluster.
+        n_jobs_inner: Number of inner parallel workers for NB-style per-PAS
+            fits.  Controlled by ``ResourceManager.split_jobs()`` to avoid
+            over-subscription.
+        min_cells_per_group: Minimum cells per group to include a PAS.
+
+    Returns:
+        Tuple of ``(c1, c2, result_df)`` so callers can reconstruct the
+        keyed result dict after ``pool.imap_unordered`` reorders outputs.
+    """
+    # Import inside the worker so each subprocess registers strategies fresh.
+    from ema.switch_test.strategies import get_diff_strategy
+
+    strategy = get_diff_strategy(strategy_name)
+    result_df = strategy.test(
+        count_matrix=diff_df,
+        cluster_labels=cluster_labels,
+        cluster1=c1,
+        cluster2=c2,
+        min_cells_per_group=min_cells_per_group,
+        n_jobs=n_jobs_inner,
+    )
+    return (c1, c2, result_df)

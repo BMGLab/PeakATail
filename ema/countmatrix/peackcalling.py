@@ -38,6 +38,8 @@ def peak_calling(
                     index: "BarcodeIndex | None" = None,
                     state: "PeakCallingState | None" = None,
                     sample_id: str | None = None,
+                    # --- Phase 2: region fetch (avoid temp-BAM materialisation) ---
+                    region: "tuple[str, int, int] | None" = None,
                 ):
 
     """Stream a BAM file and call peaks using a sliding coverage window.
@@ -87,6 +89,16 @@ def peak_calling(
             RG tag.  When ``None`` (default), ``_default_sample_id`` from
             :mod:`ema.countmatrix.read` is used (backward compatibility).
             Only applies to the monolithic path.
+        region: Optional ``(chrom, start, end)`` 3-tuple specifying a genomic
+            region to restrict read fetching.  When set, the BAM is opened
+            with ``pysam.AlignmentFile(bam, "rb", threads=1)`` and reads are
+            iterated via ``bamfile.fetch(chrom, start, end)`` rather than
+            iterating the entire file.  The BAM **must** be indexed (a
+            ``.bai`` file must exist alongside it); an ``IOError`` is raised
+            with an actionable message if the index is missing.  Use this
+            instead of materialising a temporary region BAM to save 2/3 of
+            BAM I/O.  Only applies to the monolithic path (ignored when
+            ``use_tiles=True`` or ``use_pipeline=True``).
     """
     # --- Tile dispatch (takes precedence over pipeline) -------------------
     if use_tiles:
@@ -189,7 +201,22 @@ def peak_calling(
     background_deque = deque()
 
     print(bamfile_dir)
-    bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=bam_threads)
+
+    # --- Phase 2: BAI index check for region-fetch path -------------------
+    if region is not None:
+        import os as _os
+        bai_path = bamfile_dir + ".bai"
+        if not _os.path.exists(bai_path):
+            raise IOError(
+                f"BAM index not found for region fetch: {bai_path!r}. "
+                "Run `samtools index {bamfile_dir}` to create it."
+            )
+    # --- End Phase 2 BAI check -------------------------------------------
+
+    # Open BAM: use threads=1 in region mode (fetch already limits I/O);
+    # use caller-specified bam_threads in full-scan mode.
+    _open_threads = 1 if region is not None else bam_threads
+    bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=_open_threads)
     matrix = open(matrixpath, "w")
     bedfile = open(bedfilepath, "w")
     data_array = SortedList()
@@ -200,7 +227,14 @@ def peak_calling(
     peak = Peak(peak_strand=direction)
     i = 0 # I forgot what is this but use in peakstarting block
 
-    for read in bamfile:
+    # Build the read iterator: region fetch or full-BAM scan.
+    if region is not None:
+        _r_chrom, _r_start, _r_end = region
+        _read_iter = bamfile.fetch(_r_chrom, _r_start, _r_end)
+    else:
+        _read_iter = bamfile
+
+    for read in _read_iter:
         if timercount%1000000 == 0:#controling time
             endtime = time.time()
             print(f"{endtime-start_time}")

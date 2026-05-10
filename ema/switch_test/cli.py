@@ -9,6 +9,8 @@ markers, which strategies) instead of running everything unconditionally.
 
 from __future__ import annotations
 import argparse
+import functools
+import multiprocessing
 from itertools import combinations
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import scipy.sparse as sp
 from joblib import parallel_backend
 
 from ema.switch_test.strategies import get_diff_strategy, list_diff_strategies
+from ema.switch_test.pair_runner import run_one_pair
 from ema.quantification.strategies import get_pdui_strategy, list_pdui_strategies
 from ema.quantification.marker_selector import (
     select_marker_pas,
@@ -52,6 +55,44 @@ def build_count_dfs(adata: ad.AnnData):
     pdui_df = pd.DataFrame(X.T, index=pas_index, columns=cell_index)
     diff_df = pd.DataFrame(X, index=cell_index, columns=pas_index)
     return pdui_df, diff_df, cell_index, pas_index
+
+
+def _dispatch_pair(
+    pair: tuple[str, str],
+    *,
+    strategy_name: str,
+    diff_df: pd.DataFrame,
+    cluster_labels: pd.Series,
+    n_jobs_inner: int,
+) -> tuple[str, str, pd.DataFrame]:
+    """Top-level wrapper for ``run_one_pair`` suitable for ``Pool.imap_unordered``.
+
+    ``functools.partial`` cannot carry keyword-only args in all Python versions,
+    so this thin wrapper unpacks the positional ``pair`` argument and forwards
+    the rest as keyword args to :func:`run_one_pair`.
+
+    This function must remain at module level (not a closure) so that the
+    ``spawn`` pool can pickle it reliably.
+
+    Args:
+        pair: ``(cluster1_label, cluster2_label)`` tuple from the pair list.
+        strategy_name: Registry key for the differential strategy.
+        diff_df: Full count matrix (cells × PAS).
+        cluster_labels: Cell-to-cluster assignment Series.
+        n_jobs_inner: Inner worker budget from ``ResourceManager.split_jobs()``.
+
+    Returns:
+        Forwarded ``(c1, c2, result_df)`` from :func:`run_one_pair`.
+    """
+    c1, c2 = pair
+    return run_one_pair(
+        strategy_name,
+        diff_df,
+        cluster_labels,
+        c1,
+        c2,
+        n_jobs_inner=n_jobs_inner,
+    )
 
 
 def cli():
@@ -276,19 +317,55 @@ def cli():
                       f"all {len(pairs)} cluster pairs may be slow. "
                       f"Use --cell_combinations to subset.")
         print(f"[ema_switch] running {args.diff_method} on {len(pairs)} cluster pairs")
+
+        # Split workers between pair-level (outer) and PAS-level (inner) parallelism
+        # to avoid CPU over-subscription when both stages run concurrently.
+        n_outer, n_inner = rm.split_jobs(n_outer=len(pairs), per_inner_mb=300)
+        print(f"[ema_switch] parallelism: {len(pairs)} pairs -> "
+              f"split_jobs gave ({n_outer} outer, {n_inner} inner per pair)")
+
+        pair_results: dict[tuple[str, str], pd.DataFrame] = {}
+
+        if n_outer <= 1 or len(pairs) <= 1:
+            # Sequential path: avoids spawn overhead for small jobs (K=2 clusters
+            # → 1 pair) or when --threads 1 forces serial execution.
+            for c1, c2 in pairs:
+                _, _, df = run_one_pair(
+                    args.diff_method,
+                    diff_df,
+                    cluster_labels,
+                    c1,
+                    c2,
+                    n_jobs_inner=n_inner,
+                )
+                pair_results[(c1, c2)] = df
+        else:
+            # Parallel path: spawn-based Pool over cluster pairs.
+            # functools.partial creates a pickle-safe partial with fixed args;
+            # each call receives (c1, c2) from the pool.
+            worker_fn = functools.partial(
+                _dispatch_pair,
+                strategy_name=args.diff_method,
+                diff_df=diff_df,
+                cluster_labels=cluster_labels,
+                n_jobs_inner=n_inner,
+            )
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(n_outer) as pool:
+                for c1, c2, df in pool.imap_unordered(
+                    worker_fn, pairs, chunksize=1
+                ):
+                    pair_results[(c1, c2)] = df
+
+        # Write results in deterministic order (matches the pair list order).
         total_sig = 0
         for c1, c2 in pairs:
-            df = diff_strat.test(
-                count_matrix=diff_df,
-                cluster_labels=cluster_labels,
-                cluster1=c1,
-                cluster2=c2,
-                n_jobs=n_jobs,
-            )
+            df = pair_results[(c1, c2)]
             out_path = diff_dir / f"{args.diff_method}_{c1}_vs_{c2}.tsv"
             df.to_csv(out_path, sep="\t")
             if "qvalue" in df.columns:
                 total_sig += (df["qvalue"] < args.fdr_threshold).sum()
+
         print(f"[ema_switch] {len(pairs)} pairs: {total_sig} total significant PAS "
               f"(q<{args.fdr_threshold}) -> {diff_dir}")
 
