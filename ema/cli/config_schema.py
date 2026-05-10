@@ -34,6 +34,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+import click
+
 
 # ---------------------------------------------------------------------------
 # Sentinel: marks "no default value supplied" without conflicting with None
@@ -116,6 +118,7 @@ class RunConfig:
         default=None,
         metadata=_spec(
             cli_flag="--config", yaml_key=None, skip_legacy_bridge=True,
+            click_type=click.Path(exists=True, dir_okay=False, resolve_path=True),
             description="YAML config; CLI flags override individual keys.",
         ),
     )
@@ -124,6 +127,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--output", yaml_key="output_dir",
             legacy_dataclass_attr="directory_config.output_dir",
+            click_type=click.Path(file_okay=False, resolve_path=True),
             description="Output directory (timestamp suffix added automatically).",
         ),
     )
@@ -132,6 +136,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--bam-dir", yaml_key=None,
             legacy_dataclass_attr="directory_config.bam_dir",
+            click_type=click.Path(exists=True),
             description="Single-BAM convenience.",
         ),
     )
@@ -147,6 +152,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--gtf", yaml_key="gtf",
             legacy_dataclass_attr="directory_config.gtf_dir",
+            click_type=click.Path(exists=True, dir_okay=False),
             description="GTF annotation file.",
         ),
     )
@@ -155,6 +161,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--atlas", yaml_key="atlas",
             legacy_dataclass_attr="directory_config.atlas",
+            click_type=click.Path(exists=True, dir_okay=False),
             description="Reference PAS atlas BED.",
         ),
     )
@@ -346,6 +353,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--genome-fasta", yaml_key="genome_fasta",
             skip_legacy_bridge=True,
+            click_type=click.Path(exists=True),
             description="Genome FASTA for --ip-filter (currently no-op).",
         ),
     )
@@ -447,6 +455,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--external-clusters", yaml_key="external_clusters",
             legacy_args_attr="external_clusters",
+            click_type=click.Path(exists=True),
             description="Path to external cluster labels TSV.",
         ),
     )
@@ -492,6 +501,7 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--validate-db", yaml_key="validate_db",
             skip_legacy_bridge=True,
+            click_type=click.Path(exists=True),
             description="No-op (use scripts/validate_strategies.py).",
         ),
     )
@@ -700,7 +710,7 @@ def click_options_from_schema(
                 ann = f.type
                 if ann in (int, "int", "Optional[int]", "int | None"):
                     opt_kwargs["type"] = int
-                elif ann in (float, "float"):
+                elif ann in (float, "float", "Optional[float]"):
                     opt_kwargs["type"] = float
                 elif ann is bool or ann == "bool":
                     opt_kwargs["is_flag"] = True
@@ -715,3 +725,24 @@ def click_options_from_schema(
         return fn
 
     return decorator
+
+
+def wizard_prompts_from_schema(
+    cls: type = RunConfig,
+    fields_to_ask: Iterable[str] = (),
+) -> "list[tuple[str, FieldSpec, Any]]":
+    """Return ``[(field_name, spec, default), ...]`` for the wizard.
+
+    The wizard iterates this list and builds a ``questionary`` prompt per
+    entry: ``confirm`` for is_flag, ``select`` for choice, ``text``
+    otherwise.  Centralising the iteration here means new fields show up
+    in the wizard's advanced section automatically.
+    """
+    out: list[tuple[str, FieldSpec, Any]] = []
+    field_map = {f.name: f for f in fields(cls)}
+    for name in fields_to_ask:
+        if name not in field_map:
+            raise KeyError(f"unknown RunConfig field: {name}")
+        spec = field_specs(cls)[name]
+        out.append((name, spec, field_map[name].default))
+    return out

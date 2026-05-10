@@ -1,13 +1,15 @@
 """`ema run` — full pipeline subcommand.
 
-This is a thin wrapper that:
-1. Parses CLI flags (or loads YAML config + applies overrides)
-2. Resolves the timestamped output dir
-3. Sets up logging + ProgressManager
-4. Calls into ema.main.run() with the resolved kwargs
+This module is intentionally thin. The pipeline body lives in
+``ema.main`` and is not modified by the CLI overhaul.
 
-The actual algorithm (peak calling → atlas snap → cluster → match) lives
-in ema/main.py and is not changed by this CLI overhaul.
+Click options are generated from :class:`ema.cli.config_schema.RunConfig`.
+The hand-rolled ``@click.option`` block was deleted in the centralisation
+refactor; adding a new flag now means adding a single dataclass field.
+The fields handled by ``common_options()`` (``--threads``, ``--config``,
+``--output``, ``--verbose``, ``--quiet``, ``--log-level``,
+``--no-log-file``, ``--no-progress``) are skipped from the auto-generator
+to avoid double-registration.
 """
 from __future__ import annotations
 
@@ -18,10 +20,19 @@ from pathlib import Path
 import click
 
 from ema.cli.common import common_options, parse_log_overrides, resolve_output_dir
+from ema.cli.config_schema import RunConfig, click_options_from_schema
 from ema.cli.defaults import DEFAULTS
 from ema.cli.yaml_loader import load_run_yaml, RunYamlError
 
 log = logging.getLogger(__name__)
+
+
+# Fields handled by common_options() or the bare-`ema` group; skip them
+# from the schema-driven generator so the option is only registered once.
+_COMMON_OPTION_FIELDS = (
+    "config", "output", "threads",
+    "verbose", "quiet", "log_level", "no_log_file", "no_progress",
+)
 
 
 def _list_strategies_and_exit() -> None:
@@ -39,78 +50,7 @@ def _list_strategies_and_exit() -> None:
 
 @click.command(name="run")
 @common_options(output_default=DEFAULTS["output"])
-# ─── inputs ─────────────────────────────────────────────────────────
-@click.option("--bam-dir", "bam_dir", type=click.Path(exists=True),
-              default=DEFAULTS["bam-dir"], help="Single-BAM convenience.")
-@click.option("--bam-files", "bam_files", type=str, default=DEFAULTS["bam-files"],
-              help="Comma-separated multi-BAM list.")
-@click.option("--gtf", "gtf", type=click.Path(exists=True, dir_okay=False),
-              default=DEFAULTS["gtf"], help="GTF file path.")
-@click.option("--atlas", "atlas", type=click.Path(exists=True, dir_okay=False),
-              default=DEFAULTS["atlas"], help="Reference PAS atlas BED.")
-@click.option("--atlas-distance", "atlas_distance", type=int,
-              default=DEFAULTS["atlas-distance"], help="Atlas snap distance (bp).")
-# ─── read processing ────────────────────────────────────────────────
-@click.option("--seq-len", "seq_len", type=int, default=DEFAULTS["seq-len"])
-@click.option("--cb-len", "cb_len", type=int, default=DEFAULTS["cb-len"])
-@click.option("--barcode-tag", "barcode_tag", type=str, default=DEFAULTS["barcode-tag"])
-# ─── concurrency ────────────────────────────────────────────────────
-@click.option("--bam-threads", "bam_threads", type=int, default=DEFAULTS["bam-threads"])
-@click.option("--pipeline", "pipeline", is_flag=True, default=DEFAULTS["pipeline"])
-@click.option("--batch-size", "batch_size", type=int, default=DEFAULTS["batch-size"])
-@click.option("--tiles", "tiles", is_flag=True, default=DEFAULTS["tiles"])
-@click.option("--tile-size", "tile_size", type=int, default=DEFAULTS["tile-size"])
-@click.option("--tile-overlap", "tile_overlap", type=int, default=DEFAULTS["tile-overlap"])
-# ─── peak calling ───────────────────────────────────────────────────
-@click.option("--peak-strategy", "peak_strategy",
-              type=str,  # validated lazily via _validate_strategy_choice
-              default=DEFAULTS["peak-strategy"])
-@click.option("--lambda-window", "lambda_window", type=int, default=DEFAULTS["lambda-window"])
-@click.option("--lambda-method", "lambda_method", type=str, default=DEFAULTS["lambda-method"])
-@click.option("--lambda-fold-change", "lambda_fold_change", type=float,
-              default=DEFAULTS["lambda-fold-change"])
-@click.option("--max-pas", "max_pas", type=int, default=DEFAULTS["max-pas"])
-@click.option("--smoothing-window", "smoothing_window", type=int,
-              default=DEFAULTS["smoothing-window"])
-@click.option("--min-prominence", "min_prominence", type=float, default=DEFAULTS["min-prominence"])
-@click.option("--dynamic-threshold", "dynamic_threshold", is_flag=True,
-              default=DEFAULTS["dynamic-threshold"])
-@click.option("--floor-threshold", "floor_threshold", type=int, default=DEFAULTS["floor-threshold"])
-@click.option("--pas-gap", "pas_gap", type=int, default=DEFAULTS["pas-gap"])
-# ─── filters ────────────────────────────────────────────────────────
-@click.option("--ip-filter", "ip_filter", is_flag=True, default=DEFAULTS["ip-filter"])
-@click.option("--genome-fasta", "genome_fasta", type=click.Path(exists=True),
-              default=DEFAULTS["genome-fasta"])
-@click.option("--annot-filter", "annot_filter", is_flag=True, default=DEFAULTS["annot-filter"])
-@click.option("--ip-a-stretch", "ip_a_stretch", type=int, default=DEFAULTS["ip-a-stretch"])
-@click.option("--min-pas-per-cell", "min_pas_per_cell", type=int,
-              default=DEFAULTS["min-pas-per-cell"])
-@click.option("--min-read", "min_read", type=int, default=DEFAULTS["min-read"])
-@click.option("--min-cells", "min_cells", type=int, default=DEFAULTS["min-cells"])
-# ─── annotation ─────────────────────────────────────────────────────
-@click.option("--max-gene-distance", "max_gene_distance", type=int,
-              default=DEFAULTS["max-gene-distance"])
-@click.option("--utr-multiplier", "utr_multiplier", type=float,
-              default=DEFAULTS["utr-multiplier"])
-@click.option("--include-extended", "include_extended", is_flag=True,
-              default=DEFAULTS["include-extended"])
-# ─── clustering ─────────────────────────────────────────────────────
-@click.option("--cluster-method", "cluster_method",
-              type=str, default=DEFAULTS["cluster-method"])
-@click.option("--resolution", "resolution", type=float, default=DEFAULTS["resolution"])
-@click.option("--n-pcs", "n_pcs", type=int, default=DEFAULTS["n-pcs"])
-@click.option("--external-clusters", "external_clusters", type=click.Path(exists=True),
-              default=DEFAULTS["external-clusters"])
-@click.option("--random-seed", "random_seed", type=int, default=DEFAULTS["random-seed"])
-# ─── cross-dataset matching ─────────────────────────────────────────
-@click.option("--match-method", "match_method",
-              type=str, default=DEFAULTS["match-method"])
-@click.option("--n-top-markers", "n_top_markers", type=int, default=DEFAULTS["n-top-markers"])
-# ─── validation ─────────────────────────────────────────────────────
-@click.option("--benchmark", "benchmark", is_flag=True, default=DEFAULTS["benchmark"])
-@click.option("--validate-db", "validate_db", type=click.Path(exists=True),
-              default=DEFAULTS["validate-db"])
-# ─── helpers ────────────────────────────────────────────────────────
+@click_options_from_schema(RunConfig, skip=_COMMON_OPTION_FIELDS)
 @click.option("--list-strategies", "list_strategies_flag", is_flag=True, default=False,
               help="Print available strategies and exit.")
 def run(**kwargs) -> None:
@@ -140,7 +80,8 @@ def run(**kwargs) -> None:
         except RunYamlError as e:
             raise click.BadParameter(str(e), param_hint="--config")
 
-    # Lift --bam-dir into a synthetic single-dataset YAML if no datasets.
+    # Lift --bam-dir / --bam-files into a synthetic single-dataset YAML
+    # if no datasets list.
     if "datasets" not in cfg:
         if kwargs.get("bam_dir"):
             cfg["datasets"] = [{
