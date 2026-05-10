@@ -54,130 +54,69 @@ def run(
     ``filter_config``, ``args``) that the existing pipeline body reads, then
     calls :func:`main` to execute the full pipeline.
 
-    When ``cfg`` is ``None`` this function behaves identically to the legacy
-    ``main()`` call — it consumes whatever the argparse-populated globals
-    already contain.
+    Implementation -- single bridge via :class:`ema.cli.config_schema.RunConfig`.
+    The two hand-maintained maps (``_kwarg_to_args_map`` and
+    ``_cfg_to_args_map``) that used to live here have been replaced by
+    ``RunConfig.apply_to_legacy_globals()``.  See ema/cli/config_schema.py
+    for the field-by-field bridge metadata.
 
     Args:
         cfg: Resolved YAML/CLI config dict from ``ema.cli.run``.  Must contain
             at minimum a ``"datasets"`` key.  Other recognised keys mirror the
-            YAML schema (``gtf``, ``atlas``, ``atlas_distance``, ``seqlen``,
-            ``cb_len``, ``barcode_tag``, ``min_read``, ``min_cells``,
-            ``min_pas_per_cell``, ``pas_gap``).
-        out_dir: Output directory (``pathlib.Path`` or ``str``).  When provided
-            the pipeline writes all outputs here instead of the default
-            ``emaout/`` directory.
-        progress: A :class:`~ema.progress.ProgressManager` instance (already
-            entered as a context manager).  When *None* progress wiring is a
-            no-op — no bars are rendered.
-        **kwargs: Additional per-run overrides forwarded from the Click command
-            (e.g. ``peak_strategy``, ``dynamic_threshold``, ``tiles``, etc.).
+            schema's yaml_key field (gtf, atlas, atlas_distance, seqlen,
+            cb_len, barcode_tag, min_read, min_cells, min_pas_per_cell,
+            pas_gap, ...).
+        out_dir: Output directory (``pathlib.Path`` or ``str``).
+        progress: A :class:`~ema.progress.ProgressManager` instance.
+        **kwargs: Additional per-run overrides from the Click command
+            (e.g. ``peak_strategy``, ``dynamic_threshold``, ``tiles``).
 
     Returns:
         Exit code (0 on success).
     """
-    # ------------------------------------------------------------------ #
-    # 1. Bridge cfg + kwargs into module-level config dataclasses          #
-    # ------------------------------------------------------------------ #
     if cfg is not None:
-        # Output directory
+        from ema.cli.config_schema import (
+            RunConfig,
+            field_specs,
+            yaml_key_to_field_name,
+            legacy_alias_to_field_name,
+        )
+
+        # ------------------------------------------------------------------
+        # Step 1: build a RunConfig instance starting from YAML, then layer
+        # kwargs on top.  ``run.py::_pipeline_kwargs()`` filters kwargs to
+        # only those the user explicitly typed -- when the user didn't set
+        # a flag, kwargs[k] is absent, so the YAML value (or schema default)
+        # wins automatically.
+        # ------------------------------------------------------------------
+        rc = RunConfig.from_yaml_dict(cfg)
+
+        # Map kwargs (snake_case Click variable names) onto RunConfig fields.
+        field_names = {f.name for f in __import__("dataclasses").fields(RunConfig)}
+        for kw_key, val in kwargs.items():
+            if kw_key in field_names:
+                setattr(rc, kw_key, val)
+
+        # ------------------------------------------------------------------
+        # Step 2: directory + datasets that don't fit the schema's scalar
+        # bridge model (datasets is a list of dicts; output_dir we already
+        # know from the resolved Path passed in).
+        # ------------------------------------------------------------------
         if out_dir is not None:
             directory_config.output_dir = str(out_dir)
-
-        # Datasets list
         if "datasets" in cfg:
             directory_config.datasets = cfg["datasets"]
 
-        # Optional path overrides from YAML
-        if "gtf" in cfg:
-            directory_config.gtf_dir = cfg["gtf"]
-        if "atlas" in cfg:
-            directory_config.atlas = cfg["atlas"]
-        if "atlas_distance" in cfg:
-            directory_config.atlas_distance = cfg["atlas_distance"]
-
-        # variable_config scalars
-        if "seqlen" in cfg:
-            variable_config.seqlen = cfg["seqlen"]
-        if "cb_len" in cfg:
-            variable_config.cb_len = cfg["cb_len"]
-        if "barcode_tag" in cfg:
-            variable_config.barcode_tag = cfg["barcode_tag"]
-
-        # filter_config scalars.
-        #
-        # The legacy `ema/cli/__init__.py::cli()` shim that runs at module
-        # import time (via `ema/config.py`) only bridged `min_pas_per_cell`
-        # from YAML — `min_read`, `min_cells`, `min_genes` silently kept
-        # their class defaults (2000, 3, 50) regardless of YAML values.
-        # The new `ema run` correctly applies all four. The atlas baseline
-        # in reports/baseline_apa_completeness/ was regenerated to reflect
-        # this — see CHANGELOG.md (0.2.0) for details.
-        if "min_read" in cfg:
-            filter_config.min_read = cfg["min_read"]
-        if "min_cells" in cfg:
-            filter_config.min_cells = cfg["min_cells"]
-        if "min_pas_per_cell" in cfg:
-            # YAML key `min_pas_per_cell` is the per-cell PAS threshold —
-            # `preprocessing()` reads it as `filter_config.min_genes`.
-            # Set both so the YAML key has its intended effect.
-            filter_config.min_pas_per_cell = cfg["min_pas_per_cell"]
-            filter_config.min_genes = cfg["min_pas_per_cell"]
-        if "min_genes" in cfg:
-            filter_config.min_genes = cfg["min_genes"]
-
-        # Bridge any cfg keys that map to args attrs into args FIRST.
-        # Then kwargs (CLI flags) override on top. CLI flags that were left at
-        # their default DO NOT trample YAML values because run.py only forwards
-        # explicitly-set CLI flags here (see _apply_cli_overrides + the kwarg
-        # check below).
-        _cfg_to_args_map = {
-            "pas_gap": "pas_gap",
-            "cluster_match_method": "cluster_match_method",
-            "n_top_markers": "n_top_markers",
-        }
-        for cfg_key, args_attr in _cfg_to_args_map.items():
-            if cfg_key in cfg and cfg[cfg_key] is not None:
-                setattr(args, args_attr, cfg[cfg_key])
-
-        # Bridge kwargs into the argparse-style args namespace so the
-        # pipeline body can read them via the existing `args.<attr>` pattern.
-        _kwarg_to_args_map = {
-            "peak_strategy": "strategy",
-            "dynamic_threshold": "dynamic_threshold",
-            "floor_threshold": "floor_threshold",
-            "lambda_fold_change": "lambda_fold_change",
-            "lambda_window": "lambda_window",
-            "bam_threads": "bam_threads",
-            "tiles": "tiles",
-            "tile_size": "tile_size",
-            "tile_overlap": "tile_overlap",
-            "pipeline": "pipeline",
-            "batch_size": "batch_size",
-            "max_gene_distance": "max_gene_distance",
-            "utr_multiplier": "utr_multiplier",
-            "include_extended": "include_extended",
-            "min_pas_per_cell": "min_pas_per_cell",
-            "pas_gap": "pas_gap",
-            "cluster_method": "clustering_method",
-            "resolution": "resolution",
-            "n_pcs": "n_pcs",
-            "external_clusters": "external_clusters",
-            "random_seed": "random_seed",
-            "match_method": "cluster_match_method",
-            "n_top_markers": "n_top_markers",
-            # Strategy-tunable hyperparameters (forwarded into get_strategy())
-            "lambda_method": "lambda_method",
-            "max_pas": "max_pas",
-            "smoothing_window": "smoothing_window",
-            "min_prominence": "min_prominence",
-        }
-        for kw_key, args_attr in _kwarg_to_args_map.items():
-            if kw_key in kwargs and kwargs[kw_key] is not None:
-                setattr(args, args_attr, kwargs[kw_key])
+        # ------------------------------------------------------------------
+        # Step 3: single bridge -- schema-driven mutation of legacy globals.
+        # The bridge respects each field's ``legacy_dataclass_attr`` /
+        # ``legacy_args_attr`` instructions; new fields land on the right
+        # legacy attribute automatically.
+        # ------------------------------------------------------------------
+        rc.apply_to_legacy_globals()
 
     # ------------------------------------------------------------------ #
-    # 2. Delegate to the pipeline body (progress wired inside)             #
+    # Delegate to the pipeline body (progress wired inside)               #
     # ------------------------------------------------------------------ #
     _run_pipeline_body(progress=progress)
     return 0
