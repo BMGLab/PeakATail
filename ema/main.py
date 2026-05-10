@@ -823,12 +823,25 @@ def _run_pipeline_body(progress=None) -> None:
     # cluster pairs to test and which marker-PAS subset to use, instead of
     # running all 20K PAS x all C(K,2) pairs unconditionally.
 
-    # Cross-dataset cluster matching (only meaningful if >1 dataset)
+    # Cross-dataset cluster matching (only meaningful if >1 dataset).
+    #
+    # Pre-fix this block had a bare ``except Exception`` that swallowed every
+    # error including ImportErrors, KeyErrors, and pipeline-level
+    # programming bugs.  We now narrow the catch to:
+    #
+    #   * FileNotFoundError    — h5ad missing on disk (data issue)
+    #   * KeyError             — strategy/registry key missing (config issue)
+    #   * ValueError           — match strategy rejected the inputs
+    #   * pandas/IO errors during the to_csv() write
+    #
+    # Anything else (TypeError, ImportError, AttributeError, ...) is a true
+    # programming bug and re-raises so it is visible in the run log instead
+    # of being silently demoted to a one-line WARNING.
     if len(unique_ds_ids) > 1:
-        try:
-            h5ad_paths = [per_dataset_dir / ds / "clusters.h5ad" for ds in unique_ds_ids]
-            existing = [(p, ds) for p, ds in zip(h5ad_paths, unique_ds_ids) if p.exists()]
-            if len(existing) > 1:
+        h5ad_paths = [per_dataset_dir / ds / "clusters.h5ad" for ds in unique_ds_ids]
+        existing = [(p, ds) for p, ds in zip(h5ad_paths, unique_ds_ids) if p.exists()]
+        if len(existing) > 1:
+            try:
                 match_strategy = get_match_strategy(args.cluster_match_method)
                 match_df = match_strategy.match(
                     h5ad_paths=[p for p, _ in existing],
@@ -838,13 +851,19 @@ def _run_pipeline_body(progress=None) -> None:
                 cross_dir = output_dir / "cross_dataset"
                 cross_dir.mkdir(exist_ok=True)
                 match_df.to_csv(cross_dir / "canonical_cluster_map.tsv", sep="\t", index=False)
-                n_canonical = match_df['canonical_cluster'].nunique() if 'canonical_cluster' in match_df.columns else 0
+                n_canonical = (
+                    match_df['canonical_cluster'].nunique()
+                    if 'canonical_cluster' in match_df.columns else 0
+                )
                 log.info(
                     "Cross-dataset matching (%s): %d cluster entries -> %d canonical clusters",
                     args.cluster_match_method, len(match_df), n_canonical,
                 )
-        except Exception as e:
-            log.warning("Cross-dataset matching failed: %s", e)
+            except (FileNotFoundError, KeyError, ValueError, OSError) as e:
+                log.warning(
+                    "Cross-dataset matching skipped (%s): %s",
+                    type(e).__name__, e,
+                )
 
     return  # done with multi-sample path
 
