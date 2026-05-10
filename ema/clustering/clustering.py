@@ -25,6 +25,111 @@ import pandas as pd
 from ema.clustering.strategies import get_strategy
 
 
+# ---------------------------------------------------------------------------
+# Private helpers shared by all _do_* functions
+# ---------------------------------------------------------------------------
+
+def _save_and_report(adata: ad.AnnData, outputpath=None, output_h5ad=None):
+    """Save cluster labels + AnnData and print summary; returns adata."""
+    cluster_labels = adata.obs['leiden'].copy()
+    cluster_labels = cluster_labels.sort_index()
+
+    if outputpath is not None:
+        os.makedirs(os.path.dirname(outputpath), exist_ok=True)
+        cluster_labels.to_csv(outputpath, header=True, index=True)
+        print(f"Cluster labels saved to: {outputpath}")
+
+    # Save full AnnData object (includes UMAP, dim reduction, etc.)
+    if output_h5ad is not None:
+        os.makedirs(os.path.dirname(output_h5ad), exist_ok=True)
+        adata.write(output_h5ad)
+        print(f"AnnData saved to: {output_h5ad}")
+
+    # Report clustering summary
+    n_clusters = cluster_labels.nunique()
+    print(f"Found {n_clusters} clusters across {adata.n_obs} cells")
+    print(f"Cluster sizes:\n{cluster_labels.value_counts().sort_index()}")
+
+    return adata
+
+
+# ---------------------------------------------------------------------------
+# Module-level strategy implementations (called by the registry shims)
+# ---------------------------------------------------------------------------
+
+def _do_leiden_tfidf(adata: ad.AnnData,
+                     resolution=1.0,
+                     random_seed=42,
+                     n_pcs=40,
+                     external_clusters=None,
+                     outputpath=None,
+                     output_h5ad=None):
+    """Run the TF-IDF + LSI + Leiden pipeline."""
+    strategy = get_strategy("leiden_tfidf",
+                            resolution=resolution,
+                            random_seed=random_seed,
+                            n_dims=n_pcs)
+
+    print(f"Clustering with strategy: leiden_tfidf")
+    print(f"Parameters: {strategy.get_params()}")
+
+    adata = strategy.normalize(adata)
+    adata = strategy.reduce_dims(adata)
+    adata = strategy.cluster(adata)
+
+    return _save_and_report(adata, outputpath=outputpath, output_h5ad=output_h5ad)
+
+
+def _do_leiden_libsize(adata: ad.AnnData,
+                       resolution=1.0,
+                       random_seed=42,
+                       n_pcs=40,
+                       external_clusters=None,
+                       outputpath=None,
+                       output_h5ad=None):
+    """Run the library-size normalization + PCA + Leiden pipeline."""
+    strategy = get_strategy("leiden_libsize",
+                            resolution=resolution,
+                            random_seed=random_seed,
+                            n_pcs=n_pcs)
+
+    print(f"Clustering with strategy: leiden_libsize")
+    print(f"Parameters: {strategy.get_params()}")
+
+    adata = strategy.normalize(adata)
+    adata = strategy.reduce_dims(adata)
+    adata = strategy.cluster(adata)
+
+    return _save_and_report(adata, outputpath=outputpath, output_h5ad=output_h5ad)
+
+
+def _do_external(adata: ad.AnnData,
+                 resolution=1.0,
+                 random_seed=42,
+                 n_pcs=40,
+                 external_clusters=None,
+                 outputpath=None,
+                 output_h5ad=None):
+    """Load pre-computed external cluster labels."""
+    strategy = get_strategy("external",
+                            resolution=resolution,
+                            random_seed=random_seed,
+                            labels_path=external_clusters)
+
+    print(f"Clustering with strategy: external")
+    print(f"Parameters: {strategy.get_params()}")
+
+    adata = strategy.normalize(adata)
+    adata = strategy.reduce_dims(adata)
+    adata = strategy.cluster(adata)
+
+    return _save_and_report(adata, outputpath=outputpath, output_h5ad=output_h5ad)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def clustering(adata: ad.AnnData,
                method='leiden_tfidf',
                resolution=1.0,
@@ -54,47 +159,13 @@ def clustering(adata: ad.AnnData,
         UMAP embedding in .obsm['X_umap'], and dimensionality
         reduction in .obsm['X_pca'] or .obsm['X_lsi'].
     """
-    # Build strategy kwargs
-    strategy_kwargs = {
-        'resolution': resolution,
-        'random_seed': random_seed,
-    }
-
-    if method == 'leiden_tfidf':
-        strategy_kwargs['n_dims'] = n_pcs
-    elif method == 'leiden_libsize':
-        strategy_kwargs['n_pcs'] = n_pcs
-    elif method == 'external':
-        strategy_kwargs['labels_path'] = external_clusters
-
-    strategy = get_strategy(method, **strategy_kwargs)
-
-    print(f"Clustering with strategy: {method}")
-    print(f"Parameters: {strategy.get_params()}")
-
-    # Run the three-step pipeline
-    adata = strategy.normalize(adata)
-    adata = strategy.reduce_dims(adata)
-    adata = strategy.cluster(adata)
-
-    # Extract and save cluster labels
-    cluster_labels = adata.obs['leiden'].copy()
-    cluster_labels = cluster_labels.sort_index()
-
-    if outputpath is not None:
-        os.makedirs(os.path.dirname(outputpath), exist_ok=True)
-        cluster_labels.to_csv(outputpath, header=True, index=True)
-        print(f"Cluster labels saved to: {outputpath}")
-
-    # Save full AnnData object (includes UMAP, dim reduction, etc.)
-    if output_h5ad is not None:
-        os.makedirs(os.path.dirname(output_h5ad), exist_ok=True)
-        adata.write(output_h5ad)
-        print(f"AnnData saved to: {output_h5ad}")
-
-    # Report clustering summary
-    n_clusters = cluster_labels.nunique()
-    print(f"Found {n_clusters} clusters across {adata.n_obs} cells")
-    print(f"Cluster sizes:\n{cluster_labels.value_counts().sort_index()}")
-
-    return adata
+    from ema.clustering.registry import get_clustering_strategy
+    return get_clustering_strategy(method)(
+        adata,
+        resolution=resolution,
+        n_pcs=n_pcs,
+        random_seed=random_seed,
+        external_clusters=external_clusters,
+        outputpath=outputpath,
+        output_h5ad=output_h5ad,
+    )
