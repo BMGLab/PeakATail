@@ -53,6 +53,7 @@ import multiprocessing
 import os
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,58 @@ import pysam
 from ema.utils import ResourceManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# JobSpec — flat, pickle-safe descriptor for one tile × direction job
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class JobSpec:
+    """Immutable descriptor for a single tile × direction peak-calling job.
+
+    Frozen so it is hashable and safe to pickle across spawn boundaries.
+
+    Attributes:
+        job_id: Unique zero-based index across the entire multi-dataset job list.
+        dataset_id: Logical dataset identifier (e.g. ``"sample1"``).
+        bam_path: Path to the indexed source BAM file.
+        chrom: Chromosome name (e.g. ``"chr22"``).
+        tile_start: Start of the *core* tile window (inclusive, 0-based).
+        tile_end: End of the core tile window (exclusive).
+        fetch_start: Extended fetch start including overlap buffer.
+        fetch_end: Extended fetch end including overlap buffer.
+        direction: Strand — ``True`` = reverse/negative, ``False`` = forward/positive.
+        default_threshold: Fixed peak height threshold.
+        merge_len: Max gap before splitting peaks (bp).
+        strategy_name: Registered peak-finding strategy name.
+        dynamic_threshold: Enable window-based dynamic threshold.
+        floor_threshold: Minimum threshold in dynamic mode.
+        lambda_fold_change: Fold over local lambda for dynamic threshold.
+        lambda_window: Background estimation window in bp.
+        bam_threads: pysam BGZF decompression threads.
+        default_sample_id: Fallback RG tag value for reads without an RG tag.
+    """
+
+    job_id: int
+    dataset_id: str
+    bam_path: str
+    chrom: str
+    tile_start: int
+    tile_end: int
+    fetch_start: int
+    fetch_end: int
+    direction: bool
+    default_threshold: int = 5
+    merge_len: int = 100
+    strategy_name: str = "original"
+    dynamic_threshold: bool = False
+    floor_threshold: int = 3
+    lambda_fold_change: float = 2.0
+    lambda_window: int = 5000
+    bam_threads: int = 4
+    default_sample_id: str = "default"
 
 
 # ---------------------------------------------------------------------------
@@ -125,17 +178,24 @@ def get_chromosomes(bam_path: str) -> list[tuple[str, int]]:
 # ---------------------------------------------------------------------------
 
 
-def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
+def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
     """Run peak calling on a single genomic tile.
 
     This function is executed inside a spawned worker process.  All process-
     global state is therefore independent from every other worker.
 
     Args:
-        args: Dict produced by :func:`run_tiled` with keys:
+        args: Either a :class:`JobSpec` (global-pool path, Phase 3) or a legacy
+            ``dict`` (single-BAM :func:`run_tiled` path).
 
-            ``tile_id`` (int)
-                Unique zero-based tile index across the whole job.
+            When a ``JobSpec`` is passed the following fields are used:
+
+            ``job_id`` (int)
+                Unique zero-based index across the whole multi-dataset job list.
+            ``dataset_id`` (str)
+                Logical dataset identifier.
+            ``bam_path`` (str)
+                Path to the source indexed BAM.
             ``chrom`` (str)
                 Chromosome name.
             ``tile_start`` / ``tile_end`` (int)
@@ -143,8 +203,6 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
                 ``peak_start in [tile_start, tile_end)``.
             ``fetch_start`` / ``fetch_end`` (int)
                 Extended region fetched from the BAM (includes overlap buffer).
-            ``bam_path`` (str)
-                Path to the source indexed BAM.
             ``direction`` (bool)
                 Strand: ``True`` = reverse, ``False`` = forward.
             ``default_threshold`` (int)
@@ -160,7 +218,9 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dict with keys:
 
-            ``tile_id`` (int)
+            ``tile_id`` (int) — equals ``job_id`` for JobSpec path
+            ``dataset_id`` (str) — dataset this tile belongs to
+            ``direction`` (bool) — strand
             ``chrom`` (str)
             ``tile_start`` / ``tile_end`` (int)
             ``bed_path`` (str) — per-tile BED (filtered to core region)
@@ -181,18 +241,50 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
     from ema.countmatrix.read import set_default_sample_id
     from ema.strategies import get_strategy
 
-    tile_id: int = args["tile_id"]
-    chrom: str = args["chrom"]
-    tile_start: int = args["tile_start"]
-    tile_end: int = args["tile_end"]
-    fetch_start: int = args["fetch_start"]
-    fetch_end: int = args["fetch_end"]
-    bam_path: str = args["bam_path"]
+    # Normalise: accept both JobSpec (Phase 3) and legacy dict (run_tiled).
+    if isinstance(args, JobSpec):
+        tile_id: int = args.job_id
+        dataset_id: str = args.dataset_id
+        chrom: str = args.chrom
+        tile_start: int = args.tile_start
+        tile_end: int = args.tile_end
+        fetch_start: int = args.fetch_start
+        fetch_end: int = args.fetch_end
+        bam_path: str = args.bam_path
+        direction: bool = args.direction
+        _args_default_threshold = args.default_threshold
+        _args_merge_len = args.merge_len
+        _args_strategy_name = args.strategy_name
+        _args_dynamic_threshold = args.dynamic_threshold
+        _args_floor_threshold = args.floor_threshold
+        _args_lambda_fold_change = args.lambda_fold_change
+        _args_lambda_window = args.lambda_window
+        _args_bam_threads = args.bam_threads
+        _args_default_sample_id = args.default_sample_id
+    else:
+        tile_id = args["tile_id"]
+        dataset_id = args.get("dataset_id", "default")
+        chrom = args["chrom"]
+        tile_start = args["tile_start"]
+        tile_end = args["tile_end"]
+        fetch_start = args["fetch_start"]
+        fetch_end = args["fetch_end"]
+        bam_path = args["bam_path"]
+        direction = args["direction"]
+        _args_default_threshold = args["default_threshold"]
+        _args_merge_len = args["merge_len"]
+        _args_strategy_name = args["strategy_name"]
+        _args_dynamic_threshold = args["dynamic_threshold"]
+        _args_floor_threshold = args["floor_threshold"]
+        _args_lambda_fold_change = args["lambda_fold_change"]
+        _args_lambda_window = args["lambda_window"]
+        _args_bam_threads = args["bam_threads"]
+        _args_default_sample_id = args["default_sample_id"]
 
     # Per-worker isolation: reset all process-global mutable state
     reset_index()
     Peak.reset_pasnumber()
-    set_default_sample_id(args["default_sample_id"])
+    set_default_sample_id(_args_default_sample_id)
 
     # Use a unique temporary directory so concurrent workers never collide
     workdir = Path(tempfile.mkdtemp(prefix=f"tile_{tile_id}_"))
@@ -208,20 +300,20 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
         #    The 10 kb overlap buffer [fetch_start, fetch_end) is passed as
         #    the region so reads are fetched without materialising a temp BAM.
         # ----------------------------------------------------------------
-        strategy = get_strategy(args["strategy_name"])
+        strategy = get_strategy(_args_strategy_name)
         peak_calling(
-            args["direction"],
+            direction,
             str(raw_bed),
             str(raw_mtx),
             bamfile_dir=bam_path,
-            default_threshold=args["default_threshold"],
-            merge_len=args["merge_len"],
+            default_threshold=_args_default_threshold,
+            merge_len=_args_merge_len,
             strategy=strategy,
-            dynamic_threshold=args["dynamic_threshold"],
-            floor_threshold=args["floor_threshold"],
-            lambda_fold_change=args["lambda_fold_change"],
-            lambda_window=args["lambda_window"],
-            bam_threads=args["bam_threads"],
+            dynamic_threshold=_args_dynamic_threshold,
+            floor_threshold=_args_floor_threshold,
+            lambda_fold_change=_args_lambda_fold_change,
+            lambda_window=_args_lambda_window,
+            bam_threads=_args_bam_threads,
             region=(chrom, fetch_start, fetch_end),
         )
 
@@ -274,12 +366,14 @@ def tile_worker(args: dict[str, Any]) -> dict[str, Any]:
         raw_mtx.unlink(missing_ok=True)
 
         logger.info(
-            "Tile %d done: chrom=%s core=[%d,%d) kept_peaks=%d",
-            tile_id, chrom, tile_start, tile_end, len(kept_pasnumbers),
+            "Tile %d done: dataset=%s chrom=%s core=[%d,%d) kept_peaks=%d",
+            tile_id, dataset_id, chrom, tile_start, tile_end, len(kept_pasnumbers),
         )
 
         return {
             "tile_id": tile_id,
+            "dataset_id": dataset_id,
+            "direction": direction,
             "chrom": chrom,
             "tile_start": tile_start,
             "tile_end": tile_end,
@@ -443,6 +537,149 @@ def merge_tiles(
 
 
 # ---------------------------------------------------------------------------
+# Global-pool helpers (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def build_job_specs(
+    bam_list: list[tuple[str, str]],
+    directions: list[bool] | None = None,
+    tile_size: int = 25_000_000,
+    tile_overlap: int = 10_000,
+    default_threshold: int = 5,
+    merge_len: int = 100,
+    strategy_name: str = "original",
+    dynamic_threshold: bool = False,
+    floor_threshold: int = 3,
+    lambda_fold_change: float = 2.0,
+    lambda_window: int = 5000,
+    bam_threads: int = 4,
+    per_bam_tile_sizes: dict[str, int] | None = None,
+) -> list[JobSpec]:
+    """Build a flat list of :class:`JobSpec` across all datasets × chroms × tiles × directions.
+
+    Args:
+        bam_list: Ordered list of ``(dataset_id, bam_path)`` pairs.
+        directions: Strand flags to process. Defaults to ``[False, True]``
+            (forward then reverse).
+        tile_size: Default core tile width in bp. Overridden per-BAM by
+            *per_bam_tile_sizes* when provided.
+        tile_overlap: Overlap buffer on each side of a tile in bp.
+        default_threshold: Fixed peak height threshold.
+        merge_len: Max gap before splitting peaks (bp).
+        strategy_name: Registered peak-finding strategy name.
+        dynamic_threshold: Enable window-based dynamic threshold.
+        floor_threshold: Minimum threshold in dynamic mode.
+        lambda_fold_change: Fold over local lambda for dynamic threshold.
+        lambda_window: Background estimation window in bp.
+        bam_threads: pysam BGZF decompression threads per worker.
+        per_bam_tile_sizes: Optional ``{bam_path: tile_size_bp}`` dict for
+            RAM-adaptive tile sizing (produced by Phase 4 logic in callers).
+
+    Returns:
+        Flat list of :class:`JobSpec` instances, one per
+        (dataset × chrom × tile × direction).  The ``job_id`` field is a
+        monotonically increasing index across the entire list.
+    """
+    if directions is None:
+        directions = [False, True]
+
+    specs: list[JobSpec] = []
+    job_id = 0
+
+    for dataset_id, bam_path in bam_list:
+        bam_tile_size = (
+            per_bam_tile_sizes.get(str(bam_path), tile_size)
+            if per_bam_tile_sizes
+            else tile_size
+        )
+        chromosomes = get_chromosomes(str(bam_path))
+        for chrom, length in chromosomes:
+            tiles = split_chromosome_into_tiles(chrom, length, bam_tile_size, tile_overlap)
+            for (_, t_start, t_end, f_start, f_end) in tiles:
+                for direction in directions:
+                    specs.append(JobSpec(
+                        job_id=job_id,
+                        dataset_id=dataset_id,
+                        bam_path=str(bam_path),
+                        chrom=chrom,
+                        tile_start=t_start,
+                        tile_end=t_end,
+                        fetch_start=f_start,
+                        fetch_end=f_end,
+                        direction=direction,
+                        default_threshold=default_threshold,
+                        merge_len=merge_len,
+                        strategy_name=strategy_name,
+                        dynamic_threshold=dynamic_threshold,
+                        floor_threshold=floor_threshold,
+                        lambda_fold_change=lambda_fold_change,
+                        lambda_window=lambda_window,
+                        bam_threads=bam_threads,
+                        default_sample_id=dataset_id,
+                    ))
+                    job_id += 1
+
+    logger.info(
+        "build_job_specs: %d datasets × chroms/tiles/dirs → %d total jobs",
+        len(bam_list),
+        len(specs),
+    )
+    return specs
+
+
+def run_all_jobs(
+    jobs: list[JobSpec],
+    n_workers: int,
+) -> dict[tuple[str, bool], list[dict[str, Any]]]:
+    """Dispatch all jobs through a single global ``multiprocessing.Pool``.
+
+    Opens ONE spawn-context pool, dispatches all jobs via
+    ``imap_unordered(chunksize=1)`` for work-stealing, and collects results
+    grouped by ``(dataset_id, direction)``.
+
+    Args:
+        jobs: Flat list of :class:`JobSpec` instances produced by
+            :func:`build_job_specs`.
+        n_workers: Number of parallel worker processes.
+
+    Returns:
+        Dict mapping ``(dataset_id, direction)`` → list of tile-result dicts
+        (same format returned by :func:`tile_worker`), in arrival order.
+        Each value list can be passed directly to :func:`merge_tiles`.
+    """
+    if not jobs:
+        return {}
+
+    actual_workers = min(n_workers, len(jobs))
+    logger.info(
+        "run_all_jobs: dispatching %d jobs through Pool(%d) workers",
+        len(jobs),
+        actual_workers,
+    )
+
+    ctx = multiprocessing.get_context("spawn")
+    grouped: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+
+    with ctx.Pool(processes=actual_workers) as pool:
+        try:
+            for result in pool.imap_unordered(tile_worker, jobs, chunksize=1):
+                key = (result["dataset_id"], result["direction"])
+                grouped.setdefault(key, []).append(result)
+        except Exception:
+            pool.terminate()
+            raise
+
+    total_results = sum(len(v) for v in grouped.values())
+    logger.info(
+        "run_all_jobs complete: %d results across %d (dataset, direction) groups",
+        total_results,
+        len(grouped),
+    )
+    return grouped
+
+
+# ---------------------------------------------------------------------------
 # Top-level entry point
 # ---------------------------------------------------------------------------
 
@@ -587,6 +824,7 @@ def run_tiled(
     for tile_id, (chrom, tile_start, tile_end, fetch_start, fetch_end) in enumerate(all_tiles):
         worker_args.append({
             "tile_id": tile_id,
+            "dataset_id": default_sample_id,
             "chrom": chrom,
             "tile_start": tile_start,
             "tile_end": tile_end,

@@ -12,7 +12,10 @@ Conservative defaults:
 """
 
 from __future__ import annotations
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 try:
     import psutil
@@ -183,6 +186,99 @@ class ResourceManager:
             return max_batch
         n = int(ram_budget_mb / per_item_mb)
         return max(min_batch, min(n, max_batch))
+
+    def get_tile_size(
+        self,
+        bam_path: str,
+        n_workers: int,
+        target_per_worker_mb: int = 300,
+        sample_region_mb: int = 1,
+        min_tile_bp: int = 5_000_000,
+        max_tile_bp: int = 100_000_000,
+    ) -> int:
+        """Compute a RAM-adaptive tile size in base pairs for tiled peak calling.
+
+        Samples the first ``sample_region_mb`` Mb of the first chromosome in the
+        BAM to estimate read density, then derives a tile size that keeps each
+        worker's peak memory within ``target_per_worker_mb`` MB.
+
+        Memory model per worker (conservative):
+        - Base overhead: 60 MB (Python interpreter + pysam init)
+        - pysam BGZF buffer: 32 MB
+        - cb_dict read storage: ~50 bytes/read
+
+        Formula::
+
+            budget_mb = min(target_per_worker_mb, free_ram_mb * 0.7 / n_workers)
+            bytes_available = (budget_mb - 92) * 1024 * 1024
+            tile_size_bp = bytes_available / 50 / density_reads_per_bp
+
+        Result is clamped to [min_tile_bp, max_tile_bp].
+
+        Args:
+            bam_path: Path to the indexed BAM file.
+            n_workers: Number of parallel tile workers.
+            target_per_worker_mb: Desired peak RAM per worker in MB (default 300).
+            sample_region_mb: How many Mb of the first chromosome to sample for
+                density estimation (default 1).
+            min_tile_bp: Minimum returned tile size in bp (default 5 Mb).
+            max_tile_bp: Maximum returned tile size in bp (default 100 Mb).
+
+        Returns:
+            Tile size in bp, clamped to [min_tile_bp, max_tile_bp].
+        """
+        try:
+            import pysam
+
+            with pysam.AlignmentFile(bam_path, "rb") as bam:
+                if bam.nreferences == 0:
+                    logger.warning("get_tile_size: BAM has no references, using min_tile_bp")
+                    return min_tile_bp
+
+                first_chrom = bam.get_reference_name(0)
+                first_chrom_len = bam.get_reference_length(first_chrom)
+                sample_end = min(first_chrom_len, sample_region_mb * 1_000_000)
+
+                read_count = sum(
+                    1 for _ in bam.fetch(first_chrom, 0, sample_end)
+                )
+
+        except Exception as exc:
+            logger.warning(
+                "get_tile_size: BAM density sampling failed (%s); using min_tile_bp",
+                exc,
+            )
+            return min_tile_bp
+
+        sample_bp = max(1, sample_end)
+        density = read_count / sample_bp  # reads per bp
+
+        free_mb = self.free_ram_mb()
+        budget_per_worker_mb = min(
+            target_per_worker_mb,
+            int(free_mb * self.ram_safety_fraction / max(1, n_workers)),
+        )
+        # Clamp budget to at least 1 MB above overhead so we don't get 0
+        overhead_mb = 92
+        usable_mb = max(1, budget_per_worker_mb - overhead_mb)
+        bytes_available = usable_mb * 1024 * 1024
+
+        if density <= 0:
+            tile_size_bp = max_tile_bp
+        else:
+            tile_size_bp = int(bytes_available / 50 / density)
+
+        result = max(min_tile_bp, min(tile_size_bp, max_tile_bp))
+        logger.info(
+            "get_tile_size: bam=%s density=%.6f reads/bp budget_per_worker=%dMB "
+            "computed_tile=%d clamped_tile=%d",
+            bam_path,
+            density,
+            budget_per_worker_mb,
+            tile_size_bp,
+            result,
+        )
+        return result
 
     def report(self) -> dict:
         """Return a summary dict of current resource state for logging."""

@@ -9,6 +9,7 @@ from ema.countmatrix.peackcalling import peak_calling
 from ema.countmatrix.indexing import get_mapping, reset_index
 from ema.countmatrix.read import set_default_sample_id
 from ema.config import directory_config, variable_config, args, filter_config
+from ema.utils import get_resource_manager
 from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
 from ema.clustering.clustering import clustering
 from ema.annotate.annotate import annotate
@@ -108,8 +109,7 @@ def main():
         bam_list = [("default", directory_config.bam_dir)]
 
     # -------------------------------------------------------------------------
-    # Peak-calling loop — one iteration per (dataset_id, bam_path) pair.
-    # Each iteration gets its own isolated CB column space via reset_index().
+    # Peak-calling — either global tile pool (--tiles) or sequential per-BAM.
     # -------------------------------------------------------------------------
     output_dir = Path(directory_config.output_dir)
     peakcalling_dir = output_dir / "peakcalling"
@@ -128,50 +128,191 @@ def main():
     # Track next BAM index per dataset so filenames are unique
     dataset_bam_indices: dict[str, int] = {}
 
-    for dataset_id, bam_path in bam_list:
-        idx = dataset_bam_indices.get(dataset_id, 0)
-        dataset_bam_indices[dataset_id] = idx + 1
+    use_tiles: bool = getattr(args, "tiles", False)
 
-        reset_index()  # CRITICAL: isolate CB column space per (dataset, bam)
-        set_default_sample_id(dataset_id)  # fallback when BAM has no RG tag
-
-        pos_bed = peakcalling_dir / f"{dataset_id}_{idx}.pos.bed"
-        neg_bed = peakcalling_dir / f"{dataset_id}_{idx}.neg.bed"
-        pos_mtx = peakcalling_dir / f"{dataset_id}_{idx}.pos.mtx"
-        neg_mtx = peakcalling_dir / f"{dataset_id}_{idx}.neg.mtx"
-        cb_tsv = peakcalling_dir / f"{dataset_id}_{idx}.cb.tsv"
-
-        peak_calling(
-            False,
-            bedfilepath=str(pos_bed),
-            matrixpath=str(pos_mtx),
-            bamfile_dir=str(bam_path),
-            **peak_kwargs,
+    if use_tiles:
+        # -----------------------------------------------------------------
+        # TILE MODE (Phase 3): build a single flat JobSpec list across ALL
+        # datasets × chroms × tiles × directions and dispatch through ONE
+        # global multiprocessing.Pool with imap_unordered work-stealing.
+        # -----------------------------------------------------------------
+        from ema.countmatrix.tile_runner import (
+            build_job_specs,
+            run_all_jobs,
+            merge_tiles,
         )
-        peak_calling(
-            True,
-            bedfilepath=str(neg_bed),
-            matrixpath=str(neg_mtx),
-            bamfile_dir=str(bam_path),
-            **peak_kwargs,
+        from ema.utils.resource_manager import ResourceManager
+
+        rm = get_resource_manager()
+        n_workers = rm.get_n_jobs(per_worker_mb=300, stage="peak_tile")
+
+        # Phase 4: RAM-adaptive tile sizing (unless --tile-size was explicitly
+        # set by the user, i.e. differs from the CLI default of 25_000_000).
+        _cli_tile_default = 25_000_000
+        user_tile_size: int = getattr(args, "tile_size", _cli_tile_default)
+        _tile_size_is_auto = (user_tile_size == _cli_tile_default)
+
+        per_bam_tile_sizes: dict[str, int] = {}
+        if _tile_size_is_auto:
+            for _ds_id, _bam_path in bam_list:
+                _bam_key = str(_bam_path)
+                if _bam_key not in per_bam_tile_sizes:
+                    per_bam_tile_sizes[_bam_key] = rm.get_tile_size(
+                        bam_path=_bam_key,
+                        n_workers=n_workers,
+                        target_per_worker_mb=300,
+                    )
+            effective_tile_size = user_tile_size  # fallback if dict lookup misses
+        else:
+            effective_tile_size = user_tile_size
+
+        tile_overlap: int = getattr(args, "tile_overlap", 10_000)
+
+        # Resolve strategy name for cross-process serialisation
+        _strategy_name: str
+        if strategy is None:
+            _strategy_name = "original"
+        elif isinstance(strategy, str):
+            _strategy_name = strategy
+        else:
+            from ema.strategies import _REGISTRY
+            _strategy_name = next(
+                (k for k, v in _REGISTRY.items() if isinstance(strategy, v)),
+                "original",
+            )
+
+        jobs = build_job_specs(
+            bam_list=[(ds_id, str(bp)) for ds_id, bp in bam_list],
+            directions=[False, True],  # False=pos, True=neg
+            tile_size=effective_tile_size,
+            tile_overlap=tile_overlap,
+            default_threshold=variable_config.default_threshold,
+            merge_len=variable_config.merge_len,
+            strategy_name=_strategy_name,
+            dynamic_threshold=peak_kwargs.get("dynamic_threshold", False),
+            floor_threshold=peak_kwargs.get("floor_threshold", 3),
+            lambda_fold_change=peak_kwargs.get("lambda_fold_change", 2.0),
+            lambda_window=peak_kwargs.get("lambda_window", 5000),
+            bam_threads=peak_kwargs.get("bam_threads", 4),
+            per_bam_tile_sizes=per_bam_tile_sizes if _tile_size_is_auto else None,
         )
 
-        # Dump CB list — shared by pos+neg (both used the same _index instance)
-        mapping = get_mapping()
-        ordered_cbs = [cb for cb, _ in sorted(mapping.items(), key=lambda x: x[1])]
-        with open(cb_tsv, "w") as f:
-            for cb in ordered_cbs:
-                f.write(cb + "\n")
+        print(
+            f"[tile-pool] {len(bam_list)} dataset(s) → {len(jobs)} jobs "
+            f"through Pool({n_workers})"
+        )
 
-        all_pos_beds.append(str(pos_bed))
-        all_neg_beds.append(str(neg_bed))
-        all_pos_mtxs.append(str(pos_mtx))
-        all_neg_mtxs.append(str(neg_mtx))
-        # Both pos and neg MTX share the SAME cb.tsv (same barcode index)
-        all_pos_cbs.append(str(cb_tsv))
-        all_neg_cbs.append(str(cb_tsv))
-        all_dataset_ids_for_pos.append(dataset_id)
-        all_dataset_ids_for_neg.append(dataset_id)
+        # Dispatch all jobs through one global pool
+        grouped = run_all_jobs(jobs, n_workers=n_workers)
+
+        # Merge per-(dataset_id, direction) group and reconstruct file paths
+        _ds_bam_indices: dict[str, int] = {}
+        # Collect unique (dataset_id, bam_path) pairs in original order
+        _seen_ds_bam: list[tuple[str, str]] = []
+        for _ds_id, _bp in bam_list:
+            _pair = (_ds_id, str(_bp))
+            if _pair not in _seen_ds_bam:
+                _seen_ds_bam.append(_pair)
+
+        for _ds_id, _bam_path in _seen_ds_bam:
+            _bam_path_str = str(_bam_path)
+            _idx = _ds_bam_indices.get(_ds_id, 0)
+            _ds_bam_indices[_ds_id] = _idx + 1
+
+            pos_bed = peakcalling_dir / f"{_ds_id}_{_idx}.pos.bed"
+            neg_bed = peakcalling_dir / f"{_ds_id}_{_idx}.neg.bed"
+            pos_mtx = peakcalling_dir / f"{_ds_id}_{_idx}.pos.mtx"
+            neg_mtx = peakcalling_dir / f"{_ds_id}_{_idx}.neg.mtx"
+            cb_tsv = peakcalling_dir / f"{_ds_id}_{_idx}.cb.tsv"
+
+            pos_cb = peakcalling_dir / f"{_ds_id}_{_idx}.pos_cb.tsv"
+            neg_cb = peakcalling_dir / f"{_ds_id}_{_idx}.neg_cb.tsv"
+
+            pos_tiles = grouped.get((_ds_id, False), [])
+            neg_tiles = grouped.get((_ds_id, True), [])
+
+            merge_tiles(pos_tiles, str(pos_bed), str(pos_mtx), str(pos_cb))
+            merge_tiles(neg_tiles, str(neg_bed), str(neg_mtx), str(neg_cb))
+
+            # Unify the two strand CB lists into one shared cb.tsv
+            _all_cbs: list[str] = []
+            _seen_cbs: set[str] = set()
+            for _cb_file in (pos_cb, neg_cb):
+                _p = Path(_cb_file)
+                if _p.exists():
+                    with open(_p) as _f:
+                        for _line in _f:
+                            _cb = _line.strip()
+                            if _cb and _cb not in _seen_cbs:
+                                _all_cbs.append(_cb)
+                                _seen_cbs.add(_cb)
+            with open(cb_tsv, "w") as _f:
+                for _cb in _all_cbs:
+                    _f.write(_cb + "\n")
+            # Remove strand-split CB temp files
+            for _p in (pos_cb, neg_cb):
+                try:
+                    Path(_p).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            all_pos_beds.append(str(pos_bed))
+            all_neg_beds.append(str(neg_bed))
+            all_pos_mtxs.append(str(pos_mtx))
+            all_neg_mtxs.append(str(neg_mtx))
+            all_pos_cbs.append(str(cb_tsv))
+            all_neg_cbs.append(str(cb_tsv))
+            all_dataset_ids_for_pos.append(_ds_id)
+            all_dataset_ids_for_neg.append(_ds_id)
+
+    else:
+        # -----------------------------------------------------------------
+        # SEQUENTIAL MODE: one dataset at a time (non-tile, existing path).
+        # -----------------------------------------------------------------
+        for dataset_id, bam_path in bam_list:
+            idx = dataset_bam_indices.get(dataset_id, 0)
+            dataset_bam_indices[dataset_id] = idx + 1
+
+            reset_index()  # CRITICAL: isolate CB column space per (dataset, bam)
+            set_default_sample_id(dataset_id)  # fallback when BAM has no RG tag
+
+            pos_bed = peakcalling_dir / f"{dataset_id}_{idx}.pos.bed"
+            neg_bed = peakcalling_dir / f"{dataset_id}_{idx}.neg.bed"
+            pos_mtx = peakcalling_dir / f"{dataset_id}_{idx}.pos.mtx"
+            neg_mtx = peakcalling_dir / f"{dataset_id}_{idx}.neg.mtx"
+            cb_tsv = peakcalling_dir / f"{dataset_id}_{idx}.cb.tsv"
+
+            peak_calling(
+                False,
+                bedfilepath=str(pos_bed),
+                matrixpath=str(pos_mtx),
+                bamfile_dir=str(bam_path),
+                **peak_kwargs,
+            )
+            peak_calling(
+                True,
+                bedfilepath=str(neg_bed),
+                matrixpath=str(neg_mtx),
+                bamfile_dir=str(bam_path),
+                **peak_kwargs,
+            )
+
+            # Dump CB list — shared by pos+neg (both used the same _index instance)
+            mapping = get_mapping()
+            ordered_cbs = [cb for cb, _ in sorted(mapping.items(), key=lambda x: x[1])]
+            with open(cb_tsv, "w") as f:
+                for cb in ordered_cbs:
+                    f.write(cb + "\n")
+
+            all_pos_beds.append(str(pos_bed))
+            all_neg_beds.append(str(neg_bed))
+            all_pos_mtxs.append(str(pos_mtx))
+            all_neg_mtxs.append(str(neg_mtx))
+            # Both pos and neg MTX share the SAME cb.tsv (same barcode index)
+            all_pos_cbs.append(str(cb_tsv))
+            all_neg_cbs.append(str(cb_tsv))
+            all_dataset_ids_for_pos.append(dataset_id)
+            all_dataset_ids_for_neg.append(dataset_id)
 
     # Save peak calling stats
     output_mgr.save_stats("peak_calling", {
