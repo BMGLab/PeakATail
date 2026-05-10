@@ -29,12 +29,19 @@ Tradeoffs
 from __future__ import annotations
 
 import json
+import re
 from itertools import combinations
 from pathlib import Path
 
 import anndata as ad
 import numpy as np
 import pandas as pd
+
+# Real biological barcodes are DNA letters (with optional Cell Ranger
+# "-N" suffix). Numeric or arbitrary-string suffixes (e.g. "_0", "_idx_42")
+# are NOT biological barcodes and the leading "sampleX_" is part of the
+# cell name itself, not a dataset prefix to strip.
+_DNA_BARCODE_RE = re.compile(r"^[ACGTN]{6,}(?:-\d+)?$", re.IGNORECASE)
 
 from ema.clustering.cross_dataset.base import ClusterMatchStrategy
 from ema.clustering.cross_dataset import register_match_strategy
@@ -49,27 +56,41 @@ from ema.clustering.cross_dataset.marker_overlap import (
 def _strip_prefix(barcode: str) -> str:
     """Strip dataset prefix from a cell barcode.
 
-    Many multi-sample pipelines prepend ``<sample>#`` to barcodes during
-    concatenation.  This function returns everything after the last ``#``
-    (or the original string if no ``#`` is present).
+    Two conventions are recognised:
+
+    * ``<sample>#<barcode>`` -- Cell Ranger convention.  Always stripped
+      because ``#`` never appears inside a real biological barcode.
+    * ``<sample>_<barcode>`` -- PeakATail convention.  Only stripped when
+      the suffix LOOKS like a real biological barcode (DNA letters of
+      length >= 6, optionally followed by ``-<digits>`` Cell Ranger tail).
+      This guards against synthetic/test names like ``cellA_0`` where the
+      underscore is part of the identifier itself, not a dataset prefix.
 
     Args:
         barcode: Cell barcode string, possibly prefixed.
 
     Returns:
-        Barcode suffix (the biological barcode without dataset prefix).
+        Barcode suffix (the biological barcode without dataset prefix),
+        or the original ``barcode`` when no recognisable prefix is found.
 
     Examples:
         >>> _strip_prefix("sampleA#ACGT-1")
         'ACGT-1'
+        >>> _strip_prefix("sampleA_ACGTGCATAGCT")
+        'ACGTGCATAGCT'
+        >>> _strip_prefix("sampleA_ACGTGCATAGCT-1")
+        'ACGTGCATAGCT-1'
         >>> _strip_prefix("ACGT-1")
         'ACGT-1'
+        >>> _strip_prefix("cellA_0")           # not a DNA suffix -> kept
+        'cellA_0'
     """
-    # Try '#' first (Cell Ranger convention), then '_' (PeakATail convention)
     if "#" in barcode:
         return barcode.split("#")[-1]
     if "_" in barcode:
-        return barcode.split("_", 1)[-1]
+        candidate = barcode.split("_", 1)[-1]
+        if _DNA_BARCODE_RE.match(candidate):
+            return candidate
     return barcode
 
 
