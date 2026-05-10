@@ -11,7 +11,13 @@ log = logging.getLogger(__name__)
 
 
 @click.command(name="merge")
-@common_options(include_output=True, output_default="merged.bam")
+# Merge writes a single BAM file (not a directory), so we opt out of the
+# common --output (which is dir-typed) and define a file-typed --output here.
+@common_options(include_output=False)
+@click.option("--output", "-o", "output",
+              type=click.Path(file_okay=True, dir_okay=False, resolve_path=True),
+              default="merged.bam",
+              help="Output BAM path (will be sorted+indexed).")
 @click.option("--bam-files", "-i", "bam_files", multiple=True, required=True,
               type=click.Path(exists=True, dir_okay=False),
               help="BAM files to merge. Repeat -i for each.")

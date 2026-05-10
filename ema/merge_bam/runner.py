@@ -26,5 +26,7 @@ def run_merge(bam_files: list[str], output: str, threads: int = 4) -> None:
         threads: Number of samtools threads (default: 4).
     """
     log.info("run_merge: merging %d BAM(s) -> %s (threads=%d)", len(bam_files), output, threads)
-    merge(bam_files=bam_files, threads=threads)
+    # NB: must forward `output` — without it pysam.merge writes to the
+    # default filename and the user's --output path is silently ignored.
+    merge(bam_files=bam_files, threads=threads, output=output)
     log.info("run_merge: done.")
