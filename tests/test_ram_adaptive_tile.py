@@ -222,14 +222,22 @@ class TestGetTileSizeRealBam:
 
     @pytest.fixture
     def chr22_bam(self) -> str:
-        import os
-        bam = "/home/user/PeakATail/data/chr22.bam"
-        if not os.path.exists(bam):
-            pytest.skip("data/chr22.bam not found")
-        bai = bam + ".bai"
-        if not os.path.exists(bai):
-            pytest.skip("data/chr22.bam.bai not found")
-        return bam
+        """Locate any indexed BAM in the repo for tile-sizing smoke tests.
+
+        Tries (in order): the small chr22 test BAM under ``test_run/``,
+        the legacy hardcoded ``data/chr22.bam`` path, and finally any
+        ``data/*.bam`` with a ``.bai`` sibling. Skips if nothing found.
+        """
+        import os, glob
+        candidates = [
+            "/home/user/PeakATail/test_run/chr22.bam",
+            "/home/user/PeakATail/data/chr22.bam",
+        ]
+        candidates += sorted(glob.glob("/home/user/PeakATail/data/*.bam"))
+        for bam in candidates:
+            if os.path.exists(bam) and os.path.exists(bam + ".bai"):
+                return bam
+        pytest.skip("no indexed BAM found in test_run/ or data/")
 
     def test_real_bam_returns_valid_tile_size(self, chr22_bam: str):
         rm = _rm()
