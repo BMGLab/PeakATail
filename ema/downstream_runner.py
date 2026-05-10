@@ -57,6 +57,11 @@ def run_one_dataset_downstream(
     *,
     log_queue=None,
     progress_client=None,
+    cluster_method: str = "leiden_tfidf",
+    cluster_resolution: float = 1.0,
+    cluster_n_pcs: int = 40,
+    cluster_random_seed: int = 42,
+    cluster_external_clusters: str | None = None,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -190,8 +195,20 @@ def run_one_dataset_downstream(
     # 6. Cluster                                                          #
     # ------------------------------------------------------------------ #
     cluster_h5ad = ds_dir / "clusters.h5ad"
-    log.info("%s clustering (%d cells x %d PAS)", prefix, adata.n_obs, adata.n_vars)
-    clustering(adata=adata, output_h5ad=str(cluster_h5ad))
+    log.info(
+        "%s clustering (%d cells x %d PAS) — method=%s resolution=%s",
+        prefix, adata.n_obs, adata.n_vars,
+        cluster_method, cluster_resolution,
+    )
+    clustering(
+        adata=adata,
+        method=cluster_method,
+        resolution=cluster_resolution,
+        n_pcs=cluster_n_pcs,
+        random_seed=cluster_random_seed,
+        external_clusters=cluster_external_clusters,
+        output_h5ad=str(cluster_h5ad),
+    )
     if progress_client is not None:
         progress_client.advance(1)  # tick 6/6: cluster
 
@@ -225,10 +242,23 @@ def downstream_worker_star(args: tuple) -> dict:
             - 10 elements: ``(*pos_args[9], log_queue)`` — no progress client
             - 11 elements: ``(*pos_args[9], log_queue, progress_client)`` —
               progress client added by Phase 10 wiring
+            - 12 elements: ``(*pos_args[9], log_queue, progress_client,
+              cluster_kwargs_dict)`` — clustering hyperparameters added by
+              YAML/CLI wiring fix.  ``cluster_kwargs_dict`` keys map to
+              the ``cluster_*`` keyword args of
+              :func:`run_one_dataset_downstream`.
 
     Returns:
         The stats dict returned by ``run_one_dataset_downstream``.
     """
+    if len(args) == 12:
+        *pos_args, log_queue, progress_client, cluster_kwargs = args
+        return run_one_dataset_downstream(
+            *pos_args,
+            log_queue=log_queue,
+            progress_client=progress_client,
+            **(cluster_kwargs or {}),
+        )
     if len(args) == 11:
         *pos_args, log_queue, progress_client = args
         return run_one_dataset_downstream(

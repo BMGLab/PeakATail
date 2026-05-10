@@ -173,6 +173,27 @@ def run(**kwargs) -> None:
     )
     log.info("Output directory: %s", out_dir)
 
+    # Warn loudly for flags that exist in the CLI surface but are not yet
+    # wired into the pipeline body.  No silent fallbacks: if you set one of
+    # these, we tell you it is a no-op so you know the result you are
+    # looking at did NOT honour your request.
+    _NOT_WIRED = {
+        "ip_filter": "--ip-filter (internal-priming filter not integrated into `ema run`)",
+        "genome_fasta": "--genome-fasta (only consumed by --ip-filter, currently no-op)",
+        "annot_filter": "--annot-filter (annotation filter not integrated into `ema run`)",
+        "ip_a_stretch": "--ip-a-stretch (only consumed by --ip-filter, currently no-op)",
+        "benchmark": "--benchmark (run scripts/validate_strategies.py instead)",
+        "validate_db": "--validate-db (run scripts/validate_strategies.py instead)",
+    }
+    for _k, _msg in _NOT_WIRED.items():
+        _v = kwargs.get(_k)
+        _default = DEFAULTS.get(_k.replace("_", "-"))
+        if _v not in (None, False, _default):
+            log.warning(
+                "%s is currently a no-op; the value you supplied will NOT "
+                "affect the output.", _msg,
+            )
+
     from ema.progress import ProgressManager
     with ProgressManager(disable=kwargs["no_progress"]) as pm:
         # Hand off to the pipeline. All algorithm code is in ema.main.
@@ -221,5 +242,10 @@ def _pipeline_kwargs(kwargs: dict) -> dict:
         "config", "output", "bam_dir", "bam_files",
         "verbose", "quiet", "log_level", "no_log_file", "no_progress",
         "list_strategies_flag",
+        # Not-yet-wired flags (warned above) — strip so they don't end up
+        # in args via _kwarg_to_args_map. Keeping the warn-loud-but-do-nothing
+        # behavior visible in one place.
+        "ip_filter", "genome_fasta", "annot_filter", "ip_a_stretch",
+        "benchmark", "validate_db",
     }
     return {k: v for k, v in kwargs.items() if k not in drop}

@@ -152,6 +152,11 @@ def run(
             "random_seed": "random_seed",
             "match_method": "cluster_match_method",
             "n_top_markers": "n_top_markers",
+            # Strategy-tunable hyperparameters (forwarded into get_strategy())
+            "lambda_method": "lambda_method",
+            "max_pas": "max_pas",
+            "smoothing_window": "smoothing_window",
+            "min_prominence": "min_prominence",
         }
         for kw_key, args_attr in _kwarg_to_args_map.items():
             if kw_key in kwargs and kwargs[kw_key] is not None:
@@ -204,7 +209,25 @@ def _run_pipeline_body(progress=None) -> None:
     # Save run configuration
     output_mgr.save_run_config(vars(args))
 
-    strategy = get_strategy(args.strategy)
+    # Forward strategy-tunable hyperparameters that the user supplied via
+    # CLI / YAML.  Only pass kwargs the strategy actually accepts (introspect
+    # the constructor) so unrelated strategies aren't broken.
+    import inspect
+    _strategy_cls_kwargs: dict = {}
+    for _attr in ("lambda_method", "max_pas", "smoothing_window", "min_prominence"):
+        if hasattr(args, _attr) and getattr(args, _attr) is not None:
+            _strategy_cls_kwargs[_attr] = getattr(args, _attr)
+    try:
+        from ema.strategies import _REGISTRY as _STRAT_REG
+        _strat_cls = _STRAT_REG.get(args.strategy)
+        if _strat_cls is not None:
+            _accepted = set(inspect.signature(_strat_cls.__init__).parameters)
+            _filtered_kwargs = {k: v for k, v in _strategy_cls_kwargs.items() if k in _accepted}
+        else:
+            _filtered_kwargs = {}
+    except Exception:
+        _filtered_kwargs = {}
+    strategy = get_strategy(args.strategy, **_filtered_kwargs)
     peak_kwargs = dict(
         strategy=strategy,
         dynamic_threshold=args.dynamic_threshold,
@@ -480,9 +503,9 @@ def _run_pipeline_body(progress=None) -> None:
 
         filter_cb()
 
-        # Save CB filter stats
+        # Save CB filter stats — record what filter_cb actually used.
         output_mgr.save_stats("cb_filter", {
-            "min_read": args.min_pas_per_cell,
+            "min_read": filter_config.min_read,
         })
 
         # Wait for GTF processing to complete before find_close
@@ -545,7 +568,17 @@ def _run_pipeline_body(progress=None) -> None:
             "pas_after_filter": adata.n_vars,
         })
 
-        clustering(adata=adata)
+        # Forward all CLI/YAML clustering hyperparameters into clustering().
+        # Without this, --cluster-method / --resolution / --n-pcs /
+        # --random-seed / --external-clusters were silently ignored.
+        clustering(
+            adata=adata,
+            method=getattr(args, "clustering_method", "leiden_tfidf"),
+            resolution=getattr(args, "resolution", 1.0),
+            n_pcs=getattr(args, "n_pcs", 40),
+            random_seed=getattr(args, "random_seed", 42),
+            external_clusters=getattr(args, "external_clusters", None),
+        )
 
         # Save clustering stats
         output_mgr.save_stats("clustering", {
@@ -713,12 +746,22 @@ def _run_pipeline_body(progress=None) -> None:
     # Build final worker_args — for inline path we add per-dataset progress
     # clients (6 ticks per dataset: extract/filter/build/annotate/preprocess/cluster).
     # For pool path we append the client to the tuple so downstream_worker_star can unpack it.
+    # Forward all clustering hyperparameters from CLI/YAML.  Without this,
+    # --cluster-method / --resolution / --n-pcs / --random-seed / --external-clusters
+    # were silently ignored in the multi-sample path.
+    _cluster_kwargs: dict = {
+        "cluster_method": getattr(args, "clustering_method", "leiden_tfidf"),
+        "cluster_resolution": getattr(args, "resolution", 1.0),
+        "cluster_n_pcs": getattr(args, "n_pcs", 40),
+        "cluster_random_seed": getattr(args, "random_seed", 42),
+        "cluster_external_clusters": getattr(args, "external_clusters", None),
+    }
     worker_args: list[tuple] = []
     for _warg in _raw_worker_args:
         _ds_id_for_sub = _warg[0]
         _sub_stage = _add_subtask(_downstream_stage, _ds_id_for_sub, total=6)
         _sub_client = _client(_sub_stage)
-        worker_args.append(_warg + (_sub_client,))
+        worker_args.append(_warg + (_sub_client, _cluster_kwargs))
 
     # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
     n_datasets = len(worker_args)
@@ -737,9 +780,14 @@ def _run_pipeline_body(progress=None) -> None:
         for arg_tuple in worker_args:
             # arg_tuple has: ds_id, sub_indices, sub_cbs, unified_mtx,
             #   per_dataset_dir, genes_pkl, min_read, min_cells, min_genes,
-            #   log_queue, progress_client  (11 elements)
-            *pos_args, lq, pc = arg_tuple
-            run_one_dataset_downstream(*pos_args, log_queue=lq, progress_client=pc)
+            #   log_queue, progress_client, cluster_kwargs  (12 elements)
+            *pos_args, lq, pc, ck = arg_tuple
+            run_one_dataset_downstream(
+                *pos_args,
+                log_queue=lq,
+                progress_client=pc,
+                **(ck or {}),
+            )
             _advance(_downstream_stage)
     else:
         ctx = multiprocessing.get_context("spawn")
