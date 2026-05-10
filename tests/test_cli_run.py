@@ -56,3 +56,69 @@ def test_run_no_input_errors_clearly():
     result = runner.invoke(main, ["run"])
     assert result.exit_code != 0
     assert "config" in result.output.lower() or "bam" in result.output.lower()
+
+
+def test_run_threads_flag_resets_resource_manager(tmp_path, monkeypatch):
+    """--threads must override the singleton ResourceManager.user_max_threads.
+
+    Regression: the Click --threads flag landed in pipeline kwargs but was
+    never bridged into ema.utils.get_resource_manager(); it only worked via
+    the legacy argparse shim. Result: silently ignored on the new CLI.
+    """
+    # Force a clean singleton, supply --threads, capture state before pipeline
+    # starts by aborting via a YAML loader patch.
+    from ema.utils import reset_resource_manager, get_resource_manager
+    reset_resource_manager()
+
+    yaml_path = tmp_path / "minimal.yaml"
+    yaml_path.write_text(
+        "datasets:\n"
+        "  - id: x\n"
+        "    merge_strategy: none\n"
+        "    bams:\n"
+        "      - /nonexistent.bam\n"
+    )
+
+    captured: dict = {}
+
+    def _abort_setup_logging(*args, **kwargs):
+        # Capture ResourceManager state at the precise moment that
+        # the --threads wiring (which happens BEFORE setup_logging) has run.
+        captured["rm_user_max"] = get_resource_manager().user_max_threads
+        raise SystemExit(123)
+
+    monkeypatch.setattr("ema.logging_config.setup_logging", _abort_setup_logging)
+    runner = CliRunner()
+    result = runner.invoke(
+        main, ["run", "--config", str(yaml_path), "--threads", "7"],
+        standalone_mode=False,
+    )
+    # Either Click caught the SystemExit or the test marker propagated.
+    assert captured.get("rm_user_max") == 7, (
+        f"--threads not bridged into ResourceManager singleton; "
+        f"got {captured.get('rm_user_max')!r}"
+    )
+
+    reset_resource_manager()
+
+
+def test_single_sample_preprocessing_passes_filter_kwargs():
+    """main._run_pipeline_body() must forward filter_config.min_cells/min_genes
+    into matrixfilter.preprocessing() on the single-sample path.
+
+    Regression: preprocessing()'s default kwargs are evaluated at function-def
+    time so they snapshot filter_config from import. Without the explicit
+    forward, YAML overrides applied to filter_config were silently ignored.
+    """
+    import inspect
+    import ema.main as main_mod
+
+    body = inspect.getsource(main_mod._run_pipeline_body)
+    assert "min_cells=filter_config.min_cells" in body, (
+        "single-sample preprocessing() call must explicitly pass min_cells "
+        "from filter_config or YAML overrides will be silently ignored"
+    )
+    assert "min_genes=filter_config.min_genes" in body, (
+        "single-sample preprocessing() call must explicitly pass min_genes "
+        "from filter_config or YAML overrides will be silently ignored"
+    )
