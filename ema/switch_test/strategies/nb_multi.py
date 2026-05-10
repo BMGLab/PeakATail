@@ -68,11 +68,17 @@ def _lrt_single_pas(
     n_clusters: int,
 ) -> dict | None:
     """Fit full + null NB GLM, compute LRT p-value for one PAS."""
-    # Per-cluster cell filter
-    for k in range(n_clusters):
-        nonzero = int((y[cluster_indicator == k] > 0).sum())
-        if nonzero < min_cells_per_group:
-            return None
+    # PAS-level filter (scRNA convention): require at least min_cells_per_group
+    # cells with nonzero counts TOTAL, AND signal in at least 2 clusters.
+    total_nonzero = int((y > 0).sum())
+    if total_nonzero < min_cells_per_group:
+        return None
+    clusters_with_signal = sum(
+        1 for k in range(n_clusters)
+        if (y[cluster_indicator == k] > 0).any()
+    )
+    if clusters_with_signal < 2:
+        return None
 
     import statsmodels.api as sm
     from statsmodels.discrete.discrete_model import NegativeBinomial

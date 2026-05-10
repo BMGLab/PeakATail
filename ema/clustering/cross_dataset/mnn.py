@@ -252,12 +252,13 @@ def _vote_similarity_matrix(
         if i is not None and j is not None:
             vote_matrix[i, j] += 1.0
 
-    # Normalise by cluster size in A.
-    cluster_sizes_a = np.array(
-        [(labels_a == cl).sum() for cl in clusters_a], dtype=float
-    )
-    cluster_sizes_a[cluster_sizes_a == 0] = 1.0
-    sim = vote_matrix / cluster_sizes_a[:, np.newaxis]
+    # Row-normalise to a proper probability distribution: each row sums to 1.
+    # This handles k>1 MNN per cell (where vote_matrix[i,:] sum can exceed
+    # cluster_sizes_a[i]) by interpreting sim[i, j] as the fraction of cluster
+    # A_i's MNN votes that go to cluster B_j.
+    row_totals = vote_matrix.sum(axis=1, keepdims=True)
+    row_totals[row_totals == 0] = 1.0
+    sim = vote_matrix / row_totals
     return sim
 
 
