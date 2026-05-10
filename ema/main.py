@@ -106,16 +106,25 @@ def run(
 
         # filter_config scalars.
         #
-        # NOTE: the legacy `ema/cli/__init__.py::cli()` shim that runs at
-        # module import time (via `ema/config.py`) does NOT bridge YAML
-        # min_read / min_cells / min_genes into filter_config — those keep
-        # the class defaults (2000, 3, 50). Only `min_pas_per_cell` is read.
-        # Mirroring that behavior here keeps the byte-identical regression
-        # contract against `reports/baseline_apa_completeness/`. A separate
-        # branch should fix this hidden bug deliberately and regenerate the
-        # baseline.
+        # The legacy `ema/cli/__init__.py::cli()` shim that runs at module
+        # import time (via `ema/config.py`) only bridged `min_pas_per_cell`
+        # from YAML — `min_read`, `min_cells`, `min_genes` silently kept
+        # their class defaults (2000, 3, 50) regardless of YAML values.
+        # The new `ema run` correctly applies all four. The atlas baseline
+        # in reports/baseline_apa_completeness/ was regenerated to reflect
+        # this — see CHANGELOG.md (0.2.0) for details.
+        if "min_read" in cfg:
+            filter_config.min_read = cfg["min_read"]
+        if "min_cells" in cfg:
+            filter_config.min_cells = cfg["min_cells"]
         if "min_pas_per_cell" in cfg:
+            # YAML key `min_pas_per_cell` is the per-cell PAS threshold —
+            # `preprocessing()` reads it as `filter_config.min_genes`.
+            # Set both so the YAML key has its intended effect.
             filter_config.min_pas_per_cell = cfg["min_pas_per_cell"]
+            filter_config.min_genes = cfg["min_pas_per_cell"]
+        if "min_genes" in cfg:
+            filter_config.min_genes = cfg["min_genes"]
 
         # Bridge kwargs into the argparse-style args namespace so the
         # pipeline body can read them via the existing `args.<attr>` pattern.
