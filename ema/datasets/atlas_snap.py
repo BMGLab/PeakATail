@@ -125,6 +125,13 @@ def snap_beds_to_atlas(
     #   10 = atlas score
     #   11 = atlas strand
     #   12 = distance
+    # Input is always BED6 (we wrote it). Atlas can be BED6 or wider (e.g. PolyASite
+    # 2.0 has 12+ extra columns: scores, motifs, etc.). bedtools closest output:
+    #   cols[0..5] = input  (6 cols)
+    #   cols[6..6+N-1] = atlas (N cols, where N = atlas BED width >= 6)
+    #   cols[-1]    = distance (always last)
+    # So atlas-relative indices stay constant (chrom=0, start=1, end=2, name=3,
+    # score=4, strand=5) BUT shifted by +6 from input.
     _IDX_INPUT_NAME = 3
     _IDX_ATLAS_CHROM = 6
     _IDX_ATLAS_START = 7
@@ -132,8 +139,7 @@ def snap_beds_to_atlas(
     _IDX_ATLAS_PAS_ID = 9
     _IDX_ATLAS_SCORE = 10
     _IDX_ATLAS_STRAND = 11
-    _IDX_DISTANCE = 12
-    _EXPECTED_COLS = 13
+    _MIN_EXPECTED_COLS = 13  # BED6 input + BED6 atlas + distance
 
     mapping_rows: list[tuple[str, str, str]] = []
     # atlas_pas_id -> (chrom, start, end, pas_id, score, strand)
@@ -145,8 +151,10 @@ def snap_beds_to_atlas(
             if not line:
                 continue
             cols = line.split("\t")
-            if len(cols) < _EXPECTED_COLS:
+            if len(cols) < _MIN_EXPECTED_COLS:
                 continue
+            # Distance is always the LAST column regardless of atlas width
+            _IDX_DISTANCE = len(cols) - 1
 
             atlas_chrom = cols[_IDX_ATLAS_CHROM]
             # bedtools reports "." for atlas chrom when no feature found
