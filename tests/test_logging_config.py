@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ema.logging_config import setup_logging, teardown_logging
+from ema.logging_config import setup_logging, teardown_logging, get_log_queue
 
 
 @pytest.fixture(autouse=True)
@@ -89,3 +89,14 @@ def _child_emit_log(queue):
     logger.addHandler(h)
     logger.setLevel(logging.DEBUG)
     logger.info("from-spawn-child")
+
+
+def test_setup_worker_logging_replaces_handlers(tmp_path: Path):
+    log_path = setup_logging(level="DEBUG", output_dir=tmp_path)
+    queue = get_log_queue()
+    # Pretend we are in a worker now:
+    from ema.logging_config import setup_worker_logging
+    setup_worker_logging(queue)
+    root = logging.getLogger()
+    assert len(root.handlers) == 1
+    assert root.handlers[0].__class__.__name__ == "QueueHandler"
