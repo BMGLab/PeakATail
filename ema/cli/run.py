@@ -261,8 +261,17 @@ def _apply_cli_overrides(cfg: dict, kwargs: dict) -> None:
 
 
 def _pipeline_kwargs(kwargs: dict) -> dict:
-    """Translate Click kwargs into the keyword set ema.main.run() expects."""
-    # Strip CLI-only keys
+    """Translate Click kwargs into the keyword set ema.main.run() expects.
+
+    Two responsibilities:
+    1. Strip CLI-only keys (config, output, bam_dir, ...) and not-yet-wired
+       flags (ip_filter, benchmark, ...) — they have no place in args.
+    2. Drop any kwarg whose value is the CLI default. This is critical: if
+       the user supplied a YAML config with `pas_gap: 200` and did NOT
+       set --pas-gap on the command line, kwargs["pas_gap"] is the literal
+       default (100). Forwarding it would clobber the YAML value via
+       _kwarg_to_args_map. Only forward kwargs the user explicitly set.
+    """
     drop = {
         "config", "output", "bam_dir", "bam_files",
         "verbose", "quiet", "log_level", "no_log_file", "no_progress",
@@ -273,4 +282,15 @@ def _pipeline_kwargs(kwargs: dict) -> dict:
         "ip_filter", "genome_fasta", "annot_filter", "ip_a_stretch",
         "benchmark", "validate_db",
     }
-    return {k: v for k, v in kwargs.items() if k not in drop}
+    out: dict = {}
+    for k, v in kwargs.items():
+        if k in drop:
+            continue
+        # If the value matches the CLI default, the user did not set it
+        # explicitly — drop it so YAML wins. Compare against the canonical
+        # DEFAULTS table (kebab-case) since Click stores variables in snake.
+        _default = DEFAULTS.get(k.replace("_", "-"))
+        if v == _default:
+            continue
+        out[k] = v
+    return out

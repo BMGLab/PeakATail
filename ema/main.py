@@ -126,6 +126,20 @@ def run(
         if "min_genes" in cfg:
             filter_config.min_genes = cfg["min_genes"]
 
+        # Bridge any cfg keys that map to args attrs into args FIRST.
+        # Then kwargs (CLI flags) override on top. CLI flags that were left at
+        # their default DO NOT trample YAML values because run.py only forwards
+        # explicitly-set CLI flags here (see _apply_cli_overrides + the kwarg
+        # check below).
+        _cfg_to_args_map = {
+            "pas_gap": "pas_gap",
+            "cluster_match_method": "cluster_match_method",
+            "n_top_markers": "n_top_markers",
+        }
+        for cfg_key, args_attr in _cfg_to_args_map.items():
+            if cfg_key in cfg and cfg[cfg_key] is not None:
+                setattr(args, args_attr, cfg[cfg_key])
+
         # Bridge kwargs into the argparse-style args namespace so the
         # pipeline body can read them via the existing `args.<attr>` pattern.
         _kwarg_to_args_map = {
