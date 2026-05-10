@@ -3,7 +3,55 @@
 **Branch**: `feature/apa-completeness` (off `feature/hybrid-multi-sample`)
 **Author**: Trex
 **Date**: 2026-05-09
-**Status**: Approved (pending agent spawn)
+**Status**: ✅ Shipped — all 8 issues addressed, 29/29 strategy invariants pass
+
+## Status snapshot (2026-05-10)
+
+| # | Issue | Status | Evidence |
+|---|---|---|---|
+| 1 | PDUI multi-PAS (3 strategies + isoform-aware) | ✅ Shipped | `ema/quantification/strategies/{classic,proportion,shannon}.py`; PDUI invariants pass (PDUI ∈ [0,1], proportions sum to 1.0, entropy ∈ [0, log2(N)]) |
+| 2 | Multi-sample diff APA wiring | ✅ Shipped (in `ema_switch`, not `ema` per user feedback) | `ema/switch_test/cli.py` |
+| 3 | Cross-dataset cluster matching (3 strategies) | ✅ Shipped | `ema/clustering/cross_dataset/{marker_overlap,mnn,jaccard}.py`; all return confidence ∈ [0,1], 12 canonical clusters on identical-input regression |
+| 4 | Fisher → NB regression | ✅ Shipped | `ema/switch_test/strategies/{fisher,nb_pairwise,nb_multi}.py`; KS p=0.69 on null simulation, 20/20 signal recovery |
+| 5 | 9% cell-count gap diagnostic | ✅ Investigated (no bug) | Total counts in multi-sample slice byte-identical to raw peak calling output (6,337,529 counts, 2,794,774 nnz); gap is from bedtools merge boundary shifts, not data loss |
+| 6 | Atlas e2e validation | ✅ Shipped | `test_run/atlas_validation.yaml` + atlas_snap.py BED12 fix; 147 PolyASite 2.0 PAS hit on chr22 test |
+| 7 | BAM tagging speedup (samtools addreplacerg) | ✅ Shipped | `ema/datasets/manager.py` |
+| 8 | Peak.pasnumber reset | ✅ Shipped | `ema/countmatrix/peak.py` |
+
+### Discovered + fixed during validation (not in original plan)
+
+| Bug | Location | Fix |
+|---|---|---|
+| nb_multi returned 0 rows on real data | per-cluster nonzero filter too strict | Replaced with total-nonzero + ≥2-clusters-with-signal filter |
+| mnn match_confidence > 1.0 | `vote_matrix / cluster_size_a` doesn't account for k>1 MNN per cell | Row-normalize so each row is a probability distribution |
+| jaccard returned 0 matches on PeakATail-prefixed CBs | `_strip_prefix` only handled `#` (Cell Ranger), not `_` (PeakATail) | Try `#` first, fall back to `_` |
+| atlas_snap returned 0 hits on PolyASite 2.0 | `_IDX_DISTANCE=12` hardcoded for BED6 atlas; PolyASite is BED12+ | Derive `_IDX_DISTANCE = len(cols) - 1` per row |
+| ResourceManager missing | n_jobs=-1 oversubscribed on loaded box | New `ema/utils/resource_manager.py` (psutil-based, falls back to /proc/meminfo) |
+| Marker selection missing | NB on 20K PAS × 66 pairs = 6 hours | New `ema/quantification/marker_selector.py`; ema_switch now defaults to top-200 markers per cluster |
+
+### Architecture correction during validation
+
+User feedback led to: PDUI + diff APA do NOT belong in main `ema` pipeline (heavy compute, user wants to control scope). They moved to existing `ema_switch` separate command, which now uses the strategy registries. Main `ema` ends at clustering + cross-dataset matching.
+
+### Performance baseline (Phase 3)
+
+Pipeline runtime on full BAM (`data/SRR8325947_Aligned.sortedByCoord.out.bam`, 14.7M reads), 16GB RAM box, 14 physical cores:
+
+| Stage | Time |
+|---|---|
+| `ema` main (multi-sample 2 datasets, peak call → cluster → cross-dataset match) | 3m38s |
+| `ema_switch` fisher (66 pairs, top-200 markers, classic PDUI) | 1m08s |
+| `ema_switch` nb_pairwise (3 pairs, top-200 markers, prop+shannon PDUI) | 17s |
+| `ema_switch` nb_multi omnibus (top-200 markers, classic PDUI) | 48s |
+| All 3 cross-dataset matchers | <2s each |
+| Strategy validation suite (29 invariant checks) | ~30s |
+
+ResourceManager picked n_jobs=12 (vs 20-thread oversubscription before).
+
+cProfile/memory_profiler reports deferred to peak-calling-perf branch.
+
+---
+
 
 ---
 
