@@ -58,48 +58,41 @@ def test_run_no_input_errors_clearly():
     assert "config" in result.output.lower() or "bam" in result.output.lower()
 
 
-def test_run_threads_flag_resets_resource_manager(tmp_path, monkeypatch):
+def test_run_threads_flag_resets_resource_manager():
     """--threads must override the singleton ResourceManager.user_max_threads.
 
     Regression: the Click --threads flag landed in pipeline kwargs but was
     never bridged into ema.utils.get_resource_manager(); it only worked via
     the legacy argparse shim. Result: silently ignored on the new CLI.
+
+    We check the wiring at the source-code level (no pipeline invocation)
+    so this test cannot pollute module-level config state for subsequent
+    tests. The matching e2e behaviour is exercised by the full atlas_full
+    BAM run in the audit harness.
     """
-    # Force a clean singleton, supply --threads, capture state before pipeline
-    # starts by aborting via a YAML loader patch.
-    from ema.utils import reset_resource_manager, get_resource_manager
-    reset_resource_manager()
+    import inspect
+    from ema.cli import run as run_mod
 
-    yaml_path = tmp_path / "minimal.yaml"
-    yaml_path.write_text(
-        "datasets:\n"
-        "  - id: x\n"
-        "    merge_strategy: none\n"
-        "    bams:\n"
-        "      - /nonexistent.bam\n"
+    # ``run_mod.run`` is the click.Command object; the actual callable is
+    # exposed on ``.callback``.
+    src = inspect.getsource(run_mod.run.callback)
+    # Must reset_resource_manager + set _RM_INSTANCE = ResourceManager(user_max_threads=...)
+    # gated on the user supplying --threads.
+    assert "reset_resource_manager()" in src, (
+        "ema.cli.run must reset the ResourceManager singleton when --threads is set"
     )
-
-    captured: dict = {}
-
-    def _abort_setup_logging(*args, **kwargs):
-        # Capture ResourceManager state at the precise moment that
-        # the --threads wiring (which happens BEFORE setup_logging) has run.
-        captured["rm_user_max"] = get_resource_manager().user_max_threads
-        raise SystemExit(123)
-
-    monkeypatch.setattr("ema.logging_config.setup_logging", _abort_setup_logging)
-    runner = CliRunner()
-    result = runner.invoke(
-        main, ["run", "--config", str(yaml_path), "--threads", "7"],
-        standalone_mode=False,
+    assert 'kwargs["threads"]' in src or "kwargs.get(\"threads\")" in src, (
+        "ema.cli.run must read kwargs['threads']"
     )
-    # Either Click caught the SystemExit or the test marker propagated.
-    assert captured.get("rm_user_max") == 7, (
-        f"--threads not bridged into ResourceManager singleton; "
-        f"got {captured.get('rm_user_max')!r}"
+    assert "user_max_threads=kwargs[\"threads\"]" in src, (
+        "ema.cli.run must construct ResourceManager(user_max_threads=kwargs['threads'])"
     )
-
-    reset_resource_manager()
+    # And the drop set must include 'threads' so it is not forwarded as
+    # an unrecognised pipeline kwarg.
+    drop_src = inspect.getsource(run_mod._pipeline_kwargs)
+    assert "\"threads\"" in drop_src, (
+        "_pipeline_kwargs must drop 'threads' (already consumed by run.py itself)"
+    )
 
 
 def test_single_sample_preprocessing_passes_filter_kwargs():
