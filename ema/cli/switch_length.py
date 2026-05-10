@@ -60,7 +60,7 @@ def length(**kwargs) -> None:
     out_dir = resolve_output_dir(kwargs["output"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    from ema.logging_config import setup_logging
+    from ema.logging_config import setup_logging, teardown_logging
     setup_logging(
         level=(kwargs["log_level"] or "INFO").split(",")[0],
         output_dir=out_dir,
@@ -70,17 +70,19 @@ def length(**kwargs) -> None:
         per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
     )
 
-    log.info("ema switch length: strategy=%s", kwargs["strategy"])
-
-    from ema.switch_test.runner import run_length
-    run_length(
-        h5ad_paths=list(kwargs["h5ad"]),
-        gtf=kwargs["gtf"],
-        output_dir=str(out_dir),
-        cluster_pairs=kwargs["cluster_pairs"],
-        cluster_key=kwargs["cluster_key"],
-        strategy=kwargs["strategy"],
-        isoform_agg=kwargs["isoform_agg"],
-        isoform_collapse=kwargs["isoform_collapse"],
-        threads=kwargs["threads"],
-    )
+    try:
+        log.info("ema switch length: strategy=%s", kwargs["strategy"])
+        from ema.switch_test.runner import run_length
+        run_length(
+            h5ad_paths=list(kwargs["h5ad"]),
+            gtf=kwargs["gtf"],
+            output_dir=str(out_dir),
+            cluster_pairs=kwargs["cluster_pairs"],
+            cluster_key=kwargs["cluster_key"],
+            strategy=kwargs["strategy"],
+            isoform_agg=kwargs["isoform_agg"],
+            isoform_collapse=kwargs["isoform_collapse"],
+            threads=kwargs["threads"],
+        )
+    finally:
+        teardown_logging()

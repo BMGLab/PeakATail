@@ -251,73 +251,88 @@ def _confirm_proceed(cfg: dict) -> bool:
     return questionary.confirm("Proceed?", default=True).ask() or False
 
 
-# ─── dispatch helpers (call into Click commands' callbacks) ──────────
+# ─── dispatch helpers (subprocess-based so output streams + exit codes propagate) ──
+
+def _spawn_ema(args: list[str]) -> int:
+    """Run ``ema <args>`` as a subprocess, streaming stdout/stderr live.
+
+    Why a subprocess instead of ``CliRunner.invoke(... standalone_mode=False)``?
+
+    * ``CliRunner.invoke`` *captures* stdout/stderr -- the user never sees
+      Rich progress bars or in-progress logs.
+    * It returns ``exit_code=0`` when the wrapped callable raises a
+      non-Click exception (the exception is stashed on ``result.exception``
+      and silently swallowed).  That made wizard pipeline failures
+      indistinguishable from successes.
+    * The actual algorithm spawns its own multiprocessing pools; running
+      it inside the same Python process as the wizard is fragile (context
+      pollution, double-start of QueueListener, etc.).
+
+    Subprocess gives us:
+    * Live terminal output (Rich detects an attached TTY normally).
+    * Honest exit codes (the child's ``sys.exit`` propagates).
+    * Process isolation -- multiprocessing Manager / signal handlers /
+      logging globals start fresh.
+    """
+    import subprocess
+    import sys
+
+    cmd = [sys.executable, "-m", "ema", *args]
+    log.info("wizard: dispatching: %s", " ".join(cmd))
+    completed = subprocess.run(cmd)
+    return completed.returncode
+
 
 def _dispatch_run(cfg: dict) -> int:
-    from ema.cli.run import run as run_cmd
-    # Re-construct argv-style invocation. Cleanest path: write cfg to a temp
-    # YAML and pass --config to the click command.
-    # Pull non-YAML keys out of cfg into explicit CLI flags so they actually
-    # take effect.  Without this, wizard-collected `threads` would be written
-    # into the temp YAML, the loader would log "unknown YAML key", and the
-    # user's choice would be silently dropped.
+    """Write cfg to a temp YAML and dispatch to ``ema run --config <yaml>``."""
+    import tempfile
+
+    import yaml
+
+    # Pull non-YAML keys (already passed via flags) out of cfg before we
+    # serialise.  Without this they would be written into the YAML and the
+    # loader would log a stray "unknown YAML key" warning.
     extra_args: list[str] = []
     threads = cfg.pop("threads", None)
     if threads is not None:
         extra_args += ["--threads", str(threads)]
 
-    import tempfile, yaml
     tf = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
     yaml.safe_dump(cfg, tf)
     tf.close()
     try:
-        from click.testing import CliRunner
-        runner = CliRunner()
-        result = runner.invoke(
-            run_cmd, ["--config", tf.name, *extra_args], standalone_mode=False
-        )
-        return result.exit_code
+        return _spawn_ema(["run", "--config", tf.name, *extra_args])
     finally:
         Path(tf.name).unlink(missing_ok=True)
 
 
 def _dispatch_switch_diff(cfg: dict) -> int:
-    from ema.cli.switch_diff import diff
-    args = ["--strategy", cfg["strategy"], "--output", cfg["output"]]
+    args = ["switch", "diff", "--strategy", cfg["strategy"], "--output", cfg["output"]]
     for h in cfg["h5ad"]:
         args += ["--h5ad", h]
-    from click.testing import CliRunner
-    return CliRunner().invoke(diff, args, standalone_mode=False).exit_code
+    return _spawn_ema(args)
 
 
 def _dispatch_switch_length(cfg: dict) -> int:
-    from ema.cli.switch_length import length
-    args = ["--strategy", cfg["strategy"], "--output", cfg["output"]]
+    args = ["switch", "length", "--strategy", cfg["strategy"], "--output", cfg["output"]]
     for h in cfg["h5ad"]:
         args += ["--h5ad", h]
-    from click.testing import CliRunner
-    return CliRunner().invoke(length, args, standalone_mode=False).exit_code
+    return _spawn_ema(args)
 
 
 def _dispatch_switch_match(cfg: dict) -> int:
-    from ema.cli.switch_match import match
-    args = ["--strategy", cfg["strategy"], "--output", cfg["output"]]
+    args = ["switch", "match", "--strategy", cfg["strategy"], "--output", cfg["output"]]
     for h in cfg["h5ad"]:
         args += ["--h5ad", h]
-    from click.testing import CliRunner
-    return CliRunner().invoke(match, args, standalone_mode=False).exit_code
+    return _spawn_ema(args)
 
 
 def _dispatch_merge(cfg: dict) -> int:
-    from ema.cli.merge import merge
-    args = ["--output", cfg["output"]]
+    args = ["merge", "--output", cfg["output"]]
     for b in cfg["bam_files"]:
         args += ["--bam-files", b]
-    from click.testing import CliRunner
-    return CliRunner().invoke(merge, args, standalone_mode=False).exit_code
+    return _spawn_ema(args)
 
 
 def _dispatch_parse_gtf(cfg: dict) -> int:
-    from ema.cli.parse_gtf import parse_gtf
-    from click.testing import CliRunner
-    return CliRunner().invoke(parse_gtf, ["--gtf", cfg["gtf"]], standalone_mode=False).exit_code
+    return _spawn_ema(["parse-gtf", "--gtf", cfg["gtf"]])

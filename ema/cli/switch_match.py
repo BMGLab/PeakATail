@@ -48,7 +48,7 @@ def match(**kwargs) -> None:
     out_dir = resolve_output_dir(kwargs["output"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    from ema.logging_config import setup_logging
+    from ema.logging_config import setup_logging, teardown_logging
     setup_logging(
         level=(kwargs["log_level"] or "INFO").split(",")[0],
         output_dir=out_dir,
@@ -58,16 +58,19 @@ def match(**kwargs) -> None:
         per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
     )
 
-    log.info("ema switch match: strategy=%s, %d datasets", kwargs["strategy"], len(kwargs["h5ad"]))
-
-    from ema.clustering.cross_dataset import get_match_strategy
-    strat = get_match_strategy(kwargs["strategy"])
-    df = strat.match(
-        list(kwargs["h5ad"]),
-        [str(i) for i in range(len(kwargs["h5ad"]))],  # synthetic ds ids
-        n_top_markers=kwargs["n_top_markers"],
-        n_jobs=kwargs["threads"] or -1,
-    )
-    out_file = out_dir / "cluster_match.tsv"
-    df.to_csv(out_file, sep="\t")
-    log.info("Wrote %s (%d rows)", out_file, len(df))
+    try:
+        log.info("ema switch match: strategy=%s, %d datasets",
+                 kwargs["strategy"], len(kwargs["h5ad"]))
+        from ema.clustering.cross_dataset import get_match_strategy
+        strat = get_match_strategy(kwargs["strategy"])
+        df = strat.match(
+            list(kwargs["h5ad"]),
+            [str(i) for i in range(len(kwargs["h5ad"]))],  # synthetic ds ids
+            n_top_markers=kwargs["n_top_markers"],
+            n_jobs=kwargs["threads"] or -1,
+        )
+        out_file = out_dir / "cluster_match.tsv"
+        df.to_csv(out_file, sep="\t")
+        log.info("Wrote %s (%d rows)", out_file, len(df))
+    finally:
+        teardown_logging()

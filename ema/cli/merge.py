@@ -38,11 +38,18 @@ def merge(**kwargs) -> None:
         per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
     )
 
-    log.info("ema merge: %d input BAMs -> %s", len(kwargs["bam_files"]), out_path)
-
-    from ema.merge_bam.runner import run_merge
-    run_merge(
-        bam_files=list(kwargs["bam_files"]),
-        output=str(out_path),
-        threads=kwargs["threads"] or 4,
-    )
+    try:
+        log.info("ema merge: %d input BAMs -> %s", len(kwargs["bam_files"]), out_path)
+        from ema.merge_bam.runner import run_merge
+        run_merge(
+            bam_files=list(kwargs["bam_files"]),
+            output=str(out_path),
+            threads=kwargs["threads"] or 4,
+        )
+    finally:
+        # teardown_logging() releases the multiprocessing.Manager subprocess
+        # spawned by setup_logging.  Without this, the manager process keeps
+        # the parent's interpreter alive at shutdown and we hit:
+        #   "Fatal Python error: _enter_buffered_busy ... interpreter shutdown"
+        from ema.logging_config import teardown_logging
+        teardown_logging()

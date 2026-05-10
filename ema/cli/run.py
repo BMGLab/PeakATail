@@ -201,7 +201,7 @@ def run(**kwargs) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Logging + progress.
-    from ema.logging_config import setup_logging
+    from ema.logging_config import setup_logging, teardown_logging
     setup_logging(
         level=(kwargs["log_level"] or "INFO").split(",")[0],
         output_dir=out_dir,
@@ -210,36 +210,41 @@ def run(**kwargs) -> None:
         no_log_file=kwargs["no_log_file"],
         per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
     )
-    log.info("Output directory: %s", out_dir)
-    if kwargs.get("threads") is not None:
-        log.info("ResourceManager: --threads=%d (absolute ceiling)", kwargs["threads"])
+    try:
+        log.info("Output directory: %s", out_dir)
+        if kwargs.get("threads") is not None:
+            log.info("ResourceManager: --threads=%d (absolute ceiling)", kwargs["threads"])
 
-    # Warn loudly for flags that exist in the CLI surface but are not yet
-    # wired into the pipeline body.  No silent fallbacks: if you set one of
-    # these, we tell you it is a no-op so you know the result you are
-    # looking at did NOT honour your request.
-    _NOT_WIRED = {
-        "ip_filter": "--ip-filter (internal-priming filter not integrated into `ema run`)",
-        "genome_fasta": "--genome-fasta (only consumed by --ip-filter, currently no-op)",
-        "annot_filter": "--annot-filter (annotation filter not integrated into `ema run`)",
-        "ip_a_stretch": "--ip-a-stretch (only consumed by --ip-filter, currently no-op)",
-        "benchmark": "--benchmark (run scripts/validate_strategies.py instead)",
-        "validate_db": "--validate-db (run scripts/validate_strategies.py instead)",
-    }
-    for _k, _msg in _NOT_WIRED.items():
-        _v = kwargs.get(_k)
-        _default = DEFAULTS.get(_k.replace("_", "-"))
-        if _v not in (None, False, _default):
-            log.warning(
-                "%s is currently a no-op; the value you supplied will NOT "
-                "affect the output.", _msg,
-            )
+        # Warn loudly for flags that exist in the CLI surface but are not yet
+        # wired into the pipeline body.  No silent fallbacks: if you set one of
+        # these, we tell you it is a no-op so you know the result you are
+        # looking at did NOT honour your request.
+        _NOT_WIRED = {
+            "ip_filter": "--ip-filter (internal-priming filter not integrated into `ema run`)",
+            "genome_fasta": "--genome-fasta (only consumed by --ip-filter, currently no-op)",
+            "annot_filter": "--annot-filter (annotation filter not integrated into `ema run`)",
+            "ip_a_stretch": "--ip-a-stretch (only consumed by --ip-filter, currently no-op)",
+            "benchmark": "--benchmark (run scripts/validate_strategies.py instead)",
+            "validate_db": "--validate-db (run scripts/validate_strategies.py instead)",
+        }
+        for _k, _msg in _NOT_WIRED.items():
+            _v = kwargs.get(_k)
+            _default = DEFAULTS.get(_k.replace("_", "-"))
+            if _v not in (None, False, _default):
+                log.warning(
+                    "%s is currently a no-op; the value you supplied will NOT "
+                    "affect the output.", _msg,
+                )
 
-    from ema.progress import ProgressManager
-    with ProgressManager(disable=kwargs["no_progress"]) as pm:
-        # Hand off to the pipeline. All algorithm code is in ema.main.
-        from ema.main import run as pipeline_run
-        pipeline_run(cfg=cfg, out_dir=out_dir, progress=pm, **_pipeline_kwargs(kwargs))
+        from ema.progress import ProgressManager
+        with ProgressManager(disable=kwargs["no_progress"]) as pm:
+            # Hand off to the pipeline. All algorithm code is in ema.main.
+            from ema.main import run as pipeline_run
+            pipeline_run(cfg=cfg, out_dir=out_dir, progress=pm, **_pipeline_kwargs(kwargs))
+    finally:
+        # Release the multiprocessing.Manager subprocess spawned by
+        # setup_logging so the parent interpreter can shut down cleanly.
+        teardown_logging()
 
 
 def _safe_list(modname: str, fnname: str) -> list[str]:

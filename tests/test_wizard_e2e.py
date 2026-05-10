@@ -178,29 +178,27 @@ pas_gap: 100
         ],
     }
 
-    # Capture the dispatch result so we can surface the underlying exception
-    # if it crashes (CliRunner.invoke swallows exceptions otherwise).
+    # The new wizard dispatches `ema run --config <yaml>` via subprocess so
+    # output streams live and exit codes propagate. We exercise that path
+    # directly here -- if the subprocess fails the captured output is
+    # surfaced verbatim instead of being swallowed by CliRunner.
     captured: dict = {}
-    real_dispatch = None
 
     def _instrumented_dispatch(cfg):
-        nonlocal real_dispatch
-        if real_dispatch is None:
-            from ema.cli.wizard import _dispatch_run as r
-            real_dispatch = r
-        # Replicate the body of _dispatch_run but also stash the result.
         import tempfile
         import yaml as _yaml
-        from click.testing import CliRunner
-        from ema.cli.run import run as run_cmd
+        import subprocess
+        import sys as _sys
         tf = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
         _yaml.safe_dump(cfg, tf)
         tf.close()
         try:
-            runner = CliRunner()
-            result = runner.invoke(run_cmd, ["--config", tf.name], standalone_mode=False)
-            captured["result"] = result
-            return result.exit_code
+            res = subprocess.run(
+                [_sys.executable, "-m", "ema", "run", "--config", tf.name],
+                capture_output=True, text=True,
+            )
+            captured["result"] = res
+            return res.returncode
         finally:
             Path(tf.name).unlink(missing_ok=True)
 
@@ -211,14 +209,14 @@ pas_gap: 100
         rc = wizard_run()
 
     if rc != 0:
-        result = captured.get("result")
+        res = captured.get("result")
         msg = "no result captured"
-        if result is not None:
-            import traceback as _tb
-            tb_str = ""
-            if result.exc_info:
-                tb_str = "".join(_tb.format_exception(*result.exc_info))
-            msg = f"exit_code={result.exit_code}\nexc={result.exception!r}\noutput={result.output!r}\ntraceback={tb_str}"
+        if res is not None:
+            msg = (
+                f"returncode={res.returncode}\n"
+                f"--- stdout ---\n{res.stdout}\n"
+                f"--- stderr ---\n{res.stderr}\n"
+            )
         raise AssertionError(f"wizard exited {rc} (expected 0).\n{msg}")
 
     # Output directory created somewhere — search for emaout-like dirs.

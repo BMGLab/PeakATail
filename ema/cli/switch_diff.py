@@ -59,7 +59,7 @@ def diff(**kwargs) -> None:
     out_dir = resolve_output_dir(kwargs["output"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    from ema.logging_config import setup_logging
+    from ema.logging_config import setup_logging, teardown_logging
     setup_logging(
         level=(kwargs["log_level"] or "INFO").split(",")[0],
         output_dir=out_dir,
@@ -69,20 +69,23 @@ def diff(**kwargs) -> None:
         per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
     )
 
-    log.info("ema switch diff: %d h5ad input(s); strategy=%s", len(kwargs["h5ad"]), kwargs["strategy"])
-
-    from ema.switch_test.runner import run_diff
-    run_diff(
-        h5ad_paths=list(kwargs["h5ad"]),
-        pasbed=kwargs["pasbed"],
-        gtf=kwargs["gtf"],
-        output_dir=str(out_dir),
-        cluster_pairs=kwargs["cluster_pairs"],
-        cluster_key=kwargs["cluster_key"],
-        marker_top_n=kwargs["marker_top_n"],
-        marker_method=kwargs["marker_method"],
-        strategy=kwargs["strategy"],
-        fdr=kwargs["fdr"],
-        threads=kwargs["threads"],
-        per_worker_mb=kwargs["per_worker_mb"],
-    )
+    try:
+        log.info("ema switch diff: %d h5ad input(s); strategy=%s",
+                 len(kwargs["h5ad"]), kwargs["strategy"])
+        from ema.switch_test.runner import run_diff
+        run_diff(
+            h5ad_paths=list(kwargs["h5ad"]),
+            pasbed=kwargs["pasbed"],
+            gtf=kwargs["gtf"],
+            output_dir=str(out_dir),
+            cluster_pairs=kwargs["cluster_pairs"],
+            cluster_key=kwargs["cluster_key"],
+            marker_top_n=kwargs["marker_top_n"],
+            marker_method=kwargs["marker_method"],
+            strategy=kwargs["strategy"],
+            fdr=kwargs["fdr"],
+            threads=kwargs["threads"],
+            per_worker_mb=kwargs["per_worker_mb"],
+        )
+    finally:
+        teardown_logging()
