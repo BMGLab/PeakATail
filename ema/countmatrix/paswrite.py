@@ -7,12 +7,18 @@ vectorised numpy call, rather than calling :func:`indexing` (the string-parse
 + encode + dict-lookup path) once per CB per peak.
 
 The public API is unchanged: external callers pass the same ``cb_dict`` and
-``pasnumber`` arguments as before.
+``pasnumber`` arguments as before.  New callers may additionally pass an
+explicit ``index`` :class:`~ema.countmatrix.indexing.BarcodeIndex` instance
+so the module-level singleton is not mutated -- important for parallel
+workers that each maintain their own independent index.
 """
 
 from __future__ import annotations
 
-from ema.countmatrix.indexing import _index
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ema.countmatrix.indexing import BarcodeIndex
 
 strand_char: dict[bool, str] = {True: "-", False: "+"}
 score: int = 0
@@ -44,7 +50,12 @@ def pas_write(
     output.write(peak_bed)
 
 
-def matrix_write(cb_dict: dict, pasnumber: int, output) -> None:
+def matrix_write(
+    cb_dict: dict,
+    pasnumber: int,
+    output,
+    index: "BarcodeIndex | None" = None,
+) -> None:
     """Write count-matrix rows for one peak in MatrixMarket format.
 
     Uses :meth:`~ema.countmatrix.indexing.BarcodeIndex.get_indices_batch` to
@@ -52,18 +63,28 @@ def matrix_write(cb_dict: dict, pasnumber: int, output) -> None:
     repeated per-CB string parsing and encoding overhead.
 
     Args:
-        cb_dict: Mapping of CB string → read count for this peak.
+        cb_dict: Mapping of CB string -> read count for this peak.
         pasnumber: 1-based peak row index in the count matrix.
         output: Writable file-like object.
+        index: Optional :class:`~ema.countmatrix.indexing.BarcodeIndex`
+            instance to use for CB-to-column resolution.  When ``None``
+            (default), the module-level singleton from
+            :mod:`ema.countmatrix.indexing` is used -- preserving backward
+            compatibility for all existing callers.  New code (e.g. parallel
+            workers) should pass an explicit instance so the singleton is not
+            touched.
     """
     if not cb_dict:
         return
+
+    if index is None:
+        from ema.countmatrix.indexing import _index as index  # type: ignore[assignment]
 
     cbs: list[str] = list(cb_dict.keys())
     counts: list[int] = [cb_dict[cb] for cb in cbs]
 
     # Bulk-resolve all CB strings to column indices in one numpy-accelerated call
-    cols: list[int] = _index.get_indices_batch(cbs)
+    cols: list[int] = index.get_indices_batch(cbs)
 
     lines: list[str] = [
         f"{pasnumber} {col} {count}\n"

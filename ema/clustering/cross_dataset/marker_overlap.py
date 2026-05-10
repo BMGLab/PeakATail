@@ -296,8 +296,17 @@ class MarkerOverlapStrategy(ClusterMatchStrategy):
 
         # Determine parallelism: use joblib when there are multiple datasets.
         # Each dataset's marker computation is independent.
+        # When n_jobs=-1, delegate to ResourceManager so the user's --threads
+        # ceiling is respected.  Explicit n_jobs=N is capped at n_datasets.
+        if n_jobs == -1:
+            from ema.utils import get_resource_manager
+            _effective_n_jobs = get_resource_manager().get_n_jobs(
+                per_worker_mb=200, stage="marker_overlap"
+            )
+        else:
+            _effective_n_jobs = min(n_jobs, len(h5ad_paths))
         markers_list: list[dict[str, set[str]]] = Parallel(
-            n_jobs=min(n_jobs, len(h5ad_paths)) if n_jobs != -1 else n_jobs,
+            n_jobs=_effective_n_jobs,
             backend="loky",
         )(
             delayed(_load_and_compute_markers)(path, ds_id, n_top_markers)

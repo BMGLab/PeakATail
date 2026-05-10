@@ -282,10 +282,14 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         n_pas = len(pas_ids)
 
         # --- build batches ---
-        import os
+        # When n_jobs=-1, delegate to ResourceManager so the user's --threads
+        # ceiling is respected.  Explicit n_jobs=N is honoured as-is.
         actual_jobs: int
         if n_jobs == -1:
-            actual_jobs = os.cpu_count() or 1
+            from ema.utils import get_resource_manager
+            actual_jobs = get_resource_manager().get_n_jobs(
+                per_worker_mb=300, stage="nb_pairwise"
+            )
         else:
             actual_jobs = max(1, n_jobs)
 

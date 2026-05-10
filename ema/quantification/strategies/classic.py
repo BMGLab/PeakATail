@@ -272,7 +272,11 @@ class ClassicPDUIStrategy(PDUIStrategy):
                 ]
 
             if use_parallel:
-                results = Parallel(n_jobs=-1)(
+                from ema.utils import get_resource_manager
+                n_jobs = get_resource_manager().get_n_jobs(
+                    per_worker_mb=200, stage="pdui"
+                )
+                results = Parallel(n_jobs=n_jobs)(
                     delayed(_gene_per_gene)(g) for g in genes
                 )
             else:
@@ -293,7 +297,11 @@ class ClassicPDUIStrategy(PDUIStrategy):
                 )
 
             if use_parallel:
-                results = Parallel(n_jobs=-1)(
+                from ema.utils import get_resource_manager
+                n_jobs = get_resource_manager().get_n_jobs(
+                    per_worker_mb=200, stage="pdui"
+                )
+                results = Parallel(n_jobs=n_jobs)(
                     delayed(_gene_per_isoform)(g) for g in genes
                 )
             else:

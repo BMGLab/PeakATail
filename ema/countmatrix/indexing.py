@@ -15,12 +15,22 @@ hashing a 16-byte string walks the whole string — this matters when
   - :func:`get_mapping()` — returns ``dict[str, int]`` (string keys) so
     :mod:`ema.matrixfilter` never needs changing.
   - :func:`reset_index()` — resets the singleton.
+  - :func:`get_default_index()` — returns the module-level singleton instance
+    directly so callers can pass it explicitly to downstream functions.
 
 **New API** (used by :mod:`ema.countmatrix.paswrite`):
 
   - :meth:`BarcodeIndex.get_indices_batch(cb_list)` — bulk resolve a list of
     CB strings in one call; vectorises the encode step via
     :func:`encode_cb_batch`.
+
+.. note::
+
+    These module-level functions wrap a process-global ``BarcodeIndex``
+    singleton.  They work correctly under spawn-based multiprocessing (each
+    worker has its own copy of the module) but **ARE NOT THREAD-SAFE**.
+    New code should create explicit ``BarcodeIndex`` instances and pass them
+    through the call chain instead of relying on the module singleton.
 """
 
 from __future__ import annotations
@@ -212,3 +222,20 @@ def get_mapping() -> dict[str, int]:
     that expect the legacy string-keyed dict work unchanged.
     """
     return _index.mapping
+
+
+def get_default_index() -> BarcodeIndex:
+    """Return the module-level singleton BarcodeIndex instance.
+
+    Exposes direct access to the singleton so new call sites can pass it
+    explicitly as an ``index`` parameter rather than using the module-level
+    shim functions.  Under spawn-based multiprocessing each worker gets its
+    own copy, so this is safe.  Under threading it is NOT thread-safe.
+
+    New code should prefer creating a fresh :class:`BarcodeIndex` instance
+    per worker/invocation rather than sharing this singleton.
+
+    Returns:
+        The process-global :class:`BarcodeIndex` singleton.
+    """
+    return _index

@@ -30,8 +30,18 @@ def filter_cb(input_matrix_paths: list = None,
             (legacy single-sample behaviour).
         cb_list: Optional list of CB strings, indexed by (column_index - 1).
             When provided, this is used as the authoritative CB lookup instead
-            of get_mapping(). Required when input_matrix_paths is given and the
-            global barcode index no longer reflects the correct per-dataset CBs.
+            of ``get_mapping()``.  Required when ``input_matrix_paths`` is given
+            and the global barcode index no longer reflects the correct
+            per-dataset CBs.
+
+            .. note::
+
+                For parallel use (e.g. Phase 3 global pool) always supply an
+                explicit ``cb_list`` rather than relying on the module-level
+                ``get_mapping()`` singleton.  The singleton reflects only the
+                last dataset processed in the current process; its value is
+                undefined under fork-based multiprocessing.
+
         negativematrixpath: Legacy negative-strand matrix path (single-sample).
         positivematrixpath: Legacy positive-strand matrix path (single-sample).
         sorted_corrected_sparse_path: Output path for the filtered MatrixMarket file.

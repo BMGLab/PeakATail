@@ -19,7 +19,10 @@ def cli():
     parser.add_argument("--gtfDir", dest="gtf_dir", type=str)
     parser.add_argument("--cell_combinations", type=str, required=False)
     parser.add_argument("--bamFiles", dest="bam_files", type=str, required=False)
-    parser.add_argument("--threads", dest="threads", type=int, required=False)
+    parser.add_argument("--threads", dest="threads", type=int, default=None,
+                        help="Max parallel workers (overrides auto-detected default). "
+                             "Respected by ResourceManager as an absolute ceiling "
+                             "for all parallel stages.")
     parser.add_argument("--bam-threads", dest="bam_threads", type=int, default=4,
                         help="Threads for pysam BGZF block decompression (default: 4)")
 

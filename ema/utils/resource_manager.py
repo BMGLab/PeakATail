@@ -8,6 +8,7 @@ Conservative defaults:
 - max workers = min(physical_cpu - 2, free_ram_mb / per_worker_mb, hard_cap)
 - never returns less than 1
 - always leaves headroom (default 30% of free RAM)
+- user_max_threads (from --threads CLI flag) is an absolute ceiling
 """
 
 from __future__ import annotations
@@ -21,14 +22,34 @@ except ImportError:
 
 
 class ResourceManager:
-    """Singleton-ish accessor for resource decisions across the pipeline."""
+    """Process-wide authority for parallelism decisions across the pipeline.
+
+    All parallel call sites must query this class via
+    ``get_resource_manager().get_n_jobs(...)`` rather than calling
+    ``os.cpu_count()`` or hardcoding ``n_jobs=-1``.
+
+    Args:
+        user_max_threads: Absolute ceiling on worker count imposed by the
+            ``--threads`` CLI flag.  ``None`` means no user override.
+        user_per_worker_mb: Optional per-worker RAM override (unused by
+            default; reserved for future per-stage config).
+        ram_safety_fraction: Fraction of free RAM that can be allocated to
+            workers (default 0.7, i.e. keep 30% headroom).
+        cpu_reserve: Number of logical CPUs to leave idle (default 2).
+        hard_n_jobs_cap: Absolute maximum even if RAM/CPU budget would allow
+            more (default 16).
+    """
 
     def __init__(
         self,
+        user_max_threads: int | None = None,
+        user_per_worker_mb: int | None = None,
         ram_safety_fraction: float = 0.7,
         cpu_reserve: int = 2,
         hard_n_jobs_cap: int = 16,
-    ):
+    ) -> None:
+        self.user_max_threads = user_max_threads
+        self.user_per_worker_mb = user_per_worker_mb
         self.ram_safety_fraction = ram_safety_fraction
         self.cpu_reserve = cpu_reserve
         self.hard_n_jobs_cap = hard_n_jobs_cap
@@ -36,6 +57,7 @@ class ResourceManager:
     # ---- system probes ----
 
     def free_ram_mb(self) -> int:
+        """Return available RAM in MB (conservative, live reading)."""
         if _HAS_PSUTIL:
             return int(psutil.virtual_memory().available // (1024 * 1024))
         # /proc/meminfo fallback
@@ -50,6 +72,7 @@ class ResourceManager:
         return 4096  # 4 GB pessimistic fallback
 
     def physical_cpu_count(self) -> int:
+        """Return the number of physical (non-hyperthreaded) CPU cores."""
         if _HAS_PSUTIL:
             n = psutil.cpu_count(logical=False)
             if n:
@@ -57,26 +80,87 @@ class ResourceManager:
         return os.cpu_count() or 1
 
     def logical_cpu_count(self) -> int:
+        """Return the number of logical CPU threads (including HT)."""
         return os.cpu_count() or 1
 
     # ---- decisions ----
 
-    def get_n_jobs(self, per_worker_mb: int = 200) -> int:
-        """How many parallel workers can we safely spin up?
+    def _compute_budget(self, per_worker_mb: int) -> int:
+        """Compute raw worker budget from RAM + CPU constraints.
+
+        Does NOT apply the user_max_threads ceiling — that is done in
+        ``get_n_jobs`` so callers that need the raw budget can access it.
 
         Args:
             per_worker_mb: Estimated peak RAM per worker, in MB.
+
+        Returns:
+            Worker count bounded by RAM budget, CPU budget, and hard cap.
+            Always >= 1.
+        """
+        effective_mb = (
+            self.user_per_worker_mb
+            if self.user_per_worker_mb is not None
+            else per_worker_mb
+        )
+        ram_budget_mb = int(self.free_ram_mb() * self.ram_safety_fraction)
+        ram_workers = max(1, ram_budget_mb // max(1, effective_mb))
+        cpu_workers = max(1, self.physical_cpu_count() - self.cpu_reserve)
+        return max(1, min(ram_workers, cpu_workers, self.hard_n_jobs_cap))
+
+    def get_n_jobs(self, per_worker_mb: int = 200, stage: str = "default") -> int:
+        """How many parallel workers can we safely spin up?
+
+        Respects the ``user_max_threads`` ceiling set from ``--threads`` flag.
+        Default behavior changes from "use all CPUs" to "use what RM permits".
+
+        Args:
+            per_worker_mb: Estimated peak RAM per worker, in MB.
+            stage: Human-readable label for logging (e.g. ``"nb_pairwise"``).
+                Does not affect the computation.
 
         Returns:
             Worker count >= 1. Bounded by:
               - (free_ram * safety_fraction) / per_worker_mb
               - physical_cpu_count - cpu_reserve
               - hard_n_jobs_cap
+              - user_max_threads (absolute ceiling when set)
         """
-        ram_budget_mb = int(self.free_ram_mb() * self.ram_safety_fraction)
-        ram_workers = max(1, ram_budget_mb // max(1, per_worker_mb))
-        cpu_workers = max(1, self.physical_cpu_count() - self.cpu_reserve)
-        return max(1, min(ram_workers, cpu_workers, self.hard_n_jobs_cap))
+        budget = self._compute_budget(per_worker_mb)
+        if self.user_max_threads is not None:
+            budget = min(budget, self.user_max_threads)
+        return max(1, budget)
+
+    def split_jobs(
+        self,
+        n_outer: int,
+        per_inner_mb: int = 200,
+    ) -> tuple[int, int]:
+        """Allocate workers for two nested parallel stages.
+
+        For nested parallelism (e.g. ``ema_switch`` pair × PAS), given
+        ``n_outer`` parallel outer-stage units, distributes the total worker
+        budget between outer and inner (per-PAS within each pair) so that
+        ``n_outer_workers * n_inner_per_outer <= total_budget``.
+
+        Args:
+            n_outer: Number of parallel units in the outer stage (e.g. number
+                of cluster pairs to test simultaneously).
+            per_inner_mb: Estimated RAM per inner worker, in MB.
+
+        Returns:
+            Tuple ``(n_outer_workers, n_inner_per_outer)`` where:
+                - ``n_outer_workers`` is how many outer units run in parallel.
+                - ``n_inner_per_outer`` is how many inner workers each outer
+                  unit may spawn.
+                - ``n_outer_workers * n_inner_per_outer <= total_budget``.
+        """
+        total = self.get_n_jobs(per_inner_mb)
+        if n_outer >= total:
+            return (total, 1)
+        outer = min(n_outer, max(1, total // 2))
+        inner = max(1, total // outer)
+        return (outer, inner)
 
     def get_batch_size(
         self,
@@ -84,7 +168,16 @@ class ResourceManager:
         min_batch: int = 100,
         max_batch: int = 100_000,
     ) -> int:
-        """Choose a batch size for streaming so a single batch fits in RAM budget."""
+        """Choose a batch size for streaming so a single batch fits in RAM budget.
+
+        Args:
+            per_item_mb: Estimated memory footprint of one batch item, in MB.
+            min_batch: Minimum batch size regardless of RAM.
+            max_batch: Maximum batch size regardless of RAM.
+
+        Returns:
+            Batch size between ``min_batch`` and ``max_batch``.
+        """
         ram_budget_mb = self.free_ram_mb() * self.ram_safety_fraction
         if per_item_mb <= 0:
             return max_batch
@@ -92,6 +185,7 @@ class ResourceManager:
         return max(min_batch, min(n, max_batch))
 
     def report(self) -> dict:
+        """Return a summary dict of current resource state for logging."""
         return {
             "free_ram_mb": self.free_ram_mb(),
             "physical_cpus": self.physical_cpu_count(),
@@ -99,4 +193,5 @@ class ResourceManager:
             "ram_safety_fraction": self.ram_safety_fraction,
             "cpu_reserve": self.cpu_reserve,
             "hard_n_jobs_cap": self.hard_n_jobs_cap,
+            "user_max_threads": self.user_max_threads,
         }

@@ -4,9 +4,14 @@ import time
 from collections import deque
 from sortedcontainers import SortedList
 from ema.countmatrix.peak import Peak
+from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
 from ema.config import directory_config, variable_config
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ema.countmatrix.indexing import BarcodeIndex
 
 start_time = time.time()
 
@@ -29,10 +34,13 @@ def peak_calling(
                     tile_overlap: int = 10_000,
                     n_workers: int | None = None,
                     default_sample_id: str = "default",
+                    # --- encapsulated state (Phase 1) ---
+                    index: "BarcodeIndex | None" = None,
+                    state: "PeakCallingState | None" = None,
+                    sample_id: str | None = None,
                 ):
 
-    '''
-    Stream a BAM file and call peaks using a sliding coverage window.
+    """Stream a BAM file and call peaks using a sliding coverage window.
 
     Args:
         direction: Strand direction (True = reverse/negative, False = forward/positive).
@@ -54,7 +62,7 @@ def peak_calling(
         use_tiles: When True, dispatch to tile-based parallel peak calling.
             If both use_tiles and use_pipeline are True, tiles take precedence
             (tiles provide N-core scaling; pipeline only overlaps I/O with CPU
-            on a single chromosome at a time — tiles are strictly more parallel).
+            on a single chromosome at a time -- tiles are strictly more parallel).
             Default False preserves existing behaviour.
         tile_size: Core tile width in bp (default 25 Mb). Only used when
             use_tiles=True.
@@ -65,7 +73,21 @@ def peak_calling(
             Only used when use_tiles=True.
         default_sample_id: Fallback RG tag value for reads without an RG tag.
             Only used when use_tiles=True.
-    '''
+        index: Optional :class:`~ema.countmatrix.indexing.BarcodeIndex`
+            instance.  When ``None`` (default), the module-level singleton is
+            used -- preserving backward compatibility for all existing callers.
+            New code (e.g. parallel workers) should pass an explicit instance.
+            Only applies to the monolithic (non-tile, non-pipeline) path.
+        state: Optional :class:`~ema.countmatrix.peak_state.PeakCallingState`
+            instance.  When ``None`` (default), a fresh instance is created
+            seeded from ``Peak.pasnumber`` -- preserving the legacy reset
+            semantics.  New code should pass an explicit instance per worker.
+            Only applies to the monolithic path.
+        sample_id: Explicit fallback sample identifier for reads without an
+            RG tag.  When ``None`` (default), ``_default_sample_id`` from
+            :mod:`ema.countmatrix.read` is used (backward compatibility).
+            Only applies to the monolithic path.
+    """
     # --- Tile dispatch (takes precedence over pipeline) -------------------
     if use_tiles:
         from ema.countmatrix.tile_runner import run_tiled
@@ -145,6 +167,21 @@ def peak_calling(
         from ema.strategies import get_strategy
         strategy = get_strategy("original")
 
+    # --- Phase 1: encapsulated state setup --------------------------------
+    # Resolve BarcodeIndex: use caller-supplied instance if given, otherwise
+    # fall back to the module-level singleton (backward-compat default).
+    if index is None:
+        from ema.countmatrix.indexing import _index as index  # type: ignore[assignment]
+
+    # Resolve PeakCallingState: honour any prior Peak.reset_pasnumber() call
+    # by seeding the new state from Peak.pasnumber (the legacy class attr).
+    if state is None:
+        state = PeakCallingState(pasnumber=Peak.pasnumber)
+
+    # Resolve sample_id fallback for reads without an RG tag.
+    # None means "use module singleton inside read_check" (backward compat).
+    # --- End Phase 1 setup -----------------------------------------------
+
     current_threshold = default_threshold
 
     # Window-based local lambda tracking (deque of recent read positions)
@@ -168,32 +205,34 @@ def peak_calling(
             endtime = time.time()
             print(f"{endtime-start_time}")
         timercount += 1
-        
+
         # checking read validity if it is not countinue to next ittirate
         #chro1 is play role as condition check
-        chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
+        chro1, start1, end1, strand, cb = read_check(
+            read=read, direction=direction, sample_id=sample_id
+        )
 
         if chro1 == 0:
             continue
-        
+
         if chro1 != chro:  # Chromosome changed — flush peaks from OLD chromosome
             if signal:
 
                 pas_results = strategy.find_pas(peak)
                 for pas_1, pas_2 in pas_results:
-                    Peak.pasnumber += 1
+                    pasnumber = state.bump_pasnumber()
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+                    pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
+                    matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
             elif len(peak.peak_list) != 0:
 
                 pas_results = strategy.find_pas(peak)
                 for pas_1, pas_2 in pas_results:
-                    Peak.pasnumber += 1
+                    pasnumber = state.bump_pasnumber()
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+                    pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
+                    matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
             signal = False
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={})  # make new instance of Peak class
@@ -221,15 +260,13 @@ def peak_calling(
                 peak.cb_position_counting(end1, cb)
 
 
-        '''
-        If newread start_point is more than l_end(where heghit is more than threshold)
-        it means peak has been finisfhed
-        '''
+        # If newread start_point is more than l_end(where height is more than threshold)
+        # it means peak has been finished
         if signal and  start1 > l_end: #in peak
             signal = False
             peak.last_peak_end = l_end
             peak.peak_start = 0
-            
+
         data_array.add(end1)
 
         if start1 > i_end:
@@ -252,10 +289,10 @@ def peak_calling(
                 #make new instance of peak
                 pas_results = strategy.find_pas(peak)
                 for pas_1, pas_2 in pas_results:
-                    Peak.pasnumber += 1
+                    pasnumber = state.bump_pasnumber()
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
-                    matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
+                    matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
                 peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={}) #make new instance of Peak class
             else:
@@ -269,20 +306,26 @@ def peak_calling(
     if signal:
         pas_results = strategy.find_pas(peak)
         for pas_1, pas_2 in pas_results:
-            Peak.pasnumber += 1
+            pasnumber = state.bump_pasnumber()
             pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-            pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
-            matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+            pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
+            matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
     elif len(peak.peak_list) != 0:
         pas_results = strategy.find_pas(peak)
         for pas_1, pas_2 in pas_results:
-            Peak.pasnumber += 1
+            pasnumber = state.bump_pasnumber()
             pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-            pas_write(chro, pas_1, pas_2, strand, pasnumber=Peak.pasnumber, output=bedfile)
-            matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+            pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
+            matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
     matrix.close()
     bedfile.close()
+
+    # --- Phase 1: write state back to Peak class attr for backward compat --
+    # Callers that read Peak.pasnumber after peak_calling() returns (e.g.
+    # main.py checking the count) still see the updated value.
+    Peak.pasnumber = state.pasnumber
+    # --- End Phase 1 write-back -------------------------------------------
 
 if __name__ == "__main__":
     peak_calling()

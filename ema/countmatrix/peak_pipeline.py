@@ -31,7 +31,7 @@ Design notes
   downstream BLAS / NumPy thread pools that may have been initialised in the
   parent process.
 - Both queues are bounded (``maxsize=20``) for backpressure — the reader will
-  block once the finder falls behind, keeping memory bounded.
+  block once the finder falls behind, keeping mLOPMENT - 594729 - 2526Bemory bounded.
 - Sentinel ``None`` propagates end-of-stream.  Because each queue has exactly
   one consumer, re-putting the sentinel before exiting is not strictly required
   but is done for defensive correctness in case callers add consumers later.

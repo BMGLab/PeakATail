@@ -25,7 +25,9 @@ from ema.quantification.marker_selector import (
     restrict_count_matrix,
     save_markers,
 )
-from ema.utils import ResourceManager
+import warnings
+
+from ema.utils import ResourceManager, get_resource_manager, reset_resource_manager
 
 
 def parse_cell_combinations(s: str) -> list[tuple[str, str]]:
@@ -134,8 +136,15 @@ def cli():
 
     # Resource control
     parser.add_argument(
+        "--threads", dest="threads", type=int, default=None,
+        help="Max parallel workers (overrides auto-detected default). "
+             "Respected by ResourceManager as an absolute ceiling for all "
+             "parallel stages.",
+    )
+    parser.add_argument(
         "--max-jobs", dest="max_jobs", type=int, default=None,
-        help="Override n_jobs for parallel work. Default: auto from ResourceManager.",
+        help="[DEPRECATED] Use --threads instead. Kept for backwards "
+             "compatibility; forwards to --threads.",
     )
     parser.add_argument(
         "--per-worker-mb", dest="per_worker_mb", type=int, default=300,
@@ -144,9 +153,28 @@ def cli():
 
     args = parser.parse_args()
 
-    # Resource decisions
-    rm = ResourceManager()
-    n_jobs = args.max_jobs if args.max_jobs else rm.get_n_jobs(args.per_worker_mb)
+    # Handle deprecated --max-jobs: forward to --threads with a warning.
+    if args.max_jobs is not None:
+        warnings.warn(
+            "--max-jobs is deprecated; use --threads instead.",
+            DeprecationWarning,
+            stacklevel=1,
+        )
+        if args.threads is None:
+            args.threads = args.max_jobs
+
+    # Initialise the process-wide ResourceManager singleton with the user
+    # ceiling so every downstream call to get_resource_manager() picks it up.
+    reset_resource_manager()
+    rm = ResourceManager(
+        user_max_threads=args.threads,
+        user_per_worker_mb=args.per_worker_mb if args.per_worker_mb != 300 else None,
+    )
+    # Override the lazy singleton with our already-constructed instance.
+    import ema.utils as _ema_utils
+    _ema_utils._RM_INSTANCE = rm
+
+    n_jobs = rm.get_n_jobs(per_worker_mb=args.per_worker_mb, stage="ema_switch")
     print(f"[ema_switch] resources: {rm.report()}")
     print(f"[ema_switch] using n_jobs={n_jobs}")
 

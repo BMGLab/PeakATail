@@ -27,7 +27,6 @@ pre-extracted and chunked into batches before dispatch.
 from __future__ import annotations
 
 import math
-import os
 import warnings
 from typing import Any
 
@@ -284,7 +283,15 @@ class NbMultiStrategy(DiffAPAStrategy):
         n_pas = len(pas_ids)
 
         # Batching
-        actual_jobs = os.cpu_count() or 1 if n_jobs == -1 else max(1, n_jobs)
+        # When n_jobs=-1, delegate to ResourceManager so the user's --threads
+        # ceiling is respected.  Explicit n_jobs=N is honoured as-is.
+        if n_jobs == -1:
+            from ema.utils import get_resource_manager
+            actual_jobs = get_resource_manager().get_n_jobs(
+                per_worker_mb=300, stage="nb_multi"
+            )
+        else:
+            actual_jobs = max(1, n_jobs)
         batch_size = max(1, math.ceil(n_pas / actual_jobs))
         batches: list[list[tuple]] = []
         for start in range(0, n_pas, batch_size):

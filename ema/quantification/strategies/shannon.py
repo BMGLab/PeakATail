@@ -236,7 +236,11 @@ class ShannonPDUIStrategy(PDUIStrategy):
                 )
 
             if use_parallel:
-                results = Parallel(n_jobs=-1)(delayed(_do_gene)(g) for g in genes)
+                from ema.utils import get_resource_manager
+                n_jobs = get_resource_manager().get_n_jobs(
+                    per_worker_mb=200, stage="pdui"
+                )
+                results = Parallel(n_jobs=n_jobs)(delayed(_do_gene)(g) for g in genes)
             else:
                 results = [_do_gene(g) for g in genes]
 
@@ -247,7 +251,11 @@ class ShannonPDUIStrategy(PDUIStrategy):
                 )
 
             if use_parallel:
-                results = Parallel(n_jobs=-1)(
+                from ema.utils import get_resource_manager
+                n_jobs = get_resource_manager().get_n_jobs(
+                    per_worker_mb=200, stage="pdui"
+                )
+                results = Parallel(n_jobs=n_jobs)(
                     delayed(_do_gene_iso)(g) for g in genes
                 )
             else:
