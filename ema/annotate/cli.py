@@ -10,11 +10,14 @@ the GTF parse entirely and loads from the global cache instead.
 """
 
 import argparse
+import logging
 import os
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 def cli() -> int:
@@ -46,7 +49,7 @@ def cli() -> int:
 
     gtf_path = Path(args.gtf)
     if not gtf_path.exists():
-        print(f"ERROR: GTF file not found: {gtf_path}", file=sys.stderr)
+        log.error("GTF file not found: %s", gtf_path)
         return 1
 
     # Import here so startup is fast even when module tree is large
@@ -80,14 +83,14 @@ def cli() -> int:
     # --- Probe for existing entry ---
     hit = lookup_global_cache(gtf_path)
     if hit is not None:
-        print(f"[ema_parse_gtf] cache HIT — {entry_dir}")
-        print(f"  endbed    : {hit['endbed_path']}")
-        print(f"  features  : {hit['features_path']}")
-        print(f"  utr_lengths: {hit['isoform_utrs_path']}")
-        print(f"  genes     : {len(hit['utr_lengths'])}")
+        log.info("cache HIT — %s", entry_dir)
+        log.info("  endbed    : %s", hit['endbed_path'])
+        log.info("  features  : %s", hit['features_path'])
+        log.info("  utr_lengths: %s", hit['isoform_utrs_path'])
+        log.info("  genes     : %d", len(hit['utr_lengths']))
         return 0
 
-    print(f"[ema_parse_gtf] cache MISS — parsing {gtf_path} …")
+    log.info("cache MISS — parsing %s ...", gtf_path)
     t0 = time.perf_counter()
 
     # Parse into a temp output directory (pipeline artifacts written there,
@@ -105,7 +108,7 @@ def cli() -> int:
                 utr_lengths_dir=utr_tsv,
             )
         except Exception as exc:
-            print(f"ERROR during GTF parsing: {exc}", file=sys.stderr)
+            log.error("ERROR during GTF parsing: %s", exc)
             return 1
 
         populate_global_cache(
@@ -117,8 +120,8 @@ def cli() -> int:
         )
 
     elapsed = time.perf_counter() - t0
-    print(f"[ema_parse_gtf] done in {elapsed:.1f}s — cache written to {entry_dir}")
-    print(f"  genes parsed: {len(utr_lengths)}")
+    log.info("done in %.1fs — cache written to %s", elapsed, entry_dir)
+    log.info("  genes parsed: %d", len(utr_lengths))
     return 0
 
 

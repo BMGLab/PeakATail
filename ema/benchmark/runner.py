@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 import json
@@ -6,6 +7,8 @@ from datetime import datetime
 from typing import List, Optional, Dict
 
 from ema.strategies import get_strategy, list_strategies
+
+log = logging.getLogger(__name__)
 
 
 def run_benchmark(bam_path: str, gtf_path: str,
@@ -40,9 +43,7 @@ def run_benchmark(bam_path: str, gtf_path: str,
     bed_files = {}
 
     for strategy_name in strategies:
-        print(f"\n{'='*60}")
-        print(f"Running strategy: {strategy_name}")
-        print(f"{'='*60}")
+        log.info("Running strategy: %s", strategy_name)
 
         strategy = get_strategy(strategy_name)
         strategy_dir = os.path.join(run_dir, strategy_name)
@@ -127,13 +128,13 @@ def run_benchmark(bam_path: str, gtf_path: str,
                 result[f"f1_{cutoff}bp"] = m["f1"]
 
         results.append(result)
-        print(f"  Peaks: {n_peaks} | Runtime: {runtime:.1f}s | Chromosomes: {len(chroms)}")
+        log.info("  Peaks: %d | Runtime: %.1fs | Chromosomes: %d", n_peaks, runtime, len(chroms))
 
     # Save results
     df = pd.DataFrame(results)
     csv_path = os.path.join(run_dir, "summary.csv")
     df.to_csv(csv_path, index=False)
-    print(f"\nResults saved to: {csv_path}")
+    log.info("Results saved to: %s", csv_path)
 
     # Save metadata
     meta = {
@@ -195,5 +196,5 @@ def compare_results(results_df: pd.DataFrame, output_dir: str = ".") -> str:
     with open(report_path, 'w') as f:
         f.write(report_text)
 
-    print(report_text)
+    log.info("%s", report_text)
     return report_path

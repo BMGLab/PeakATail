@@ -10,9 +10,12 @@ markers, which strategies) instead of running everything unconditionally.
 from __future__ import annotations
 import argparse
 import functools
+import logging
 import multiprocessing
 from itertools import combinations
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 import anndata as ad
 import pandas as pd
@@ -216,19 +219,18 @@ def cli():
     _ema_utils._RM_INSTANCE = rm
 
     n_jobs = rm.get_n_jobs(per_worker_mb=args.per_worker_mb, stage="ema_switch")
-    print(f"[ema_switch] resources: {rm.report()}")
-    print(f"[ema_switch] using n_jobs={n_jobs}")
+    log.info("resources: %s", rm.report())
+    log.info("using n_jobs=%d", n_jobs)
 
     # Load
-    print(f"[ema_switch] loading {args.h5ad}")
+    log.info("loading %s", args.h5ad)
     adata = ad.read_h5ad(args.h5ad)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Marker selection
     if args.marker_top_n > 0:
-        print(f"[ema_switch] selecting top {args.marker_top_n} markers per cluster "
-              f"({args.marker_method})")
+        log.info("selecting top %d markers per cluster (%s)", args.marker_top_n, args.marker_method)
         markers = select_marker_pas(
             adata,
             cluster_key=args.cluster_key,
@@ -236,11 +238,13 @@ def cli():
             method=args.marker_method,
         )
         save_markers(markers, output_dir / "markers.tsv")
-        print(f"[ema_switch] {len(markers)} unique marker PAS selected "
-              f"(union across {adata.obs[args.cluster_key].nunique()} clusters)")
+        log.info(
+            "%d unique marker PAS selected (union across %d clusters)",
+            len(markers), adata.obs[args.cluster_key].nunique(),
+        )
     else:
         markers = None
-        print("[ema_switch] marker subsetting disabled — using all PAS")
+        log.info("marker subsetting disabled — using all PAS")
 
     # Build oriented count matrices
     pdui_df_full, diff_df_full, cell_idx, pas_idx = build_count_dfs(adata)
@@ -248,8 +252,7 @@ def cli():
         marker_set = set(markers)
         pdui_df = restrict_count_matrix(pdui_df_full, list(marker_set), axis="rows")
         diff_df = restrict_count_matrix(diff_df_full, list(marker_set), axis="cols")
-        print(f"[ema_switch] count matrix restricted: "
-              f"{pdui_df.shape[0]} PAS x {pdui_df.shape[1]} cells")
+        log.info("count matrix restricted: %d PAS x %d cells", pdui_df.shape[0], pdui_df.shape[1])
     else:
         pdui_df, diff_df = pdui_df_full, diff_df_full
 
@@ -264,16 +267,18 @@ def cli():
         pasbed = args.pasbed or "emaout/pasbed.bed"
         gtf = args.gtf or "data/Homo_sapiens.GRCh38.99.gtf"
         if not Path(pasbed).exists() or not Path(gtf).exists():
-            print(f"[ema_switch] PDUI requires --gtf and --pasbed (or default paths). "
-                  f"pasbed={pasbed} (exists={Path(pasbed).exists()}), "
-                  f"gtf={gtf} (exists={Path(gtf).exists()}). Skipping PDUI.")
+            log.warning(
+                "PDUI requires --gtf and --pasbed (or default paths). "
+                "pasbed=%s (exists=%s), gtf=%s (exists=%s). Skipping PDUI.",
+                pasbed, Path(pasbed).exists(), gtf, Path(gtf).exists(),
+            )
             pdui_methods = []
         else:
             from ema.annotate.gtf2isoform_utr import parse_isoform_utrs
             from ema.quantification.pas_to_isoform import map_pas_to_isoforms
             isoform_utrs = parse_isoform_utrs(Path(gtf))
             pas_isoform_map = map_pas_to_isoforms(Path(pasbed), isoform_utrs)
-            print(f"[ema_switch] isoform map: {len(pas_isoform_map)} PAS mapped")
+            log.info("isoform map: %d PAS mapped", len(pas_isoform_map))
 
         for method in pdui_methods:
             strat = get_pdui_strategy(method)
@@ -286,9 +291,9 @@ def cli():
                 )
             out_path = output_dir / f"pdui_{method}.tsv"
             df.to_csv(out_path, sep="\t", index=False)
-            print(f"[ema_switch] PDUI ({method}): {len(df)} rows -> {out_path}")
+            log.info("PDUI (%s): %d rows -> %s", method, len(df), out_path)
     else:
-        print("[ema_switch] PDUI skipped")
+        log.info("PDUI skipped")
 
     # Differential APA
     diff_strat = get_diff_strategy(args.diff_method)
@@ -296,8 +301,7 @@ def cli():
     diff_dir.mkdir(exist_ok=True)
 
     if diff_strat.supports_multi_condition:
-        print(f"[ema_switch] running {args.diff_method} omnibus across "
-              f"{len(unique_clusters)} clusters")
+        log.info("running %s omnibus across %d clusters", args.diff_method, len(unique_clusters))
         df = diff_strat.test(
             count_matrix=diff_df,
             cluster_labels=cluster_labels,
@@ -306,23 +310,27 @@ def cli():
         out_path = diff_dir / f"{args.diff_method}_omnibus.tsv"
         df.to_csv(out_path, sep="\t")
         sig = (df["qvalue"] < args.fdr_threshold).sum() if "qvalue" in df.columns else 0
-        print(f"[ema_switch] omnibus: {sig} significant PAS (q<{args.fdr_threshold}) -> {out_path}")
+        log.info("omnibus: %d significant PAS (q<%s) -> %s", sig, args.fdr_threshold, out_path)
     else:
         if args.cell_combinations:
             pairs = parse_cell_combinations(args.cell_combinations)
         else:
             pairs = list(combinations(unique_clusters, 2))
             if args.diff_method != "fisher":
-                print(f"[ema_switch] WARNING: --diff-method={args.diff_method} on "
-                      f"all {len(pairs)} cluster pairs may be slow. "
-                      f"Use --cell_combinations to subset.")
-        print(f"[ema_switch] running {args.diff_method} on {len(pairs)} cluster pairs")
+                log.warning(
+                    "--diff-method=%s on all %d cluster pairs may be slow. "
+                    "Use --cell_combinations to subset.",
+                    args.diff_method, len(pairs),
+                )
+        log.info("running %s on %d cluster pairs", args.diff_method, len(pairs))
 
         # Split workers between pair-level (outer) and PAS-level (inner) parallelism
         # to avoid CPU over-subscription when both stages run concurrently.
         n_outer, n_inner = rm.split_jobs(n_outer=len(pairs), per_inner_mb=300)
-        print(f"[ema_switch] parallelism: {len(pairs)} pairs -> "
-              f"split_jobs gave ({n_outer} outer, {n_inner} inner per pair)")
+        log.info(
+            "parallelism: %d pairs -> split_jobs gave (%d outer, %d inner per pair)",
+            len(pairs), n_outer, n_inner,
+        )
 
         pair_results: dict[tuple[str, str], pd.DataFrame] = {}
 
@@ -366,10 +374,12 @@ def cli():
             if "qvalue" in df.columns:
                 total_sig += (df["qvalue"] < args.fdr_threshold).sum()
 
-        print(f"[ema_switch] {len(pairs)} pairs: {total_sig} total significant PAS "
-              f"(q<{args.fdr_threshold}) -> {diff_dir}")
+        log.info(
+            "%d pairs: %d total significant PAS (q<%s) -> %s",
+            len(pairs), total_sig, args.fdr_threshold, diff_dir,
+        )
 
-    print("[ema_switch] done.")
+    log.info("done.")
 
 
 if __name__ == "__main__":

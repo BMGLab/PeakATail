@@ -16,10 +16,13 @@ before find_close needs it.
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 
@@ -340,7 +343,7 @@ def process_gtf_cached(
     global_hit = lookup_global_cache(gtf_path)
     if global_hit is not None:
         fp_short = gtf_global_fingerprint(gtf_path)[:16]
-        print(f"[gtf-cache] global hit at {global_cache_dir() / fp_short[:8]}…")
+        log.info("global hit at %s", global_cache_dir() / fp_short[:8])
         # Restore files to output_dir locations the rest of the pipeline expects
         for src_key, dest in [
             ("endbed_path", endbed_path),
@@ -359,11 +362,11 @@ def process_gtf_cached(
 
     # --- Tier 2: per-output-dir cache ---
     if is_cache_valid(gtf_path, output_dir):
-        print("[gtf-cache] local hit")
+        log.info("local hit")
         return load_from_cache(output_dir, endbed_path, features_path, utr_lengths_path)
 
     # --- Tier 3: full parse ---
-    print("[gtf-cache] miss — parsing GTF …")
+    log.info("miss — parsing GTF ...")
     # Import lazily to avoid circular / argparse side-effects at module load
     # time.  The module-level name _gtf_bed_fn is set here so tests can patch
     # ema.annotate.gtf_cache._gtf_bed_fn before the function runs.

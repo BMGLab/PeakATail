@@ -1,3 +1,4 @@
+import logging
 import os
 import numpy as np
 import matplotlib
@@ -5,6 +6,8 @@ matplotlib.use('Agg')  # non-interactive backend
 import matplotlib.pyplot as plt
 from typing import Dict, List, Optional
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 
 def plot_precision_by_distance(results_df: pd.DataFrame,
@@ -67,7 +70,7 @@ def plot_precision_by_distance(results_df: pd.DataFrame,
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Precision-by-distance plot saved to: {output_path}")
+    log.info("Precision-by-distance plot saved to: %s", output_path)
 
 
 def plot_pr_curves(results_df: pd.DataFrame,
@@ -117,7 +120,7 @@ def plot_pr_curves(results_df: pd.DataFrame,
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"PR curves saved to: {output_path}")
+    log.info("PR curves saved to: %s", output_path)
 
 
 def plot_peak_count_comparison(results_df: pd.DataFrame,
@@ -161,7 +164,7 @@ def plot_peak_count_comparison(results_df: pd.DataFrame,
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Peak count comparison saved to: {output_path}")
+    log.info("Peak count comparison saved to: %s", output_path)
 
 
 def plot_distance_histogram(distances: Dict[str, List[int]],
@@ -211,7 +214,7 @@ def plot_distance_histogram(distances: Dict[str, List[int]],
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Distance histogram saved to: {output_path}")
+    log.info("Distance histogram saved to: %s", output_path)
 
 
 def plot_metrics_table(results_df: pd.DataFrame,
@@ -288,7 +291,7 @@ def plot_metrics_table(results_df: pd.DataFrame,
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Metrics table saved to: {output_path}")
+    log.info("Metrics table saved to: %s", output_path)
 
 
 def plot_venn_overlap(sets: Dict[str, set], output_path: str = "venn_overlap.png"):
@@ -297,7 +300,7 @@ def plot_venn_overlap(sets: Dict[str, set], output_path: str = "venn_overlap.png
     names = list(sets.keys())
 
     if n < 2 or n > 3:
-        print(f"Venn diagram requires 2-3 strategies, got {n}. Skipping.")
+        log.warning("Venn diagram requires 2-3 strategies, got %d. Skipping.", n)
         return
 
     fig, ax = plt.subplots(figsize=(10, 8))
@@ -335,4 +338,4 @@ def plot_venn_overlap(sets: Dict[str, set], output_path: str = "venn_overlap.png
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Venn diagram saved to: {output_path}")
+    log.info("Venn diagram saved to: %s", output_path)

@@ -6,6 +6,7 @@ Coordinates the differential APA analysis pipeline:
 3. Optionally compute PDUI for each cluster pair
 """
 
+import logging
 import os
 import pandas as pd
 from .pop_apa import pop_apa
@@ -14,6 +15,8 @@ from .fishertest import fishertest
 from ema.quantification.pdui import (
     load_pas_data, calculate_pdui_per_cluster, calculate_delta_pdui,
 )
+
+log = logging.getLogger(__name__)
 
 
 def apa_switch(cell_combine: list,
@@ -68,14 +71,14 @@ def apa_switch(cell_combine: list,
             # Save PDUI matrix
             pdui_path = os.path.join(output_dir, 'pdui_matrix.tsv')
             pdui_matrix.to_csv(pdui_path, sep='\t')
-            print(f"PDUI matrix saved to: {pdui_path}")
-            print(
-                f"PDUI computed for {pdui_matrix.shape[0]} genes "
-                f"across {pdui_matrix.shape[1]} clusters"
+            log.info("PDUI matrix saved to: %s", pdui_path)
+            log.info(
+                "PDUI computed for %d genes across %d clusters",
+                pdui_matrix.shape[0], pdui_matrix.shape[1],
             )
         except Exception as e:
-            print(f"Warning: PDUI calculation failed: {e}")
-            print("Continuing with Fisher test only.")
+            log.warning("PDUI calculation failed: %s", e)
+            log.info("Continuing with Fisher test only.")
             pdui_matrix = None
 
     # Run Fisher test for each cluster pair
@@ -94,7 +97,7 @@ def apa_switch(cell_combine: list,
             elif str(c) in available_cols:
                 cols.append(str(c))
             else:
-                print(f"Warning: cluster '{c}' not found in grouped matrix columns: {sorted(available_cols)}")
+                log.warning("cluster '%s' not found in grouped matrix columns: %s", c, sorted(available_cols))
                 cols.append(c)
         selected_cells = grouped_matrix[cols]
 
@@ -121,10 +124,9 @@ def apa_switch(cell_combine: list,
                     f"delta_pdui_{cluster1}_{cluster2}.tsv",
                 )
                 delta_pdui.to_csv(delta_path, sep='\t', header=True)
-                print(
-                    f"Delta-PDUI saved: {delta_path} "
-                    f"({(delta_pdui.abs() > 0.1).sum()} genes with "
-                    f"|delta-PDUI| > 0.1)"
+                log.info(
+                    "Delta-PDUI saved: %s (%d genes with |delta-PDUI| > 0.1)",
+                    delta_path, (delta_pdui.abs() > 0.1).sum(),
                 )
 
     return all_results

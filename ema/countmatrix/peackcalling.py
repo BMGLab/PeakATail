@@ -1,3 +1,4 @@
+import logging
 import pysam as ps
 import bisect
 import time
@@ -9,6 +10,8 @@ from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
 from ema.config import directory_config, variable_config
 from typing import TYPE_CHECKING
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ema.countmatrix.indexing import BarcodeIndex
@@ -200,7 +203,7 @@ def peak_calling(
     # Only used when dynamic_threshold=True
     background_deque = deque()
 
-    print(bamfile_dir)
+    log.debug("peak_calling: bamfile_dir=%s", bamfile_dir)
 
     # --- Phase 2: BAI index check for region-fetch path -------------------
     if region is not None:
@@ -237,7 +240,7 @@ def peak_calling(
     for read in _read_iter:
         if timercount%1000000 == 0:#controling time
             endtime = time.time()
-            print(f"{endtime-start_time}")
+            log.debug("elapsed: %.1fs", endtime - start_time)
         timercount += 1
 
         # checking read validity if it is not countinue to next ittirate

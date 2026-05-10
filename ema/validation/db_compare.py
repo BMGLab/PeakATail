@@ -224,5 +224,5 @@ def generate_validation_report(results: Dict, output_path: str) -> str:
     with open(output_path, 'w') as f:
         f.write(report_text)
 
-    print(report_text)
+    logger.info("%s", report_text)
     return output_path

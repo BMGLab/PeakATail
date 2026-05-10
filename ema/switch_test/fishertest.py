@@ -6,9 +6,13 @@ in the same gene) differs significantly between two clusters.
 Includes FDR correction (Benjamini-Hochberg) across all tests.
 """
 
+import logging
+
 from scipy.stats import fisher_exact, false_discovery_control
 import pandas as pd
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 def fishertest(selected_cells: pd.DataFrame,
@@ -76,10 +80,9 @@ def fishertest(selected_cells: pd.DataFrame,
     n_significant = (results_df['q_value'] < fdr_threshold).sum()
     n_total = len(results_df)
     n_genes = results_df['gene'].nunique()
-    print(
-        f"Fisher test: {n_significant}/{n_total} significant PAS "
-        f"(q < {fdr_threshold}) across {n_genes} genes "
-        f"[{cluster1} vs {cluster2}]"
+    log.info(
+        "Fisher test: %d/%d significant PAS (q < %s) across %d genes [%s vs %s]",
+        n_significant, n_total, fdr_threshold, n_genes, cluster1, cluster2,
     )
 
     return results_df
