@@ -65,6 +65,7 @@ def match(**kwargs) -> None:
     df = strat.match(
         list(kwargs["h5ad"]),
         [str(i) for i in range(len(kwargs["h5ad"]))],  # synthetic ds ids
+        n_top_markers=kwargs["n_top_markers"],
         n_jobs=kwargs["threads"] or -1,
     )
     out_file = out_dir / "cluster_match.tsv"
