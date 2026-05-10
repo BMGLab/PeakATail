@@ -21,6 +21,14 @@ def peak_calling(
                     lambda_fold_change: float = 2.0,
                     lambda_window: int = 5000,
                     bam_threads: int = 4,
+                    use_pipeline: bool = False,
+                    batch_size: int = 10000,
+                    # --- tile parallelism (P-6) ---
+                    use_tiles: bool = False,
+                    tile_size: int = 25_000_000,
+                    tile_overlap: int = 10_000,
+                    n_workers: int | None = None,
+                    default_sample_id: str = "default",
                 ):
 
     '''
@@ -39,7 +47,100 @@ def peak_calling(
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
         lambda_window: Window size in bp for local lambda estimation (default: 5000).
         bam_threads: Number of threads for pysam BGZF block decompression (default: 4).
+        use_pipeline: When True, dispatch to the 3-stage Reader->Finder->Writer
+            pipeline instead of the monolithic single-threaded loop.  Default
+            False preserves existing behaviour.
+        batch_size: Read batch size for pipeline mode (default 10000).
+        use_tiles: When True, dispatch to tile-based parallel peak calling.
+            If both use_tiles and use_pipeline are True, tiles take precedence
+            (tiles provide N-core scaling; pipeline only overlaps I/O with CPU
+            on a single chromosome at a time — tiles are strictly more parallel).
+            Default False preserves existing behaviour.
+        tile_size: Core tile width in bp (default 25 Mb). Only used when
+            use_tiles=True.
+        tile_overlap: Overlap buffer in bp on each side of a tile (default
+            10 kb). Only used when use_tiles=True.
+        n_workers: Number of parallel worker processes for tiled mode.
+            Defaults to ResourceManager().get_n_jobs(per_worker_mb=500).
+            Only used when use_tiles=True.
+        default_sample_id: Fallback RG tag value for reads without an RG tag.
+            Only used when use_tiles=True.
     '''
+    # --- Tile dispatch (takes precedence over pipeline) -------------------
+    if use_tiles:
+        from ema.countmatrix.tile_runner import run_tiled
+
+        # Resolve strategy name for serialisation across process boundary
+        if strategy is None:
+            strategy_name = "original"
+        elif isinstance(strategy, str):
+            strategy_name = strategy
+        else:
+            from ema.strategies import _REGISTRY
+            strategy_name = next(
+                (k for k, v in _REGISTRY.items() if isinstance(strategy, v)),
+                "original",
+            )
+
+        return run_tiled(
+            direction=direction,
+            bedfilepath=bedfilepath,
+            matrixpath=matrixpath,
+            bamfile_dir=bamfile_dir,
+            default_threshold=default_threshold,
+            merge_len=merge_len,
+            strategy_name=strategy_name,
+            dynamic_threshold=dynamic_threshold,
+            floor_threshold=floor_threshold,
+            lambda_fold_change=lambda_fold_change,
+            lambda_window=lambda_window,
+            bam_threads=bam_threads,
+            tile_size=tile_size,
+            tile_overlap=tile_overlap,
+            n_workers=n_workers,
+            default_sample_id=default_sample_id,
+        )
+    # --- End tile dispatch ------------------------------------------------
+
+    # --- Pipeline dispatch -------------------------------------------------
+    if use_pipeline:
+        from ema.countmatrix.peak_pipeline import run_pipeline
+        from ema.countmatrix.read import _default_sample_id
+
+        # Resolve strategy name: strategy may be a string already (from CLI)
+        # or an instantiated strategy object.  Extract the name so the
+        # subprocess can re-instantiate locally (strategy objects may not
+        # be picklable across spawn context).
+        if strategy is None:
+            strategy_name = "original"
+        elif isinstance(strategy, str):
+            strategy_name = strategy
+        else:
+            # Instantiated object — derive name from class registry
+            from ema.strategies import _REGISTRY
+            strategy_name = next(
+                (k for k, v in _REGISTRY.items() if isinstance(strategy, v)),
+                "original",
+            )
+
+        return run_pipeline(
+            direction=direction,
+            bedfilepath=bedfilepath,
+            matrixpath=matrixpath,
+            bamfile_dir=bamfile_dir,
+            default_threshold=default_threshold,
+            merge_len=merge_len,
+            strategy_name=strategy_name,
+            dynamic_threshold=dynamic_threshold,
+            floor_threshold=floor_threshold,
+            lambda_fold_change=lambda_fold_change,
+            lambda_window=lambda_window,
+            bam_threads=bam_threads,
+            batch_size=batch_size,
+            default_sample_id=_default_sample_id,
+        )
+    # --- End pipeline dispatch --------------------------------------------
+
     if strategy is None:
         from ema.strategies import get_strategy
         strategy = get_strategy("original")

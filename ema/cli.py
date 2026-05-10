@@ -23,6 +23,23 @@ def cli():
     parser.add_argument("--bam-threads", dest="bam_threads", type=int, default=4,
                         help="Threads for pysam BGZF block decompression (default: 4)")
 
+    parser.add_argument("--pipeline", action="store_true", default=False,
+                        help="Use 3-stage Reader->Finder->Writer pipeline (faster on multi-core)")
+    parser.add_argument("--batch-size", dest="batch_size", type=int, default=10000,
+                        help="Read batch size for pipeline mode (default: 10000)")
+
+    # Tile parallelism flags (P-6)
+    parser.add_argument("--tiles", action="store_true", default=False,
+                        help="Enable tile-based parallel peak calling. Splits each chromosome "
+                             "into tiles of --tile-size bp processed in parallel by a worker pool, "
+                             "then merges results. Takes precedence over --pipeline when both are "
+                             "set. Suitable for large BAMs on multi-core machines.")
+    parser.add_argument("--tile-size", dest="tile_size", type=int, default=25_000_000,
+                        help="Core tile width in bp for --tiles mode (default: 25 Mb).")
+    parser.add_argument("--tile-overlap", dest="tile_overlap", type=int, default=10_000,
+                        help="Overlap buffer in bp added to each side of a tile so peaks spanning "
+                             "tile boundaries are not dropped (default: 10 kb).")
+
     # Strategy selection and parameters
     parser.add_argument("--strategy", type=str, default="original",
                         choices=["original", "lambda_poisson", "lambda_gradient", "sierra_iterative"],
