@@ -180,13 +180,14 @@ def run(**kwargs) -> None:
     # only reads ema.config.args.threads (set by the legacy argparse shim, which
     # never sees Click flags).  Reset the singleton and re-create it with the
     # explicit ceiling so downstream get_n_jobs() calls honour it.
+    # NOTE: the log.info() for this is emitted after setup_logging() below so
+    # it actually reaches the per-run log file.
     if kwargs.get("threads") is not None:
         from ema.utils import reset_resource_manager
         from ema.utils.resource_manager import ResourceManager
         import ema.utils as _utils_mod
         reset_resource_manager()
         _utils_mod._RM_INSTANCE = ResourceManager(user_max_threads=kwargs["threads"])
-        log.info("ResourceManager: --threads=%d (absolute ceiling)", kwargs["threads"])
 
     # Resolve output dir (with timestamp).
     # Precedence: CLI --output (when explicitly set) > YAML output_dir > default.
@@ -210,6 +211,8 @@ def run(**kwargs) -> None:
         per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
     )
     log.info("Output directory: %s", out_dir)
+    if kwargs.get("threads") is not None:
+        log.info("ResourceManager: --threads=%d (absolute ceiling)", kwargs["threads"])
 
     # Warn loudly for flags that exist in the CLI surface but are not yet
     # wired into the pipeline body.  No silent fallbacks: if you set one of
