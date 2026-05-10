@@ -13,6 +13,7 @@ Designed for use with ``multiprocessing.get_context("spawn").Pool`` so that:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,9 @@ def run_one_dataset_downstream(
     min_read: int,
     filter_min_cells: int,
     filter_min_genes: int,
+    *,
+    log_queue=None,
+    progress_client=None,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -92,6 +96,11 @@ def run_one_dataset_downstream(
     """
     import pickle
 
+    if log_queue is not None:
+        from ema.logging_config import setup_worker_logging
+        setup_worker_logging(log_queue)
+    log = logging.getLogger(__name__)
+
     prefix = f"[ds={ds_id}]"
 
     # Guard BEFORE heavy imports so tests can verify the error without
@@ -114,7 +123,7 @@ def run_one_dataset_downstream(
     # 1. Extract per-dataset sub-matrix from unified MTX                  #
     # ------------------------------------------------------------------ #
     pre_filter_mtx = ds_dir / "pre_filter.mtx"
-    print(f"{prefix} extracting {len(sub_indices)} columns from unified MTX", flush=True)
+    log.info("%s extracting %d columns from unified MTX", prefix, len(sub_indices))
     extract_per_dataset_mtx(
         input_mtx=Path(unified_mtx),
         keep_col_indices=sub_indices,
@@ -126,7 +135,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     filtered_mtx = ds_dir / "filtered_matrix.mtx"
     filtered_cb_path = ds_dir / "filtered_cb.tsv"
-    print(f"{prefix} filtering barcodes (min_read={min_read})", flush=True)
+    log.info("%s filtering barcodes (min_read=%d)", prefix, min_read)
     filter_cb(
         input_matrix_paths=[str(pre_filter_mtx)],
         cb_list=sub_cbs,
@@ -138,7 +147,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 3. Build sparse matrix                                              #
     # ------------------------------------------------------------------ #
-    print(f"{prefix} building sparse matrix", flush=True)
+    log.info("%s building sparse matrix", prefix)
     sparse_matrix, pas_ids, _ = make_dataframe(matrixpath=str(filtered_mtx))
 
     with open(filtered_cb_path) as fh:
@@ -147,7 +156,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 4. Annotate PAS with gene assignments                               #
     # ------------------------------------------------------------------ #
-    print(f"{prefix} annotating PAS", flush=True)
+    log.info("%s annotating PAS", prefix)
     result = annotate(
         sparse_matrix=sparse_matrix,
         pas_ids=pas_ids,
@@ -158,7 +167,7 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 5. Preprocess (filter cells/PAS)                                    #
     # ------------------------------------------------------------------ #
-    print(f"{prefix} preprocessing", flush=True)
+    log.info("%s preprocessing", prefix)
     adata = preprocessing(
         sparse_matrix=result.sparse_matrix,
         pas_ids=result.pas_ids,
@@ -171,7 +180,7 @@ def run_one_dataset_downstream(
     # 6. Cluster                                                          #
     # ------------------------------------------------------------------ #
     cluster_h5ad = ds_dir / "clusters.h5ad"
-    print(f"{prefix} clustering ({adata.n_obs} cells x {adata.n_vars} PAS)", flush=True)
+    log.info("%s clustering (%d cells x %d PAS)", prefix, adata.n_obs, adata.n_vars)
     clustering(adata=adata, output_h5ad=str(cluster_h5ad))
 
     # ------------------------------------------------------------------ #
@@ -185,7 +194,7 @@ def run_one_dataset_downstream(
     with open(ds_dir / "clustering_stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
 
-    print(f"{prefix} done — {adata.n_obs} cells, {adata.n_vars} PAS -> {cluster_h5ad}", flush=True)
+    log.info("%s done — %d cells, %d PAS -> %s", prefix, adata.n_obs, adata.n_vars, cluster_h5ad)
     return stats
 
 
@@ -198,9 +207,15 @@ def downstream_worker_star(args: tuple) -> dict:
     lambda or nested function) so it is picklable under the ``spawn`` context.
 
     Args:
-        args: Tuple of positional arguments for ``run_one_dataset_downstream``.
+        args: Tuple of positional arguments for ``run_one_dataset_downstream``,
+            optionally followed by a ``log_queue`` value as the 10th element
+            (or as a ``{"log_queue": ...}`` dict appended to the tuple).
 
     Returns:
         The stats dict returned by ``run_one_dataset_downstream``.
     """
+    # Support optional log_queue appended as last element of the tuple.
+    if len(args) == 10:
+        *pos_args, log_queue = args
+        return run_one_dataset_downstream(*pos_args, log_queue=log_queue)
     return run_one_dataset_downstream(*args)
