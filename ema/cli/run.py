@@ -154,8 +154,14 @@ def run(**kwargs) -> None:
                 "No input. Provide --config <yaml>, --bam-dir <bam>, or --bam-files <a.bam,b.bam>."
             )
 
-    # CLI flags override (only non-default values win).
-    _apply_cli_overrides(cfg, kwargs)
+    # CLI flags override (only flags the user actually typed win).  We use
+    # Click's ParameterSource so user-typed-default and Click-filled-default
+    # are distinguishable -- comparing values to DEFAULTS would silently drop
+    # `--min-read 1500` when 1500 is also the default, even though the user
+    # explicitly asked for it.
+    _ctx = click.get_current_context()
+    _user_set = _user_supplied_params(_ctx)
+    _apply_cli_overrides(cfg, kwargs, user_set=_user_set)
 
     # Backstop defaults so the wizard / minimal CLI invocations do not
     # silently crash deep in pysam with "expected bytes, NoneType found"
@@ -240,7 +246,10 @@ def run(**kwargs) -> None:
         with ProgressManager(disable=kwargs["no_progress"]) as pm:
             # Hand off to the pipeline. All algorithm code is in ema.main.
             from ema.main import run as pipeline_run
-            pipeline_run(cfg=cfg, out_dir=out_dir, progress=pm, **_pipeline_kwargs(kwargs))
+            pipeline_run(
+                cfg=cfg, out_dir=out_dir, progress=pm,
+                **_pipeline_kwargs(kwargs, user_set=_user_set),
+            )
     finally:
         # Release the multiprocessing.Manager subprocess spawned by
         # setup_logging so the parent interpreter can shut down cleanly.
@@ -267,8 +276,49 @@ def _validate_strategy_choice(flag: str, value: str, valid: list[str]) -> None:
         )
 
 
-def _apply_cli_overrides(cfg: dict, kwargs: dict) -> None:
-    """Per spec: any non-None CLI flag overrides the corresponding YAML key."""
+def _user_supplied_params(ctx: click.Context | None) -> set[str]:
+    """Return the set of Click parameter names the user typed on the CLI.
+
+    Uses ``ctx.get_parameter_source(name) == ParameterSource.COMMANDLINE``.
+    Without this, value-equals-default looks identical to user-typed-default
+    and we silently drop overrides like ``--min-read 1500`` when 1500 is
+    also the default.
+
+    Returns an empty set when no Click context is active (e.g. the function
+    is called from a unit test that didn't go through Click).  Callers
+    should fall back to value comparison only when this set is empty.
+    """
+    if ctx is None:
+        return set()
+    try:
+        from click.core import ParameterSource
+    except ImportError:  # pragma: no cover -- Click >=8.0 ships ParameterSource
+        return set()
+    out: set[str] = set()
+    for name in ctx.params:
+        try:
+            src = ctx.get_parameter_source(name)
+        except Exception:
+            continue
+        if src == ParameterSource.COMMANDLINE:
+            out.add(name)
+    return out
+
+
+def _apply_cli_overrides(
+    cfg: dict, kwargs: dict, user_set: set[str] | None = None,
+) -> None:
+    """Any user-typed CLI flag overrides the corresponding YAML key.
+
+    Args:
+        cfg: YAML-loaded config dict, mutated in place.
+        kwargs: Click-parsed CLI keyword arguments.
+        user_set: Set of param names the user actually supplied
+            (from :func:`_user_supplied_params`).  When provided, only flags
+            in this set override YAML; otherwise we fall back to a
+            non-None / non-default heuristic for backward compat with
+            callers that did not pass a Click context.
+    """
     mapping = {
         "gtf": "gtf", "atlas": "atlas", "atlas_distance": "atlas_distance",
         "seq_len": "seqlen", "cb_len": "cb_len", "barcode_tag": "barcode_tag",
@@ -276,22 +326,31 @@ def _apply_cli_overrides(cfg: dict, kwargs: dict) -> None:
         "min_pas_per_cell": "min_pas_per_cell", "pas_gap": "pas_gap",
     }
     for cli_key, yaml_key in mapping.items():
+        if user_set is not None:
+            if cli_key in user_set:
+                cfg[yaml_key] = kwargs.get(cli_key)
+            continue
+        # Fallback path -- replicates the legacy behaviour for callers that
+        # didn't go through Click.
         v = kwargs.get(cli_key)
         if v is not None and v != DEFAULTS.get(cli_key.replace("_", "-")):
             cfg[yaml_key] = v
 
 
-def _pipeline_kwargs(kwargs: dict) -> dict:
+def _pipeline_kwargs(kwargs: dict, user_set: set[str] | None = None) -> dict:
     """Translate Click kwargs into the keyword set ema.main.run() expects.
 
     Two responsibilities:
     1. Strip CLI-only keys (config, output, bam_dir, ...) and not-yet-wired
        flags (ip_filter, benchmark, ...) — they have no place in args.
-    2. Drop any kwarg whose value is the CLI default. This is critical: if
-       the user supplied a YAML config with `pas_gap: 200` and did NOT
-       set --pas-gap on the command line, kwargs["pas_gap"] is the literal
-       default (100). Forwarding it would clobber the YAML value via
-       _kwarg_to_args_map. Only forward kwargs the user explicitly set.
+    2. Drop any kwarg the user did NOT explicitly set on the CLI. Without
+       this, ``--pas-gap``'s default of 100 would clobber a YAML
+       ``pas_gap: 200`` in the bridge layer.
+
+    The "user did not set it" check uses Click's ParameterSource (passed in
+    via ``user_set``) so user-typed-default and Click-filled-default are
+    distinguishable.  Without ``user_set`` (e.g. unit tests calling this
+    directly), we fall back to a value-equals-default heuristic.
     """
     drop = {
         "config", "output", "bam_dir", "bam_files",
@@ -310,9 +369,11 @@ def _pipeline_kwargs(kwargs: dict) -> dict:
     for k, v in kwargs.items():
         if k in drop:
             continue
-        # If the value matches the CLI default, the user did not set it
-        # explicitly — drop it so YAML wins. Compare against the canonical
-        # DEFAULTS table (kebab-case) since Click stores variables in snake.
+        if user_set is not None:
+            if k in user_set:
+                out[k] = v
+            continue
+        # Fallback path: no Click context (e.g. unit test) -- best-effort.
         _default = DEFAULTS.get(k.replace("_", "-"))
         if v == _default:
             continue

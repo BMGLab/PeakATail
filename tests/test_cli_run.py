@@ -95,6 +95,48 @@ def test_run_threads_flag_resets_resource_manager():
     )
 
 
+def test_user_supplied_via_parameter_source(monkeypatch):
+    """``_user_supplied_params`` must use Click's ParameterSource.COMMANDLINE.
+
+    Regression: ``_apply_cli_overrides`` previously gated on
+    ``v != DEFAULTS[key]`` -- which silently dropped ``--min-read 1500``
+    when 1500 also happened to be the default, even though the user
+    explicitly typed it.
+    """
+    import click
+    from click.testing import CliRunner
+
+    captured: dict = {}
+
+    @click.command()
+    @click.option("--min-read", "min_read", type=int, default=1500)
+    @click.pass_context
+    def fake(ctx, min_read):
+        from ema.cli.run import _user_supplied_params
+        captured["user_set"] = _user_supplied_params(ctx)
+        captured["min_read"] = min_read
+
+    runner = CliRunner()
+
+    # Case 1: user passes --min-read 1500 (same as default).
+    captured.clear()
+    res = runner.invoke(fake, ["--min-read", "1500"])
+    assert res.exit_code == 0
+    assert "min_read" in captured["user_set"], (
+        "user-typed value (even if it matches the default) must be reported "
+        "as COMMANDLINE-sourced; got: " + repr(captured["user_set"])
+    )
+
+    # Case 2: user does NOT pass --min-read (Click fills the default).
+    captured.clear()
+    res = runner.invoke(fake, [])
+    assert res.exit_code == 0
+    assert "min_read" not in captured["user_set"], (
+        "default-filled value must NOT be reported as COMMANDLINE-sourced; "
+        "got: " + repr(captured["user_set"])
+    )
+
+
 def test_single_sample_preprocessing_passes_filter_kwargs():
     """main._run_pipeline_body() must forward filter_config.min_cells/min_genes
     into matrixfilter.preprocessing() on the single-sample path.
