@@ -123,7 +123,119 @@ Workers access `BarcodeIndex` as a passed instance, not a module singleton. Same
 
 ---
 
-## 4. Global state management
+## 3.6 Per-dataset downstream parallelism
+
+After the global job pool finishes peak calling and we run the serial unify+concat steps, each **dataset's downstream pipeline** is independent:
+
+```
+filter_cb → make_dataframe → annotate → preprocessing → clustering
+```
+
+Today main.py runs these sequentially per dataset. With 4 datasets × ~30s each = 2 minutes. With dataset-level parallelism: ~30s total (limited by slowest dataset).
+
+**Plan**: spawn a `multiprocessing.Pool(n_datasets)` over the unique dataset IDs and run the downstream pipeline per dataset in parallel. ResourceManager caps the pool size based on free RAM (each downstream worker holds an AnnData ~200-500 MB).
+
+## 3.7 ema_switch cluster-pair parallelism
+
+`ema_switch` currently runs differential tests across cluster pairs sequentially:
+```python
+for c1, c2 in combinations(clusters, 2):
+    diff_strategy.test(...)
+```
+
+For 12 clusters = 66 pairs, even with each test being fast (Fisher: ~1s/pair), that's 66s sequential. With pair-level parallelism: ~5-10s.
+
+NB strategies parallelize *within* a single test (over PAS). Pair-level parallelism is on top of that — but both can't be n_jobs=-1 simultaneously (over-subscription). ResourceManager arbitrates: split available workers between pair-level and PAS-level.
+
+## 4. Central parallelism authority — `ResourceManager` everywhere
+
+This is the cross-cutting concern. Today there are at least 6 places that call `cpu_count()` or pass `n_jobs=-1` directly, bypassing `ResourceManager`:
+
+| File | What | Status |
+|---|---|---|
+| `ema/switch_test/strategies/nb_pairwise.py:287` | `os.cpu_count() or 1 if n_jobs == -1` | bypasses RM ❌ |
+| `ema/switch_test/strategies/nb_multi.py:287` | same | bypasses RM ❌ |
+| `ema/quantification/strategies/{classic,proportion,shannon}.py` | `Parallel(n_jobs=-1)` hardcoded | bypasses RM ❌ |
+| `ema/clustering/cross_dataset/marker_overlap.py` | `n_jobs=-1` default | bypasses RM ❌ |
+| `ema/datasets/manager.py` | `self.threads` from constructor | OK (CLI-controlled) ✓ |
+| `ema/annotate/gtf2isoform_utr.py` | calls `ResourceManager().get_n_jobs()` | OK ✓ |
+| `ema/countmatrix/tile_runner.py` | `ResourceManager().get_n_jobs()` | OK ✓ |
+
+### 4.1 Goal
+
+**No place in the codebase uses `cpu_count()`, `os.sched_getaffinity()`, or `n_jobs=-1` directly.** Every parallel call site queries `ResourceManager` for its budget, with the user-supplied `--threads` (or `--cores`) flag as the absolute ceiling.
+
+### 4.2 ResourceManager extensions
+
+```python
+class ResourceManager:
+    def __init__(self,
+                 user_max_threads: int | None = None,  # ← CLI --threads
+                 user_per_worker_mb: int | None = None,
+                 ram_safety_fraction: float = 0.7,
+                 cpu_reserve: int = 2,
+                 hard_n_jobs_cap: int = 16):
+        self.user_max_threads = user_max_threads
+        # ... existing ...
+
+    def get_n_jobs(self, per_worker_mb: int = 200,
+                   stage: str = "default") -> int:
+        """Returns safe n_jobs respecting user --threads ceiling AND per-stage budget."""
+        budget = ...  # existing logic
+        if self.user_max_threads is not None:
+            budget = min(budget, self.user_max_threads)
+        return max(1, budget)
+
+    def split_jobs(self, *budgets: int) -> tuple[int, ...]:
+        """Allocate available workers across multiple parallel stages.
+        E.g. ema_switch wants pair-parallel × PAS-parallel.
+        ResourceManager.split_jobs(pairs=N, pas_per_pair=M) returns
+        (pair_workers, pas_workers) such that pair × pas <= total budget."""
+```
+
+### 4.3 Singleton pattern
+
+```python
+# ema/utils/resource_manager.py
+_RM_INSTANCE: ResourceManager | None = None
+
+def get_resource_manager() -> ResourceManager:
+    global _RM_INSTANCE
+    if _RM_INSTANCE is None:
+        from ema.config import args
+        _RM_INSTANCE = ResourceManager(
+            user_max_threads=getattr(args, 'threads', None),
+        )
+    return _RM_INSTANCE
+```
+
+CLI flag (one global, replaces stage-specific flags):
+
+```bash
+ema --threads 16 --config ...     # override: max 16 workers anywhere
+ema_switch --threads 8 --h5ad ... # override per-command
+```
+
+If `--threads` not given: ResourceManager auto-detects.
+
+### 4.4 Refactor required (Phase 0 of the plan)
+
+Every `cpu_count()` / `n_jobs=-1` site updated to:
+```python
+from ema.utils import get_resource_manager
+n_jobs = get_resource_manager().get_n_jobs(per_worker_mb=300, stage="nb")
+```
+
+Backward compat: callers can still pass explicit `n_jobs=N` (overrides ResourceManager). Default behavior changes from "use all CPUs" to "use what RM permits".
+
+### 4.5 Why this matters
+
+- **Reproducibility**: same machine, same data → same n_jobs (today varies based on what else is running)
+- **HPC compatibility**: SLURM allocates N cores; user passes `--threads $SLURM_CPUS_PER_TASK`; ResourceManager respects it; no oversubscription
+- **Predictable RAM**: ResourceManager caps based on free RAM, not just CPU
+- **Composability**: `ema_switch` running pair-parallel × PAS-parallel doesn't blow up when both stages think they have all CPUs
+
+## 5. Global state management
 
 This is the most important section because it's where parallelism most often goes wrong.
 
@@ -333,6 +445,21 @@ Hot path: <10ms even for 1.2GB GTF.
 
 ## 6. Phase plan
 
+### Phase 0 — ResourceManager as central parallelism authority (sequential, blocking everything)
+
+Refactor every `cpu_count()` / `n_jobs=-1` / `Parallel(n_jobs=-1)` call site to query `get_resource_manager().get_n_jobs(...)`. Add `--threads` CLI flag (global, in both `ema` and `ema_switch`) and `ResourceManager.split_jobs(...)` for multi-stage allocation.
+
+| Order | Component | Files |
+|---|---|---|
+| 0.1 | `ResourceManager` accepts `user_max_threads` ctor arg | `ema/utils/resource_manager.py` |
+| 0.2 | `get_resource_manager()` singleton accessor reading from CLI args | same |
+| 0.3 | `ResourceManager.split_jobs(*budgets)` for nested parallelism | same |
+| 0.4 | `--threads N` CLI flag in `ema/cli.py` and `ema/switch_test/cli.py` | both files |
+| 0.5 | Refactor all `cpu_count()` / hardcoded `-1` sites to use RM | `nb_pairwise.py`, `nb_multi.py`, `marker_overlap.py`, PDUI strategies |
+| 0.6 | Remove or deprecate per-stage `--max-jobs` flags (RM is the one) | `ema_switch/cli.py` |
+
+After Phase 0: regression tests must pass — same default behavior, new `--threads N` flag works.
+
 ### Phase 1 — Encapsulate global state (sequential, blocking everything else)
 
 This goes FIRST because all subsequent parallelism work depends on safe state isolation.
@@ -395,7 +522,30 @@ After Phase 4: stress test on small (8GB RAM) and large (64GB) machines — must
 
 After Phase 5: run twice — second run should skip GTF parse (60s saved).
 
-### Phase 6 — Validation + bench
+### Phase 6 — Per-dataset downstream parallelism
+
+Parallelize the per-dataset block (`filter_cb` → `make_dataframe` → `annotate` → `preprocessing` → `clustering`) across datasets via a `multiprocessing.Pool(spawn)` sized by `ResourceManager.get_n_jobs(per_worker_mb=500, stage="downstream")`.
+
+| Order | Component | Files | Owner |
+|---|---|---|---|
+| 6.1 | Extract per-dataset block to a top-level function `process_one_dataset(ds_id, ds_dir, ...)` | `main.py` | Sonnet agent F |
+| 6.2 | Spawn `Pool` over `unique_ds_ids`, drain via `imap_unordered` | `main.py` | Same |
+| 6.3 | `tqdm` progress bar across datasets | `main.py` | Same |
+| 6.4 | Cross-dataset matching runs AFTER pool finishes (already serial) | unchanged | — |
+
+After Phase 6: full-BAM 4-dataset config — must produce identical output, expected ~3-4× speedup on the downstream stages.
+
+### Phase 7 — Cluster-pair parallelism in `ema_switch`
+
+| Order | Component | Files | Owner |
+|---|---|---|---|
+| 7.1 | Wrap pair loop in `joblib.Parallel(...)` for fisher (currently sequential) | `ema/switch_test/cli.py` | Sonnet agent G |
+| 7.2 | For NB strategies, use `ResourceManager.split_jobs(pairs=N, pas_per_pair=M)` to avoid CPU over-subscription | same | Same |
+| 7.3 | Aggregated significance counts via `Manager.dict()` or just collect after pool | same | Same |
+
+After Phase 7: `ema_switch --diff-method fisher` on 66 pairs — expected ~5-10× speedup vs sequential.
+
+### Phase 8 — Validation + bench
 
 - Full BAM, baseline mode → diff vs `reports/baseline_apa_completeness/` PASS
 - Full BAM, `--global-pool` → diff PASS, measure wall-clock
