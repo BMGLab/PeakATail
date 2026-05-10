@@ -170,12 +170,74 @@ def _ask_threads() -> Optional[int]:
     return int(answer)
 
 
+_ADVANCED_FIELDS: tuple[str, ...] = (
+    # Concurrency
+    "tiles", "tile_size", "tile_overlap", "bam_threads", "batch_size",
+    # Peak calling
+    "peak_strategy", "lambda_window", "lambda_method", "lambda_fold_change",
+    "max_pas", "smoothing_window", "min_prominence",
+    "dynamic_threshold", "floor_threshold", "pas_gap",
+    # Filters
+    "min_read", "min_cells", "min_pas_per_cell",
+    # Annotation
+    "max_gene_distance", "utr_multiplier", "include_extended",
+    # Clustering
+    "cluster_method", "resolution", "n_pcs",
+    "external_clusters", "random_seed",
+    # Cross-dataset
+    "match_method", "n_top_markers",
+)
+
+
 def _ask_run_advanced() -> dict:
-    """Tiered advanced options (one prompt per group)."""
+    """Iterate the schema to ask one prompt per advanced field.
+
+    This is the centralisation pay-off: any new RunConfig field that goes
+    into ``_ADVANCED_FIELDS`` becomes a wizard prompt with the right type,
+    default, and help text -- no hand-maintained second copy.
+    """
+    from ema.cli.config_schema import RunConfig, wizard_prompts_from_schema
+
     extras: dict = {}
-    if questionary.confirm("Tile-based peak calling?", default=False).ask():
-        extras["tiles"] = True
-    # ... (full grouping per spec §5; abbreviated here for plan length)
+    prompts = wizard_prompts_from_schema(RunConfig, _ADVANCED_FIELDS)
+    for name, spec, default in prompts:
+        label = f"{name}"
+        if spec.description:
+            label = f"{name} -- {spec.description}"
+        ans: object | None
+        if spec.is_flag:
+            ans = questionary.confirm(label, default=bool(default)).ask()
+            if ans is None:
+                return extras
+            if ans:
+                extras[spec.yaml_key or name] = True
+        elif spec.choice is not None:
+            ans = questionary.select(label, choices=list(spec.choice),
+                                     default=str(default)).ask()
+            if ans and ans != str(default):
+                extras[spec.yaml_key or name] = ans
+        else:
+            default_str = "" if default is None else str(default)
+            ans = questionary.text(label, default=default_str).ask()
+            if ans is None:
+                return extras
+            ans = ans.strip()
+            if not ans:
+                continue
+            # Try to coerce to the right scalar type based on field default
+            try:
+                if isinstance(default, bool):
+                    extras[spec.yaml_key or name] = ans.lower() in {"1", "true", "y", "yes"}
+                elif isinstance(default, int):
+                    extras[spec.yaml_key or name] = int(ans)
+                elif isinstance(default, float):
+                    extras[spec.yaml_key or name] = float(ans)
+                else:
+                    extras[spec.yaml_key or name] = ans
+            except (TypeError, ValueError):
+                # Fall back to raw string -- the YAML loader / Click will
+                # reject invalid values loudly downstream.
+                extras[spec.yaml_key or name] = ans
     return extras
 
 
