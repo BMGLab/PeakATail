@@ -157,8 +157,33 @@ def run(**kwargs) -> None:
     # CLI flags override (only non-default values win).
     _apply_cli_overrides(cfg, kwargs)
 
+    # Backstop defaults so the wizard / minimal CLI invocations do not
+    # silently crash deep in pysam with "expected bytes, NoneType found"
+    # when the user did not supply seqlen/cb_len/barcode_tag (these are
+    # required by ema.countmatrix.read.read_check). No silent fallbacks:
+    # a one-line WARNING tells the user the value being used.
+    _BACKSTOP = {
+        "seqlen": (150, "--seq-len / yaml `seqlen`"),
+        "cb_len": (16, "--cb-len / yaml `cb_len`"),
+        "barcode_tag": ("CB", "--barcode-tag / yaml `barcode_tag`"),
+    }
+    for _k, (_default, _flag) in _BACKSTOP.items():
+        if cfg.get(_k) is None:
+            cfg[_k] = _default
+            log.warning(
+                "%s not set; defaulting to %r. Set it explicitly to suppress this warning.",
+                _flag, _default,
+            )
+
     # Resolve output dir (with timestamp).
-    out_dir = resolve_output_dir(kwargs["output"])
+    # Precedence: CLI --output (when explicitly set) > YAML output_dir > default.
+    # Click resolves --output to an absolute path, so compare basenames.
+    _output_base = kwargs["output"]
+    _output_base_name = Path(_output_base).name if _output_base else ""
+    if _output_base_name == DEFAULTS["output"] and cfg.get("output_dir"):
+        # CLI --output left at default but YAML provided one — honour YAML.
+        _output_base = cfg["output_dir"]
+    out_dir = resolve_output_dir(_output_base)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Logging + progress.
