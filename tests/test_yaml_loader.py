@@ -8,6 +8,21 @@ import yaml
 from ema.cli.yaml_loader import load_run_yaml, RunYamlError
 
 
+@pytest.fixture(autouse=True)
+def _restore_ema_propagate():
+    """Ensure ema logger propagates to root so caplog captures records.
+
+    setup_logging() (called in test_logging_config.py) sets propagate=False
+    on the ema logger. This fixture restores propagation before each test so
+    caplog works correctly regardless of test execution order.
+    """
+    logger = logging.getLogger("ema")
+    original = logger.propagate
+    logger.propagate = True
+    yield
+    logger.propagate = original
+
+
 def _write(tmp_path: Path, body: dict) -> Path:
     p = tmp_path / "config.yaml"
     p.write_text(yaml.safe_dump(body))
