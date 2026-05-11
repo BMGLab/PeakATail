@@ -6,6 +6,7 @@ import logging
 import click
 
 from ema.cli.common import (
+    apply_yaml_to_kwargs,
     common_options,
     parse_log_overrides,
     resolve_subcommand_output_dir,
@@ -56,6 +57,9 @@ def _list_strategies_callback(ctx, param, value):
 @click.pass_context
 def length(ctx: click.Context, **kwargs) -> None:
     """3'UTR shortening / lengthening quantification (PDUI variants)."""
+    # Merge YAML config first; CLI flags (explicitly set) always win.
+    apply_yaml_to_kwargs(ctx, kwargs)
+
     valid = _list_pdui_strategies()
     if valid and kwargs["strategy"] not in valid:
         raise click.BadParameter(

@@ -80,6 +80,14 @@ class FieldSpec:
             ``filter_config`` rather than the catch-all ``args`` namespace.
         skip_legacy_bridge: If True, the bridge does not touch the legacy
             globals (used for purely CLI-only fields like ``--config``).
+        applies_to: Optional frozenset of subcommand names this field is
+            relevant to (e.g. ``frozenset({"switch_diff"})``).  ``None``
+            means the field applies everywhere (i.e. ``ema run`` + all
+            subcommands).  Fields that don't apply to ``ema run`` should
+            set ``skip_legacy_bridge=True`` so the bridge ignores them.
+            This attribute is purely informational — the YAML loader and
+            Click generators do NOT filter on it, so switch-only fields
+            are harmless on ``ema run``.
     """
     cli_flag: Optional[str] = None
     yaml_key: Optional[str] = None
@@ -92,6 +100,7 @@ class FieldSpec:
     legacy_args_attr: Optional[str] = None
     legacy_dataclass_attr: Optional[str] = None
     skip_legacy_bridge: bool = False
+    applies_to: Optional[frozenset] = None
 
 
 def _spec(**kwargs: Any) -> dict[str, FieldSpec]:
@@ -489,6 +498,70 @@ class RunConfig:
             cli_flag="--n-top-markers", yaml_key="n_top_markers",
             legacy_args_attr="n_top_markers",
             description="Number of top marker PAS per cluster.",
+        ),
+    )
+
+    # ─── switch diff parameters ──────────────────────────────────────────
+    # These fields are consumed by `ema switch diff`.  They live in RunConfig
+    # so the YAML loader recognises them (they appear in _LIVE_KEYS) and so
+    # defaults are schema-derived instead of duplicated in _SUBCOMMAND_DEFAULTS.
+    # skip_legacy_bridge=True keeps them out of the `ema run` legacy bridge.
+    marker_top_n: int = field(
+        default=200,
+        metadata=_spec(
+            cli_flag="--marker-top-n", yaml_key="marker_top_n",
+            skip_legacy_bridge=True,
+            description="Top-N markers per cluster for differential APA.",
+            applies_to=frozenset({"switch_diff"}),
+        ),
+    )
+    marker_method: str = field(
+        default="wilcoxon",
+        metadata=_spec(
+            cli_flag="--marker-method", yaml_key="marker_method",
+            skip_legacy_bridge=True,
+            description="Marker ranking method for differential APA (wilcoxon / t-test ...).",
+            applies_to=frozenset({"switch_diff"}),
+        ),
+    )
+    fdr: float = field(
+        default=0.05,
+        metadata=_spec(
+            cli_flag="--fdr", yaml_key="fdr",
+            skip_legacy_bridge=True,
+            description="FDR threshold for differential APA calls.",
+            applies_to=frozenset({"switch_diff"}),
+        ),
+    )
+    per_worker_mb: int = field(
+        default=300,
+        metadata=_spec(
+            cli_flag="--per-worker-mb", yaml_key="per_worker_mb",
+            skip_legacy_bridge=True,
+            description="Memory cap (MB) per parallel worker in switch diff / length.",
+            applies_to=frozenset({"switch_diff", "switch_length"}),
+        ),
+    )
+
+    # ─── switch length parameters ────────────────────────────────────────
+    isoform_agg: str = field(
+        default="per_gene",
+        metadata=_spec(
+            cli_flag="--isoform-agg", yaml_key="isoform_agg",
+            skip_legacy_bridge=True,
+            choice=("per_gene", "per_isoform"),
+            description="Isoform aggregation level for PDUI (per_gene / per_isoform).",
+            applies_to=frozenset({"switch_length"}),
+        ),
+    )
+    isoform_collapse: str = field(
+        default="none",
+        metadata=_spec(
+            cli_flag="--isoform-collapse", yaml_key="isoform_collapse",
+            skip_legacy_bridge=True,
+            choice=("none", "mean", "majority"),
+            description="How to collapse isoforms when isoform_agg=per_gene.",
+            applies_to=frozenset({"switch_length"}),
         ),
     )
 

@@ -6,6 +6,7 @@ import logging
 import click
 
 from ema.cli.common import (
+    apply_yaml_to_kwargs,
     common_options,
     parse_log_overrides,
     resolve_subcommand_output_dir,
@@ -44,6 +45,9 @@ def _list_strategies_callback(ctx, param, value):
 @click.pass_context
 def match(ctx: click.Context, **kwargs) -> None:
     """Cross-dataset cluster matching (marker_overlap / mnn / jaccard)."""
+    # Merge YAML config first; CLI flags (explicitly set) always win.
+    apply_yaml_to_kwargs(ctx, kwargs)
+
     valid = _list_match_strategies()
     if valid and kwargs["strategy"] not in valid:
         raise click.BadParameter(

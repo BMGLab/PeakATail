@@ -95,14 +95,12 @@ def run(**kwargs) -> None:
                 "No input. Provide --config <yaml>, --bam-dir <bam>, or --bam-files <a.bam,b.bam>."
             )
 
-    # CLI flags override (only flags the user actually typed win).  We use
-    # Click's ParameterSource so user-typed-default and Click-filled-default
-    # are distinguishable -- comparing values to DEFAULTS would silently drop
-    # `--min-read 1500` when 1500 is also the default, even though the user
-    # explicitly asked for it.
+    # Identify which CLI params the user explicitly typed.  This drives the
+    # schema-based override path: only user-set kwargs are forwarded to
+    # pipeline_run(), so YAML values (or schema defaults) win for everything
+    # the user did not touch on the command line.
     _ctx = click.get_current_context()
     _user_set = _user_supplied_params(_ctx)
-    _apply_cli_overrides(cfg, kwargs, user_set=_user_set)
 
     # Backstop defaults so the wizard / minimal CLI invocations do not
     # silently crash deep in pysam with "expected bytes, NoneType found"
@@ -251,38 +249,6 @@ def _user_supplied_params(ctx: click.Context | None) -> set[str]:
         if src == ParameterSource.COMMANDLINE:
             out.add(name)
     return out
-
-
-def _apply_cli_overrides(
-    cfg: dict, kwargs: dict, user_set: set[str] | None = None,
-) -> None:
-    """Any user-typed CLI flag overrides the corresponding YAML key.
-
-    Args:
-        cfg: YAML-loaded config dict, mutated in place.
-        kwargs: Click-parsed CLI keyword arguments.
-        user_set: Set of param names the user actually supplied
-            (from :func:`_user_supplied_params`).  When provided, only flags
-            in this set override YAML; otherwise we fall back to a
-            non-None / non-default heuristic for backward compat with
-            callers that did not pass a Click context.
-    """
-    mapping = {
-        "gtf": "gtf", "atlas": "atlas", "atlas_distance": "atlas_distance",
-        "seq_len": "seqlen", "cb_len": "cb_len", "barcode_tag": "barcode_tag",
-        "min_read": "min_read", "min_cells": "min_cells",
-        "min_pas_per_cell": "min_pas_per_cell", "pas_gap": "pas_gap",
-    }
-    for cli_key, yaml_key in mapping.items():
-        if user_set is not None:
-            if cli_key in user_set:
-                cfg[yaml_key] = kwargs.get(cli_key)
-            continue
-        # Fallback path -- replicates the legacy behaviour for callers that
-        # didn't go through Click.
-        v = kwargs.get(cli_key)
-        if v is not None and v != DEFAULTS.get(cli_key.replace("_", "-")):
-            cfg[yaml_key] = v
 
 
 def _pipeline_kwargs(kwargs: dict, user_set: set[str] | None = None) -> dict:

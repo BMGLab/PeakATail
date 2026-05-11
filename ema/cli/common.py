@@ -8,13 +8,15 @@ Usage:
 """
 from __future__ import annotations
 
-import functools
+import logging
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import click
 
 from ema.cli.defaults import DEFAULTS
+
+log = logging.getLogger(__name__)
 
 
 def common_options(include_output: bool = True, output_default: str | None = None) -> Callable:
@@ -124,6 +126,96 @@ def parse_log_overrides(spec: str | None) -> dict[str, str]:
         else:
             overrides["ema"] = part.upper()
     return overrides
+
+
+def apply_yaml_to_kwargs(
+    ctx: click.Context,
+    kwargs: dict[str, Any],
+    *,
+    warn_unknown: bool = True,
+) -> dict[str, Any]:
+    """Merge a YAML config file into *kwargs* for switch subcommands.
+
+    This is the ``ema switch {diff,length,match}`` equivalent of the
+    YAML-then-CLI merge that ``ema run`` performs.  It is intentionally
+    separate from :func:`ema.cli.yaml_loader.load_run_yaml` because that
+    function enforces a ``datasets:`` key which does not apply to the
+    switch subcommands.
+
+    Merge rules (mirrors the ``ema run`` contract):
+    * If ``kwargs["config"]`` is ``None``, this is a no-op.
+    * YAML keys are mapped to kwarg names via the :class:`RunConfig` schema
+      (``yaml_key`` → field name).  Unknown YAML keys emit a WARNING.
+    * Only kwargs the user did **not** supply on the CLI are overwritten.
+      Detection uses ``ctx.get_parameter_source(name) == COMMANDLINE`` so
+      an explicit ``--fdr 0.05`` is not silently eclipsed by a YAML
+      ``fdr: 0.10``.
+
+    Args:
+        ctx: The active Click context (used for ParameterSource lookup).
+        kwargs: Click-parsed kwargs dict (mutated in place and returned).
+        warn_unknown: Emit a WARNING for YAML keys not in the schema.
+
+    Returns:
+        The same ``kwargs`` dict, mutated in place.
+    """
+    config_path = kwargs.get("config")
+    if not config_path:
+        return kwargs
+
+    import yaml
+    try:
+        from click.core import ParameterSource
+        _ps_commandline = ParameterSource.COMMANDLINE
+    except ImportError:  # pragma: no cover
+        _ps_commandline = None  # type: ignore[assignment]
+
+    path = Path(str(config_path))
+    try:
+        with open(path) as _f:
+            raw = yaml.safe_load(_f) or {}
+    except OSError as exc:
+        raise click.BadParameter(
+            f"Cannot open YAML config {path}: {exc}", param_hint="--config"
+        )
+    if not isinstance(raw, dict):
+        raise click.BadParameter(
+            f"YAML config {path}: top-level must be a mapping", param_hint="--config"
+        )
+
+    # Build the yaml_key → field_name mapping from the schema.
+    from ema.cli.config_schema import RunConfig, yaml_key_to_field_name
+    yaml_to_field = yaml_key_to_field_name(RunConfig)
+
+    # Identify which params the user explicitly typed on the CLI.
+    explicitly_set: set[str] = set()
+    if _ps_commandline is not None:
+        for name in ctx.params:
+            try:
+                if ctx.get_parameter_source(name) == _ps_commandline:
+                    explicitly_set.add(name)
+            except Exception:
+                pass
+
+    for yaml_key, value in raw.items():
+        field_name = yaml_to_field.get(yaml_key)
+        if field_name is None:
+            if warn_unknown:
+                log.warning(
+                    "YAML key %r is not recognised by the switch subcommand schema"
+                    " — ignoring.",
+                    yaml_key,
+                )
+            continue
+        # Only apply if the kwarg exists in this subcommand's Click params
+        # AND was not explicitly set by the user on the CLI.
+        if field_name not in kwargs:
+            continue
+        if field_name in explicitly_set:
+            continue
+        kwargs[field_name] = value
+
+    return kwargs
 
 
 def parse_plot_engines(spec: str, no_plots: bool = False) -> list[str]:
