@@ -199,7 +199,30 @@ def run(
     # Delegate to the pipeline body (progress wired inside)               #
     # ------------------------------------------------------------------ #
     _plot_engines: list[str] | None = kwargs.pop("plot_engines", None)
-    _run_pipeline_body(progress=progress, plot_engines=_plot_engines)
+
+    # Tier 4 viz: start the resource sampler iff plotting is enabled.
+    # The sampler writes a JSONL of (elapsed, rss_gb, cpu_pct) records
+    # next to the run's outputs; the resource_timeline viz reads it later.
+    _sampler: _ResourceSampler | None = None
+    if _plot_engines:
+        try:
+            _resource_jsonl = Path(directory_config.output_dir) / "resources.jsonl"
+            _sampler = _ResourceSampler(_resource_jsonl, interval_s=5.0)
+            _sampler.start()
+        except Exception as e:
+            log.warning("resource sampler failed to start: %s", e)
+            _sampler = None
+
+    try:
+        _run_pipeline_body(progress=progress, plot_engines=_plot_engines)
+    finally:
+        if _sampler is not None:
+            try:
+                _sampler.stop()
+                _sampler.join(timeout=10)
+            except Exception as e:
+                log.warning("resource sampler clean shutdown failed: %s", e)
+
     return 0
 
 
