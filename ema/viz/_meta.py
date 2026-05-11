@@ -95,3 +95,111 @@ def write_figure_meta(basepath: Path, meta: dict[str, Any]) -> Path:
         log.warning("write_figure_meta: could not write %s: %s", sidecar, exc)
 
     return sidecar
+
+
+def write_figures_index(figs_dir: Path, command: str | None = None) -> Path | None:
+    """Walk ``figs_dir``, collect every ``*.meta.json`` and write a manifest.
+
+    Produces two files in ``figs_dir``:
+
+      * ``figures_INDEX.json`` — machine-readable list ``[{file, meta}, ...]``
+      * ``figures_INDEX.md``   — human-readable summary grouped by plot type
+
+    The manifest gives a researcher a single file to read to understand what
+    every figure in the directory is for, without opening 66 sidecars.
+
+    Args:
+        figs_dir: Directory containing rendered figures + their ``.meta.json``
+            sidecars.  Returns ``None`` if the directory doesn't exist or is
+            empty.
+        command: Optional name of the producing CLI subcommand (e.g.
+            ``"ema switch diff"``) — included in the markdown header.
+
+    Returns:
+        Path to the markdown file, or ``None`` on failure / empty dir.
+    """
+    figs_dir = Path(figs_dir)
+    if not figs_dir.exists():
+        return None
+
+    entries: list[dict[str, Any]] = []
+    for meta_path in sorted(figs_dir.glob("*.meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text())
+        except Exception as exc:
+            log.warning("write_figures_index: bad sidecar %s: %s", meta_path, exc)
+            continue
+        # Collect the sibling artefacts (png/svg/html) that share this stem.
+        stem = meta_path.with_suffix("").stem  # strip .meta then .json
+        if stem.endswith(".meta"):
+            stem = stem[:-5]
+        siblings = sorted(
+            p.name for p in figs_dir.iterdir()
+            if p.is_file()
+            and p.name.startswith(stem + ".")
+            and not p.name.endswith(".meta.json")
+        )
+        entries.append({"stem": stem, "files": siblings, "meta": meta})
+
+    if not entries:
+        return None
+
+    json_path = figs_dir / "figures_INDEX.json"
+    md_path = figs_dir / "figures_INDEX.md"
+    try:
+        json_path.write_text(json.dumps(entries, indent=2, default=str))
+    except Exception as exc:  # pragma: no cover
+        log.warning("write_figures_index: could not write %s: %s", json_path, exc)
+
+    # Group by plot_type for the markdown summary.
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        plot_type = (
+            e["meta"].get("viz_strategy", "unknown")
+            .replace("_matplotlib", "")
+            .replace("_plotly", "")
+            .replace("_scanpy", "")
+        )
+        by_type.setdefault(plot_type, []).append(e)
+
+    lines: list[str] = []
+    lines.append(f"# Figures index")
+    if command:
+        lines.append(f"\nProduced by `{command}`.")
+    lines.append(f"\nDirectory: `{figs_dir}`\n")
+    lines.append(f"Total figures: {len(entries)} across {len(by_type)} plot type(s).\n")
+
+    for plot_type in sorted(by_type.keys()):
+        rows = by_type[plot_type]
+        lines.append(f"\n## `{plot_type}` ({len(rows)})\n")
+        # Pull a representative description from the first entry if present.
+        desc = rows[0]["meta"].get("description")
+        if desc:
+            lines.append(f"_{desc}_\n")
+        # Concise table per entry.
+        for e in rows:
+            m = e["meta"]
+            tag_parts: list[str] = []
+            if "cluster1" in m and "cluster2" in m:
+                tag_parts.append(f"cluster {m['cluster1']} vs {m['cluster2']}")
+            if "dataset_id" in m:
+                tag_parts.append(f"dataset={m['dataset_id']}")
+            if "n_tested" in m:
+                tag_parts.append(f"n_tested={m['n_tested']}")
+            if "n_significant" in m:
+                tag_parts.append(f"sig={m['n_significant']}")
+            if "n_observations" in m:
+                tag_parts.append(f"n_obs={m['n_observations']}")
+            if "n_clusters" in m:
+                tag_parts.append(f"clusters={m['n_clusters']}")
+            tags = " · ".join(tag_parts) if tag_parts else "—"
+            lines.append(f"- **{e['stem']}** ({len(e['files'])} files) — {tags}")
+        lines.append("")
+
+    try:
+        md_path.write_text("\n".join(lines))
+    except Exception as exc:  # pragma: no cover
+        log.warning("write_figures_index: could not write %s: %s", md_path, exc)
+        return None
+
+    return md_path

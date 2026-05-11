@@ -79,10 +79,19 @@ class VolcanoPlotly(VizStrategy):
             List of paths written (HTML + SVG).
         """
         # --- unpack data dict or bare DataFrame ---
+        # Optional context keys (cluster1, cluster2, strategy, source_tsv,
+        # n_cells_cluster1, n_cells_cluster2) flow into the meta sidecar so a
+        # researcher seeing volcano_0_vs_10.png doesn't have to grep the log
+        # to find out which test/clusters/sample sizes produced it.
+        ctx: dict = {}
         if isinstance(data, dict):
             df: pd.DataFrame = data["df"]
             fdr: float = float(data.get("fdr", _FDR_DEFAULT))
             log2fc_thresh: float = float(data.get("log2fc_thresh", _LOG2FC_THRESH_DEFAULT))
+            for _k in ("cluster1", "cluster2", "strategy", "source_tsv",
+                       "n_cells_cluster1", "n_cells_cluster2"):
+                if _k in data and data[_k] is not None:
+                    ctx[_k] = data[_k]
         else:
             df = data
             fdr = _FDR_DEFAULT
@@ -140,9 +149,20 @@ class VolcanoPlotly(VizStrategy):
 
         n_up = int((sig_mask & (df["log2fc"] >= log2fc_thresh)).sum())
         n_down = int((sig_mask & (df["log2fc"] <= -log2fc_thresh)).sum())
+        # Self-describing title with cluster pair, test, sample sizes.
+        title_parts: list[str] = ["Differential APA — volcano"]
+        if "cluster1" in ctx and "cluster2" in ctx:
+            title_parts.append(f"cluster {ctx['cluster1']} vs {ctx['cluster2']}")
+        if "strategy" in ctx:
+            title_parts.append(f"test={ctx['strategy']}")
+        if "n_cells_cluster1" in ctx and "n_cells_cluster2" in ctx:
+            title_parts.append(
+                f"n={ctx['n_cells_cluster1']}/{ctx['n_cells_cluster2']} cells"
+            )
+        title_parts.append(f"up={n_up}, down={n_down}")
         fig.update_layout(
             template="plotly_white",
-            title=f"Differential APA — volcano (up={n_up}, down={n_down})",
+            title=" — ".join(title_parts),
             xaxis_title="log₂ fold change",
             yaxis_title="-log₁₀(q-value)",
             showlegend=False,
@@ -151,13 +171,18 @@ class VolcanoPlotly(VizStrategy):
         )
 
         paths = save_plotly(fig, output_basepath)
-        write_figure_meta(output_basepath, {
+        meta: dict = {
             "viz_strategy": self.name,
+            "description": "Differential APA volcano: -log10(q) vs log2fc per PAS. "
+                           "Horizontal dashed line = FDR threshold; vertical dashed "
+                           "lines = log2fc threshold.",
             "fdr": fdr,
             "log2fc_thresh": log2fc_thresh,
             "n_tested": len(df),
             "n_significant": int(sig_mask.sum()),
             "n_up": n_up,
             "n_down": n_down,
-        })
+        }
+        meta.update(ctx)
+        write_figure_meta(output_basepath, meta)
         return paths

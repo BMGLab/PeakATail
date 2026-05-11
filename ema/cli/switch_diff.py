@@ -125,7 +125,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
             fdr=kwargs["fdr"],
             log2fc_thresh=kwargs["log2fc_thresh"],
             engines=parse_plot_engines(
-                kwargs.get("plot_engine", "both"),
+                kwargs.get("plot_engine", "matplotlib"),
                 kwargs.get("no_plots", False),
             ),
         )

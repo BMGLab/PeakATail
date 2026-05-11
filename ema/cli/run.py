@@ -183,7 +183,7 @@ def run(**kwargs) -> None:
 
         # Resolve --plot-engine / --no-plots into an engine list for the pipeline.
         _plot_engines = parse_plot_engines(
-            kwargs.get("plot_engine", "both"),
+            kwargs.get("plot_engine", "matplotlib"),
             no_plots=kwargs.get("no_plots", False),
         )
 

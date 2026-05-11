@@ -928,9 +928,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "cluster_n_svd_components": getattr(args, "n_svd_components", 50),
         "cluster_n_top_hvg": getattr(args, "n_top_hvg", 2000),
     }
-    # Resolve plot_engines: default to both engines when not specified.
+    # Resolve plot_engines: default to matplotlib-only (plotly is opt-in via
+    # --plot-engine plotly|both).
     _resolved_plot_engines: list[str] = (
-        plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
+        plot_engines if plot_engines is not None else ["matplotlib"]
     )
     worker_args: list[tuple] = []
     for _warg in _raw_worker_args:

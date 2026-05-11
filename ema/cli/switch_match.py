@@ -106,7 +106,7 @@ def match(ctx: click.Context, **kwargs) -> None:
             out_dir=out_dir,
             df=df,
             engines=parse_plot_engines(
-                kwargs.get("plot_engine", "both"),
+                kwargs.get("plot_engine", "matplotlib"),
                 kwargs.get("no_plots", False),
             ),
         )

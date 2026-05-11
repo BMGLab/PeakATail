@@ -34,7 +34,7 @@ from ema.viz import render_all
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ENGINES: list[str] = ["matplotlib", "plotly"]
+DEFAULT_ENGINES: list[str] = ["matplotlib"]
 
 
 # ===========================================================================
@@ -385,12 +385,34 @@ def render_switch_diff_outputs(
         figs_dir.mkdir(parents=True, exist_ok=True)
 
         # --- volcano: one per pair ---
+        # Pass cluster IDs + sample sizes (from n_cells_cluster1/cluster2 columns
+        # added in commit 31fc463) so each volcano is self-describing in its
+        # title and meta sidecar.  Researchers seeing volcano_0_vs_10.png no
+        # longer have to grep the log to learn which clusters and how many
+        # cells produced it.
         vol_count = 0
         for (c1, c2), df in pair_results.items():
             stem = f"volcano_{c1}_vs_{c2}" if c2 else "volcano_omnibus"
+            payload: dict = {
+                "df": df, "fdr": fdr, "log2fc_thresh": log2fc_thresh,
+                "cluster1": c1, "cluster2": c2,
+            }
+            # Sample sizes are constant within a pair, so the first row's
+            # value is representative.
+            for _col, _key in (
+                ("n_cells_cluster1", "n_cells_cluster1"),
+                ("n_cells_cluster2", "n_cells_cluster2"),
+            ):
+                if _col in df.columns and len(df) > 0:
+                    try:
+                        payload[_key] = int(df[_col].iloc[0])
+                    except Exception:
+                        pass
+            # source_tsv path lets the user open the matching differential file.
+            if c2:
+                payload["source_tsv"] = f"../differential/{stem.replace('volcano_', '')}.tsv"
             w = render_all(
-                "volcano",
-                {"df": df, "fdr": fdr, "log2fc_thresh": log2fc_thresh},
+                "volcano", payload,
                 figs_dir / stem,
                 engines=engines,
             )
@@ -431,6 +453,12 @@ def render_switch_diff_outputs(
                 "ema switch diff: diff_agreement skipped (need >=2 pairs, got %d)",
                 len(sig_sets),
             )
+
+        # Walk the figures dir once and write a researcher-readable manifest.
+        from ema.viz._meta import write_figures_index
+        idx = write_figures_index(figs_dir, command="ema switch diff")
+        if idx is not None:
+            log.info("ema switch diff: figures index -> %s", idx)
     except Exception as exc:
         log.warning("ema switch diff: viz rendering failed: %s", exc)
 
@@ -595,6 +623,11 @@ def render_switch_length_outputs(
                 "(%d genes × %d cluster pairs)",
                 len(w), len(shifts_df), len(shifts_data),
             )
+
+        from ema.viz._meta import write_figures_index
+        idx = write_figures_index(figs_dir, command="ema switch length")
+        if idx is not None:
+            log.info("ema switch length: figures index -> %s", idx)
     except Exception as exc:
         log.warning("ema switch length: viz rendering failed: %s", exc)
 
@@ -627,5 +660,10 @@ def render_switch_match_outputs(
             "ema switch match: sankey=%d, match_confidence=%d file(s) at %s",
             len(s), len(m), figs_dir,
         )
+
+        from ema.viz._meta import write_figures_index
+        idx = write_figures_index(figs_dir, command="ema switch match")
+        if idx is not None:
+            log.info("ema switch match: figures index -> %s", idx)
     except Exception as exc:
         log.warning("ema switch match: viz rendering failed: %s", exc)

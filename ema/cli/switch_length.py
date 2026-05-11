@@ -116,7 +116,7 @@ def length(ctx: click.Context, **kwargs) -> None:
             pdui_df=pdui_df,
             cluster_key=kwargs["cluster_key"],
             engines=parse_plot_engines(
-                kwargs.get("plot_engine", "both"),
+                kwargs.get("plot_engine", "matplotlib"),
                 kwargs.get("no_plots", False),
             ),
         )

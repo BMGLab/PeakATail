@@ -84,8 +84,8 @@ def common_options(include_output: bool = True, output_default: str | None = Non
             )
         opts.extend([
             click.option(
-                "--plot-engine", "plot_engine", type=str, default="both",
-                help="Engines: 'matplotlib', 'plotly', 'both' (default), 'none', or comma list.",
+                "--plot-engine", "plot_engine", type=str, default="matplotlib",
+                help="Engines: 'matplotlib' (default), 'plotly', 'both', 'none', or comma list.",
             ),
             click.option(
                 "--plot-format", "plot_format", type=str, default="all",

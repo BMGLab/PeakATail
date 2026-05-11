@@ -82,11 +82,19 @@ class VolcanoMatplotlib(VizStrategy):
             List of paths written (PNG + SVG).
         """
         # --- unpack data dict or bare DataFrame ---
+        # Optional context keys (cluster1, cluster2, strategy, source_tsv,
+        # n_cells_cluster1, n_cells_cluster2) flow into the meta sidecar AND
+        # the figure title so a researcher can identify the plot at a glance.
+        ctx: dict = {}
         if isinstance(data, dict):
             df: pd.DataFrame = data["df"]
             fdr: float = float(data.get("fdr", _FDR_DEFAULT))
             log2fc_thresh: float = float(data.get("log2fc_thresh", _LOG2FC_THRESH_DEFAULT))
             n_label: int = int(data.get("n_label", 10))
+            for _k in ("cluster1", "cluster2", "strategy", "source_tsv",
+                       "n_cells_cluster1", "n_cells_cluster2"):
+                if _k in data and data[_k] is not None:
+                    ctx[_k] = data[_k]
         else:
             df = data
             fdr = _FDR_DEFAULT
@@ -124,7 +132,17 @@ class VolcanoMatplotlib(VizStrategy):
 
         ax.set_xlabel("log₂ fold change")
         ax.set_ylabel("-log₁₀(q-value)")
-        ax.set_title("Differential APA — volcano")
+        # Self-describing title: which clusters, which test, sample sizes.
+        title_parts: list[str] = ["Differential APA — volcano"]
+        if "cluster1" in ctx and "cluster2" in ctx:
+            title_parts.append(f"cluster {ctx['cluster1']} vs {ctx['cluster2']}")
+        if "strategy" in ctx:
+            title_parts.append(f"test={ctx['strategy']}")
+        if "n_cells_cluster1" in ctx and "n_cells_cluster2" in ctx:
+            title_parts.append(
+                f"n={ctx['n_cells_cluster1']}/{ctx['n_cells_cluster2']} cells"
+            )
+        ax.set_title(" — ".join(title_parts))
         ax.legend(loc="upper left", fontsize=8, frameon=False)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
@@ -154,13 +172,18 @@ class VolcanoMatplotlib(VizStrategy):
                 )
 
         paths = save_matplotlib(fig, output_basepath)
-        write_figure_meta(output_basepath, {
+        meta: dict = {
             "viz_strategy": self.name,
+            "description": "Differential APA volcano: -log10(q) vs log2fc per PAS. "
+                           "Horizontal dashed line = FDR threshold; vertical dashed "
+                           "lines = log2fc threshold.",
             "fdr": fdr,
             "log2fc_thresh": log2fc_thresh,
             "n_tested": len(df),
             "n_significant": int(sig_mask.sum()),
             "n_up": int(up.sum()),
             "n_down": int(down.sum()),
-        })
+        }
+        meta.update(ctx)
+        write_figure_meta(output_basepath, meta)
         return paths
