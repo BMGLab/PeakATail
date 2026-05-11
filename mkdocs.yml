@@ -11,8 +11,8 @@ exclude_docs: |
 theme:
   name: material
   language: en
-  logo: assets/peakatail_logo.png
-  favicon: assets/peakatail_logo.png
+  logo: assets/logos/header.png
+  favicon: assets/logos/header.png
   features:
     - navigation.tabs
     - navigation.sections

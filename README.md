@@ -1,7 +1,7 @@
 # PeakATail
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/9fcae81d-59f9-4bd4-aa22-1d09a03bf2b1" width="400" height="300">
+    <img src="https://raw.githubusercontent.com/BMGLab/PeakATail/develop/docs/assets/logos/header.png" alt="PeakATail — coiled snake with UCG/UG codon annotations on RNA-like pentagon shapes" width="600">
 </p>
 
 PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alternative polyadenylation (APA) analysis. It works with any scRNA-seq BAM that carries `CB:Z` (corrected cell barcode) and `UB:Z` (corrected UMI) tags — STARsolo, CellRanger, Alevin-fry, or any aligner that emits the standard 10x-style tag schema. PeakATail does NOT correct barcodes; your aligner must apply a barcode whitelist (e.g. STARsolo's `--soloCBwhitelist`). From the input BAM it calls polyadenylation sites at the read level, builds a per-cell PAS count matrix, clusters cells by their APA profiles, and provides downstream analyses including differential APA testing between clusters, 3'UTR length quantification, and cross-dataset cluster matching. Developed at BMGLab.

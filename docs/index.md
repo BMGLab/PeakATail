@@ -1,7 +1,7 @@
 # PeakATail
 
 <p align="center" markdown>
-  <img src="assets/peakatail_logo.png" alt="PeakATail — snake with poly(A) tail" width="320" />
+  <img src="assets/logos/main_logo.png" alt="PeakATail — coiled snake wordmark with poly(A) tail" width="480" />
 </p>
 
 PeakATail detects poly(A) sites (PAS) at single-cell resolution from any scRNA-seq BAM
