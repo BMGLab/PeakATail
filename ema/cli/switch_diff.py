@@ -100,6 +100,10 @@ def diff(ctx: click.Context, **kwargs) -> None:
         log.info("ema switch diff: %d h5ad input(s); strategy=%s",
                  len(kwargs["h5ad"]), kwargs["strategy"])
         from ema.switch_test.runner import run_diff
+        # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
+        # CLI command).  Failures are warned, never raised.
+        from ema.cli.common import parse_plot_engines
+        from ema.viz.pipeline_hooks import render_switch_diff_outputs
         with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:
             pair_results = run_diff(
                 h5ad_paths=list(kwargs["h5ad"]),
@@ -117,23 +121,19 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 min_cells_per_group=kwargs["min_cells_per_group"],
                 progress_manager=pm,
             )
-
-        # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
-        # CLI command).  Failures are warned, never raised.
-        from ema.cli.common import parse_plot_engines
-        from ema.viz.pipeline_hooks import render_switch_diff_outputs
-        render_switch_diff_outputs(
-            out_dir=out_dir,
-            pair_results=pair_results,
-            fdr=kwargs["fdr"],
-            log2fc_thresh=kwargs["log2fc_thresh"],
-            engines=parse_plot_engines(
-                kwargs.get("plot_engine", "matplotlib"),
-                kwargs.get("no_plots", False),
-            ),
-            h5ad_paths=list(kwargs["h5ad"]),
-            cluster_key=kwargs["cluster_key"],
-            pasbed_path=kwargs["pasbed"],
-        )
+            render_switch_diff_outputs(
+                out_dir=out_dir,
+                pair_results=pair_results,
+                fdr=kwargs["fdr"],
+                log2fc_thresh=kwargs["log2fc_thresh"],
+                engines=parse_plot_engines(
+                    kwargs.get("plot_engine", "matplotlib"),
+                    kwargs.get("no_plots", False),
+                ),
+                h5ad_paths=list(kwargs["h5ad"]),
+                cluster_key=kwargs["cluster_key"],
+                pasbed_path=kwargs["pasbed"],
+                progress_manager=pm,
+            )
     finally:
         teardown_logging()

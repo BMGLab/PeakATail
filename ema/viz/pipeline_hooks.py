@@ -407,6 +407,7 @@ def render_switch_diff_outputs(
     h5ad_paths: list[str] | None = None,
     cluster_key: str = "leiden",
     pasbed_path: str | None = None,
+    progress_manager: Any = None,
 ) -> None:
     """Render figures specific to ``ema switch diff``.
 
@@ -514,6 +515,7 @@ def render_switch_diff_outputs(
                 figs_dir=figs_dir,
                 engines=engines or [],
                 pasbed_path=pasbed_path,
+                progress_manager=progress_manager,
             )
         except Exception as _gt_exc:
             log.warning(
@@ -541,6 +543,7 @@ def _render_diff_gene_tracks(
     figs_dir: Path,
     engines: list[str],
     pasbed_path: str | None = None,
+    progress_manager: Any = None,
 ) -> None:
     """Rank the top-N genes by volcano score and render one gene_track per gene.
 
@@ -604,6 +607,13 @@ def _render_diff_gene_tracks(
         names=["chrom", "start", "end", "pas_id", "score", "strand"],
     )
 
+    _gt_client = None
+    if progress_manager is not None and len(top_genes) > 0:
+        _gt_stage = progress_manager.add_stage(
+            f"Gene tracks (top-{len(top_genes)})", total=len(top_genes)
+        )
+        _gt_client = progress_manager.client(_gt_stage)
+
     total_files = 0
     rendered_genes: list[str] = []
     for gene_id in top_genes:
@@ -615,6 +625,8 @@ def _render_diff_gene_tracks(
                 cluster_key=cluster_key,
             )
             if panel is None:
+                if _gt_client is not None:
+                    _gt_client.advance(1)
                 continue
             paths = render_all(
                 "gene_track",
@@ -628,6 +640,9 @@ def _render_diff_gene_tracks(
             log.warning(
                 "ema switch diff: gene_track for %r failed: %s", gene_id, _e
             )
+        finally:
+            if _gt_client is not None:
+                _gt_client.advance(1)
 
     log.info(
         "ema switch diff: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",

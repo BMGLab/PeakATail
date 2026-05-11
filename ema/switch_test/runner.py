@@ -233,10 +233,11 @@ def run_diff(
                 len(pairs), n_outer, n_inner,
             )
 
-            # Register the cluster-pair testing progress stage (only for >=5 pairs
-            # so trivial single-pair calls don't show a pointless bar).
+            # Register the cluster-pair testing progress stage.  Always show
+            # the bar so the user gets uniform feedback — even a 1/1 bar is
+            # better than no visible activity.
             _pair_client = None
-            if progress_manager is not None and len(pairs) >= 5:
+            if progress_manager is not None:
                 _pair_stage = progress_manager.add_stage(
                     "Cluster-pair testing", total=len(pairs)
                 )
