@@ -149,7 +149,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         # ------------------------------------------------------------------ #
         # Build gene list                                                       #
         # ------------------------------------------------------------------ #
-        # Start with explicit gene IDs (normalised to uppercase stripped str).
+        # Start with explicit gene IDs (stripped, case preserved to match var column).
         explicit_genes: list[str] = [g.strip() for g in kwargs["gene_id"] if g.strip()]
 
         auto_genes: list[str] = []
