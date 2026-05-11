@@ -41,6 +41,9 @@ dependencies = [
     # viz
     "matplotlib>=3.8",
     "seaborn>=0.13",
+    "plotly>=5.18",
+    "kaleido>=0.2.1",
+    "upsetplot>=0.9",
 ]
 
 [project.optional-dependencies]

@@ -75,6 +75,21 @@ def common_options(include_output: bool = True, output_default: str | None = Non
                     help="Output directory (timestamp suffix added automatically).",
                 )
             )
+        opts.extend([
+            click.option(
+                "--plot-engine", "plot_engine", type=str, default="both",
+                help="Engines: 'matplotlib', 'plotly', 'both' (default), 'none', or comma list.",
+            ),
+            click.option(
+                "--plot-format", "plot_format", type=str, default="all",
+                help="Restrict output formats. Default 'all' = png+svg+html as appropriate. "
+                     "Examples: 'svg' / 'png,svg' / 'html'.",
+            ),
+            click.option(
+                "--no-plots", "no_plots", is_flag=True, default=False,
+                help="Disable all plotting (alias for --plot-engine none).",
+            ),
+        ])
         for opt in reversed(opts):
             fn = opt(fn)
         return fn
@@ -104,6 +119,15 @@ def parse_log_overrides(spec: str | None) -> dict[str, str]:
         else:
             overrides["ema"] = part.upper()
     return overrides
+
+
+def parse_plot_engines(spec: str, no_plots: bool = False) -> list[str]:
+    """Resolve --plot-engine string into a list of engine names. Empty list = disabled."""
+    if no_plots or spec == "none":
+        return []
+    if spec == "both":
+        return ["matplotlib", "plotly"]
+    return [e.strip() for e in spec.split(",") if e.strip()]
 
 
 _DEFAULT_PARENT_DIR = "peakatail_runs"
