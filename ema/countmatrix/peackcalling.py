@@ -43,6 +43,8 @@ def peak_calling(
                     sample_id: str | None = None,
                     # --- Phase 2: region fetch (avoid temp-BAM materialisation) ---
                     region: "tuple[str, int, int] | None" = None,
+                    # --- per-chromosome progress reporting ---
+                    progress_client=None,
                 ):
 
     """Stream a BAM file and call peaks using a sliding coverage window.
@@ -102,6 +104,12 @@ def peak_calling(
             instead of materialising a temporary region BAM to save 2/3 of
             BAM I/O.  Only applies to the monolithic path (ignored when
             ``use_tiles=True`` or ``use_pipeline=True``).
+        progress_client: Optional :class:`~ema.progress.ProgressClient`.  When
+            supplied, the total is set to the number of chromosomes in the BAM
+            and the client is advanced by 1 each time a chromosome boundary is
+            crossed.  ``None`` (default) disables per-chromosome reporting and
+            preserves backward compatibility for all existing callers.  Only
+            applies to the monolithic path.
     """
     # --- Tile dispatch (takes precedence over pipeline) -------------------
     if use_tiles:
@@ -220,6 +228,12 @@ def peak_calling(
     # use caller-specified bam_threads in full-scan mode.
     _open_threads = 1 if region is not None else bam_threads
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=_open_threads)
+    # Report total chromosomes to the progress bar (monolithic full-scan only).
+    if progress_client is not None and region is None:
+        try:
+            progress_client.set_total(len(bamfile.references))
+        except Exception:
+            pass
     matrix = open(matrixpath, "w")
     bedfile = open(bedfilepath, "w")
     data_array = SortedList()
@@ -275,6 +289,13 @@ def peak_calling(
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={})  # make new instance of Peak class
             i_end, l_end, i = 0, 0, 0
             data_array = SortedList()
+
+            # Advance per-chromosome progress bar (monolithic path).
+            if progress_client is not None:
+                try:
+                    progress_client.advance(1)
+                except Exception:
+                    pass
 
             # Clear background deque on chromosome change
             if dynamic_threshold:
@@ -357,6 +378,14 @@ def peak_calling(
 
     matrix.close()
     bedfile.close()
+
+    # Advance progress bar for the final chromosome (chromosome-change event
+    # does not fire for the last chrom since there is no subsequent read).
+    if progress_client is not None and region is None:
+        try:
+            progress_client.advance(1)
+        except Exception:
+            pass
 
     # --- Phase 1: write state back to Peak class attr for backward compat --
     # Callers that read Peak.pasnumber after peak_calling() returns (e.g.

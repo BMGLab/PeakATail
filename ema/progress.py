@@ -17,11 +17,39 @@ from rich.console import Console
 from rich.progress import (
     Progress,
     BarColumn,
+    ProgressColumn,
     TextColumn,
     TimeElapsedColumn,
     MofNCompleteColumn,
     SpinnerColumn,
 )
+from rich.text import Text
+
+
+class ThickBarColumn(ProgressColumn):
+    """Bar column that uses full-block U+2588 / light-shade U+2591
+    for a chunkier visual than Rich's default U+2501 (heavy horizontal)."""
+
+    def __init__(self, bar_width: int | None = None) -> None:
+        super().__init__()
+        self.bar_width = bar_width
+
+    def render(self, task) -> Text:
+        # Auto-width to terminal if bar_width is None.
+        if self.bar_width is None:
+            try:
+                width = self._table.console.width - 50  # type: ignore[attr-defined]
+            except Exception:
+                width = 40
+            width = max(20, width)
+        else:
+            width = self.bar_width
+        total = task.total or 0
+        if total <= 0:
+            return Text("░" * width, style="bar.back")
+        completed = min(task.completed, total)
+        filled = int(width * completed / total)
+        return Text("█" * filled + "░" * (width - filled), style="bar.complete")
 
 
 _TICK_ADVANCE = "advance"
@@ -74,7 +102,7 @@ class ProgressManager:
         self._progress = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
-            BarColumn(bar_width=None),
+            ThickBarColumn(bar_width=None),
             MofNCompleteColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),

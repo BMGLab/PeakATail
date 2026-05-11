@@ -367,7 +367,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         bam_list = [("default", directory_config.bam_dir)]
 
     # Register top-level progress stages now that we know bam_list length.
-    _peak_stage = _add_stage("Peak calling", total=len(bam_list))
+    # Total is set to 0 here; the per-chromosome progress_client will call
+    # set_total() once the BAM is opened (sequential mode) or the tile pool
+    # drives the bar directly via run_all_jobs (tile mode).
+    _peak_stage = _add_stage("Peak calling", total=0)
 
     # -------------------------------------------------------------------------
     # Peak-calling — either global tile pool (--tiles) or sequential per-BAM.
@@ -553,11 +556,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             neg_mtx = peakcalling_dir / f"{dataset_id}_{idx}.neg.mtx"
             cb_tsv = peakcalling_dir / f"{dataset_id}_{idx}.cb.tsv"
 
+            # Pass the progress client to the pos-strand call so the bar
+            # shows per-chromosome progress.  set_total() fires once the BAM
+            # is opened; advance() fires on each chromosome boundary.  The
+            # neg-strand call gets None to avoid double-counting.
+            _peak_client = _client(_peak_stage)
             peak_calling(
                 False,
                 bedfilepath=str(pos_bed),
                 matrixpath=str(pos_mtx),
                 bamfile_dir=str(bam_path),
+                progress_client=_peak_client,
                 **peak_kwargs,
             )
             peak_calling(
@@ -584,9 +593,6 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             all_neg_cbs.append(str(cb_tsv))
             all_dataset_ids_for_pos.append(dataset_id)
             all_dataset_ids_for_neg.append(dataset_id)
-
-            # Advance peak-calling bar once per dataset (sequential mode).
-            _advance(_peak_stage)
 
     # Save peak calling stats
     output_mgr.save_stats("peak_calling", {
@@ -631,7 +637,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         shutil.copy(all_pos_mtxs[0], directory_config.posmatrixpath)
         shutil.copy(all_neg_mtxs[0], directory_config.negmatrixpath)
 
+        _cb_filter_stage = _add_stage("CB filter", total=1)
         filter_cb()
+        _advance(_cb_filter_stage)
 
         # Save CB filter stats + persist the kept barcode list for this dataset.
         output_mgr.save_stats("cb_filter", {
@@ -647,12 +655,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             )
 
         # Wait for GTF processing to complete before find_close
+        _gtf_stage = _add_stage("GTF annotation", total=1)
         gtf_thread.join()
         if "exception" in gtf_error:
             raise RuntimeError(
                 f"GTF processing failed: {gtf_error['exception']}"
             ) from gtf_error["exception"]
         utr_lengths = gtf_result.get("utr_lengths", {})
+        _advance(_gtf_stage)
 
         # Save GTF annotation stats
         output_mgr.save_stats("gtf_annotation", {
@@ -661,12 +671,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         })
 
         # Find closest gene for each PAS
+        _pas_gene_stage = _add_stage("PAS→gene assignment", total=1)
         genes = find_close(
             utr_lengths=utr_lengths,
             max_distance=getattr(args, "max_gene_distance", 5000),
             utr_multiplier=getattr(args, "utr_multiplier", 2.0),
             include_extended=getattr(args, "include_extended", False),
         )
+        _advance(_pas_gene_stage)
 
         # Save PAS-gene assignment stats
         output_mgr.save_stats("pas_gene", {
@@ -676,6 +688,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         })
 
         # Build sparse matrix (PAS IDs preserved)
+        _annot_stage = _add_stage("Annotated matrix", total=1)
         sparse_matrix, pas_ids, collist = make_dataframe()
 
         # Annotate: join gene assignments with count matrix
@@ -705,6 +718,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             output_dir, bam_list[0][0],
             result.sparse_matrix, result.pas_ids, result.collist,
         )
+        _advance(_annot_stage)
 
         # Preprocess and cluster.
         # Pass min_cells/min_genes EXPLICITLY: matrixfilter.preprocessing's
@@ -712,6 +726,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         # filter_config.min_cells/min_genes from import.  Without this explicit
         # forward, YAML overrides applied to filter_config above would be
         # silently ignored on the single-sample path.
+        _preproc_stage = _add_stage("Preprocessing", total=1)
         adata = preprocessing(
             sparse_matrix=result.sparse_matrix,
             pas_ids=result.pas_ids,
@@ -731,10 +746,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         })
         from ema.outputs import write_preprocessed_h5ad
         write_preprocessed_h5ad(output_dir, bam_list[0][0], adata)
+        _advance(_preproc_stage)
 
         # Forward all CLI/YAML clustering hyperparameters into clustering().
         # Persist the clustered AnnData to the canonical on-disk path via
         # directory_config (07_clustering/<ds>/clusters.h5ad).
+        _cluster_stage = _add_stage("Clustering", total=1)
         _ss_h5ad = directory_config.clusters_h5ad_for(bam_list[0][0])
         _ss_h5ad.parent.mkdir(parents=True, exist_ok=True)
         clustering(
@@ -754,6 +771,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             n_svd_components=getattr(args, "n_svd_components", 50),
             n_top_hvg=getattr(args, "n_top_hvg", 2000),
         )
+        _advance(_cluster_stage)
 
         # Save clustering stats
         output_mgr.save_stats("clustering", {
