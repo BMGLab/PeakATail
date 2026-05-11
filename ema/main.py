@@ -729,6 +729,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             random_seed=getattr(args, "random_seed", 42),
             external_clusters=getattr(args, "external_clusters", None),
             output_h5ad=str(_ss_h5ad),
+            # New tunable hyperparameters from Wave 2A.  Multi-sample path
+            # forwards these via _cluster_kwargs; single-sample path must
+            # too or the flags are silently ignored for 1-dataset runs.
+            n_neighbors=getattr(args, "n_neighbors", None),
+            tfidf_scale_factor=getattr(args, "tfidf_scale_factor", 1e4),
+            depth_corr_threshold=getattr(args, "depth_corr_threshold", 0.75),
+            n_svd_components=getattr(args, "n_svd_components", 50),
+            n_top_hvg=getattr(args, "n_top_hvg", 2000),
         )
 
         # Save clustering stats
