@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 from ema.countmatrix.peackcalling import peak_calling
 from ema.countmatrix.indexing import get_mapping, reset_index
 from ema.countmatrix.read import set_default_sample_id
-from ema.config import directory_config, variable_config, args, filter_config
+from ema.config import directory_config, variable_config, args, filter_config, set_directory_config
 from ema.utils import get_resource_manager
 from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
 from ema.clustering.clustering import clustering
@@ -182,10 +182,24 @@ def run(
         # bridge model (datasets is a list of dicts; output_dir we already
         # know from the resolved Path passed in).
         # ------------------------------------------------------------------
+        # Build the kwargs for set_directory_config; only pass keys that were
+        # actually supplied so we don't overwrite defaults with None.
+        _dc_kwargs: dict = {}
         if out_dir is not None:
-            directory_config.output_dir = str(out_dir)
+            from pathlib import Path as _Path
+            _dc_kwargs["output_dir"] = _Path(out_dir)
         if "datasets" in cfg:
-            directory_config.datasets = cfg["datasets"]
+            _dc_kwargs["datasets"] = cfg["datasets"]
+        if cfg.get("gtf"):
+            _dc_kwargs["gtf_dir"] = cfg["gtf"]
+        if cfg.get("bam_dir"):
+            _dc_kwargs["bam_dir"] = cfg["bam_dir"]
+        if cfg.get("atlas"):
+            _dc_kwargs["atlas"] = cfg["atlas"]
+        if cfg.get("atlas_distance") is not None:
+            _dc_kwargs["atlas_distance"] = cfg["atlas_distance"]
+        if _dc_kwargs:
+            set_directory_config(**_dc_kwargs)
 
         # ------------------------------------------------------------------
         # Step 3: single bridge -- schema-driven mutation of legacy globals.
