@@ -48,6 +48,7 @@ worker error.
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import multiprocessing
 import os
@@ -62,6 +63,44 @@ import pysam
 from ema.utils import ResourceManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Timing helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_timings(timings: list[dict[str, Any]], out_path: Path) -> None:
+    """Write per-tile timing records to a JSON file.
+
+    Each record in *timings* must be JSON-serialisable.  The canonical schema
+    produced by :func:`run_all_jobs` includes at minimum::
+
+        {
+            "dataset_id": str,
+            "chrom": str,
+            "tile_idx": int,
+            "tile_start": int,
+            "tile_end": int,
+            "wall_seconds": float,
+        }
+
+    The file is written atomically: data is serialised to a string first; if
+    serialisation fails the file is not touched.  Missing parent directories
+    are created automatically.
+
+    Args:
+        timings: List of timing record dicts (one per tile job).
+        out_path: Destination path for the JSON file.
+    """
+    try:
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(timings, indent=2)
+        out_path.write_text(payload)
+        logger.debug("Tile timings written to %s (%d records)", out_path, len(timings))
+    except Exception as exc:
+        logger.warning("Could not write tile timings to %s: %s", out_path, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +671,7 @@ def run_all_jobs(
     jobs: list[JobSpec],
     n_workers: int,
     progress_client=None,
+    timings_path: Path | None = None,
 ) -> dict[tuple[str, bool], list[dict[str, Any]]]:
     """Dispatch all jobs through a single global ``multiprocessing.Pool``.
 
@@ -647,12 +687,19 @@ def run_all_jobs(
             When supplied, ``advance(1)`` is called after each tile result is
             collected.  Pass ``None`` (default) to disable progress ticking —
             all callers without a ``ProgressManager`` remain unaffected.
+        timings_path: Optional path where per-tile timing JSON is written after
+            all jobs complete.  When ``None`` (default) no file is written.
+            When provided, :func:`_write_timings` is called with a list of
+            records keyed by ``dataset_id``, ``chrom``, ``tile_idx``,
+            ``tile_start``, ``tile_end``, and ``wall_seconds``.
 
     Returns:
         Dict mapping ``(dataset_id, direction)`` → list of tile-result dicts
         (same format returned by :func:`tile_worker`), in arrival order.
         Each value list can be passed directly to :func:`merge_tiles`.
     """
+    import time
+
     if not jobs:
         return {}
 
@@ -663,19 +710,53 @@ def run_all_jobs(
         actual_workers,
     )
 
+    # Build a lookup from job_id → (chrom, tile_start, tile_end, tile_idx) for
+    # the timing records.  tile_idx is the 0-based position within chrom for
+    # each dataset×direction group.
+    _job_meta: dict[int, tuple[str, int, int, int, str, bool]] = {}
+    # Count per (dataset_id, chrom, direction) to derive tile_idx
+    _tile_counters: dict[tuple[str, str, bool], int] = {}
+    for j in jobs:
+        _key = (j.dataset_id, j.chrom, j.direction)
+        _idx = _tile_counters.get(_key, 0)
+        _tile_counters[_key] = _idx + 1
+        _job_meta[j.job_id] = (j.chrom, j.tile_start, j.tile_end, _idx, j.dataset_id, j.direction)
+
     ctx = multiprocessing.get_context("spawn")
     grouped: dict[tuple[str, bool], list[dict[str, Any]]] = {}
+    timing_records: list[dict[str, Any]] = []
 
+    _t_dispatch = time.monotonic()
     with ctx.Pool(processes=actual_workers) as pool:
         try:
             for result in pool.imap_unordered(tile_worker, jobs, chunksize=1):
+                t_now = time.monotonic()
                 key = (result["dataset_id"], result["direction"])
                 grouped.setdefault(key, []).append(result)
                 if progress_client is not None:
                     progress_client.advance(1)
+                # Record timing if requested
+                if timings_path is not None:
+                    _jid = result.get("tile_id")
+                    if _jid is not None and _jid in _job_meta:
+                        _ch, _ts, _te, _tidx, _ds, _dir = _job_meta[_jid]
+                        timing_records.append(
+                            {
+                                "dataset_id": _ds,
+                                "chrom": _ch,
+                                "tile_idx": _tidx,
+                                "tile_start": _ts,
+                                "tile_end": _te,
+                                "direction": _dir,
+                                "wall_seconds": round(t_now - _t_dispatch, 4),
+                            }
+                        )
         except Exception:
             pool.terminate()
             raise
+
+    if timings_path is not None:
+        _write_timings(timing_records, timings_path)
 
     total_results = sum(len(v) for v in grouped.values())
     logger.info(
