@@ -30,3 +30,8 @@ reports/PeakATail_Technical_Report.pdf
 docs/superpowers/
 .peakatail/
 **/.claude/site/
+
+# MkDocs build output (regenerated on every `mkdocs build`)
+/site/
+.claude/
+reports/.claude/
