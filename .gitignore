@@ -35,3 +35,52 @@ docs/superpowers/
 /site/
 .claude/
 reports/.claude/
+
+# AI agent artefacts (plans, prompts, scratch analyses — kept on disk locally)
+plans/
+*plan*.md
+*PLAN*.md
+*prompt*.md
+*PROMPT*.md
+*analysis*.md
+*ANALYSIS*.md
+*.local.md
+notes/
+scratch/
+analysis/
+
+# Agent-generated delivery notes / dev-phase scratch at repo root
+TECHNICAL_REPORT_COMPLETE.md
+README_TECHNICAL_REPORT.md
+REPORT_DELIVERY.txt
+
+# Reports directory (local technical write-up scratch, not upstream content)
+reports/technical_report.md
+reports/README.md
+reports/PDF_CONVERSION_INSTRUCTIONS.txt
+reports/build_report.sh
+reports/build_simple.py
+reports/convert_to_pdf.py
+reports/generate_figures_simple.py
+reports/generate_report.py
+reports/run_build_simple.sh
+reports/baseline_apa_completeness/
+
+# Root-level report build helpers (invoke scripts inside reports/)
+run_build.sh
+run_generate_figures.sh
+
+# PR scratch (paste into GitHub — not for upstream)
+PR_DESCRIPTION.md
+
+# Dev caches and editor artefacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage.xml
+.coverage
+.DS_Store
+Thumbs.db
+*~
+*.swp
