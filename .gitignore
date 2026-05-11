@@ -29,4 +29,4 @@ reports/PeakATail_Technical_Report.pdf
 # Local-only project notes / specs / plans (not for upstream)
 docs/superpowers/
 .peakatail/
-**/.claude/
+**/.claude/site/

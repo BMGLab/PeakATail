@@ -1,0 +1,7 @@
+nav:
+  - index.md
+  - clustering.md
+  - quantification.md
+  - diff.md
+  - match.md
+  - viz.md

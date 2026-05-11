@@ -1,0 +1,7 @@
+nav:
+  - index.md
+  - run.md
+  - switch-diff.md
+  - switch-length.md
+  - switch-match.md
+  - switch-geneview.md
