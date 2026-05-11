@@ -597,6 +597,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             all_dataset_ids_for_pos.append(dataset_id)
             all_dataset_ids_for_neg.append(dataset_id)
 
+    # Force the peak-calling bar to 100 % — inner read filtering can drop
+    # chroms below the chrom-change trigger threshold, so the advance count
+    # is sometimes a few short of the apriori `nonempty * 2` estimate.
+    if progress is not None and _peak_stage is not None:
+        progress.finish(_peak_stage)
+
     # Save peak calling stats
     output_mgr.save_stats("peak_calling", {
         "strategy": args.strategy,

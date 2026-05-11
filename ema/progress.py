@@ -157,6 +157,22 @@ class ProgressManager:
             self._queue = multiprocessing.Manager().Queue()
         return ProgressClient(queue=self._queue, task_id=task_id)
 
+    def finish(self, task_id: int) -> None:
+        """Force a stage bar to 100 % regardless of advances received.
+
+        Use when the apriori ``total`` is an over-estimate — e.g. peak
+        calling counts BAM references with mapped reads but inner filters
+        drop a chunk, so the advance count never reaches the estimate.
+        """
+        if self.disable or self._progress is None:
+            return
+        try:
+            task = self._progress.tasks[task_id]
+            if task.total is not None:
+                self._progress.update(task_id, completed=task.total)
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------ #
     # internals                                                           #
     # ------------------------------------------------------------------ #
