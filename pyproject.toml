@@ -9,9 +9,11 @@ description = "PeakATail — single-cell poly(A) site detection and APA analysis
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{name = "Amir Amiri Tabat", email = "amiramiritabat01@gmail.com"}]
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["bioinformatics", "scRNA-seq", "polyadenylation", "APA"]
 classifiers = [
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Bio-Informatics",

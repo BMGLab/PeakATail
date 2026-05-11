@@ -7,7 +7,7 @@
 PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alternative polyadenylation (APA) analysis. Starting from BAM files produced by 10x Genomics (or compatible) single-cell RNA-seq workflows, it calls polyadenylation sites at the read level, constructs a per-cell PAS count matrix, clusters cells by their APA profiles, and provides downstream analyses including differential APA testing between clusters, 3'UTR length quantification, and cross-dataset cluster matching. PeakATail is developed at BMGLab.
 
 [![Docs](https://img.shields.io/badge/docs-bmglab.github.io%2FPeakATail-blue)](https://bmglab.github.io/PeakATail/)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
 
 <!-- TODO[verify]: A CI workflow badge is not included because the repository currently contains only a docs-deploy workflow (.github/workflows/docs.yml). Add a badge once a CI workflow (e.g. .github/workflows/ci.yml) is committed. -->
@@ -246,7 +246,7 @@ PeakATail/
     combined_polya_scrna_methods.csv  # comparison of poly(A) scRNA methods
     pyproject.toml          # package metadata, dependencies, entry points
     ROADMAP.md              # development and publication roadmap
-    LICENSE                 # GNU General Public License v3.0
+    LICENSE                 # MIT License
     Dockerfile              # container build
 ```
 
@@ -270,6 +270,4 @@ PeakATail/
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0** — see the [LICENSE](LICENSE) file for the full text.
-
-<!-- TODO[verify]: pyproject.toml declares `license = {text = "MIT"}` but the on-disk LICENSE file is GPL-3.0. Resolve this discrepancy: either update pyproject.toml to `license = {text = "GPL-3.0-only"}` or replace the LICENSE file with an MIT license. The badge and this section use GPL-3.0 to match the on-disk file. -->
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for the full text. `pyproject.toml` declares the matching SPDX identifier (`license = "MIT"`).
