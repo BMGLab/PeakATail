@@ -126,7 +126,12 @@ class RunConfig:
         default="emaout",
         metadata=_spec(
             cli_flag="--output", yaml_key="output_dir",
-            legacy_dataclass_attr="directory_config.output_dir",
+            # IMPORTANT: do NOT bridge to directory_config.output_dir from
+            # the schema -- run.py resolves the timestamp suffix and sets
+            # directory_config.output_dir explicitly *before*
+            # apply_to_legacy_globals runs.  Bridging here would clobber
+            # the timestamped path back to the bare default.
+            skip_legacy_bridge=True,
             click_type=click.Path(file_okay=False, resolve_path=True),
             description="Output directory (timestamp suffix added automatically).",
         ),
