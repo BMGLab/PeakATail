@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peakatail"
+version = "0.2.0"
+description = "PeakATail — single-cell poly(A) site detection and APA analysis"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Amir Amiri Tabat", email = "amiramiritabat01@gmail.com"}]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["bioinformatics", "scRNA-seq", "polyadenylation", "APA"]
+classifiers = [
+    # NOTE: do NOT add a "License :: OSI Approved :: ..." classifier here —
+    # PEP 639 forbids combining a license-expression field (above) with a
+    # legacy license classifier.  PyPI reads the SPDX expression instead.
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+dependencies = [
+    "pysam>=0.22",
+    "anndata>=0.10",
+    "scanpy>=1.10",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "numpy>=1.26",
+    "igraph>=0.11",
+    "leidenalg>=0.10",
+    "louvain>=0.8.0",
+    "pybedtools>=0.10",
+    "psutil>=5.9",
+    "PyYAML>=6.0",
+    "joblib>=1.3",
+    "statsmodels>=0.14",
+    "sortedcontainers>=2.4",
+    "tqdm>=4.66",
+    # CLI / UX
+    "click>=8.1",
+    "rich>=13.7",
+    "questionary>=2.0",
+    # viz
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "plotly>=5.18",
+    "kaleido>=0.2.1",
+    "upsetplot>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-timeout>=2.4",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+all = ["peakatail[dev]"]
+
+[project.scripts]
+ema = "ema.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/BMGLab/PeakATail"
+Repository = "https://github.com/BMGLab/PeakATail"
+
+[tool.setuptools]
+packages = {find = {where = ["."], include = ["ema*"]}}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 300
+filterwarnings = [
+    "ignore::DeprecationWarning:google.protobuf.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "B"]
+ignore = ["E501"]

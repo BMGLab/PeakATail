@@ -1,0 +1,78 @@
+# Frozen snapshot of every --flag the pre-cutover argparse CLIs accepted.
+#
+# Source commit: fff57d0~1 — last commit BEFORE the legacy argparse files
+# were deleted (`chore: delete legacy argparse CLIs`).
+#
+# Source files (no longer present):
+#   ema/cli_legacy.py.bak       (legacy `ema` argparse)
+#   ema/switch_test/cli.py      (legacy `ema_switch`)
+#   ema/merge_bam/cli.py        (legacy `ema_merge`)
+#   ema/annotate/cli.py         (legacy `ema_parse_gtf`)
+#
+# scripts/audit_cli_coverage.py reads this list and asserts each flag maps
+# to either:
+#   1. a NEW Click flag found in ema/cli/*.py, OR
+#   2. an explicit "DROPPED" entry in the audit's MAPPING dict.
+#
+# Lines starting with `#` are comments. Add NEW flags under
+# ema/cli/*.py (Click) -- never edit this snapshot to make the audit
+# pass. The whole point of freezing it is to keep the gate honest.
+--annotation-filter
+--atlas
+--atlas-distance
+--bamDir
+--bamFiles
+--bam-threads
+--BarcodeTag
+--batch-size
+--benchmark
+--cache-dir
+--CellBarcodeLen
+--cell_combinations
+--clustering-method
+--cluster-key
+--cluster-match-method
+--cluster-pairs
+--config
+--diff-method
+--dynamic-threshold
+--external-clusters
+--fdr-threshold
+--floor-threshold
+--genome-fasta
+--gtf
+--gtfDir
+--h5ad
+--include-extended
+--internal-priming-filter
+--ip-a-stretch
+--lambda-fold-change
+--lambda-method
+--lambda-window
+--marker-method
+--marker-top-n
+--max-gene-distance
+--max-jobs
+--max-pas
+--min-pas-per-cell
+--min-prominence
+--n-pcs
+--n-top-markers
+--output-dir
+--pasbed
+--pdui-isoform-agg
+--pdui-isoform-collapse
+--pdui-method
+--per-worker-mb
+--pipeline
+--random-seed
+--resolution
+--sequenceLen
+--smoothing-window
+--strategy
+--threads
+--tile-overlap
+--tiles
+--tile-size
+--utr-multiplier
+--validate-db

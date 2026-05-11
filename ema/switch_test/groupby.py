@@ -29,5 +29,5 @@ def groupby_cb(count_matrix: pd.DataFrame,
     count_matrix = count_matrix.transpose()
 
     count_matrix.columns = pd.MultiIndex.from_frame(count_matrix.columns.to_frame().fillna(''))
-    count_matrix = count_matrix.groupby(level=1, axis=1).sum()
+    count_matrix = count_matrix.T.groupby(level=1).sum().T
     return count_matrix

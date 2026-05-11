@@ -5,19 +5,31 @@ class Peak():
     TODO
     '''
 
-    def __init__(self, peak_list=[], peak_start=0, last_peak_end=0, peak_strand=True, cb_dict={}):
+    @classmethod
+    def reset_pasnumber(cls):
+        """Reset the global PAS number counter to 0.
+
+        Call between independent peak-calling runs (e.g. between datasets in
+        multi-sample mode) so per-run pasnumbers start at 1. Safe to call;
+        downstream code that keys on (dataset_id, pasnumber) tuples remains
+        correct because dataset_id provides global uniqueness.
+        """
+        cls.pasnumber = 0
+
+    def __init__(self, peak_list=None, peak_start=0, last_peak_end=0, peak_strand=True, cb_dict=None, cb_positions=None):
         '''
         :param peak_list: [[read_end1, height1], [read_end2, height]...., [read_endn, heightendn]]
         :param peak_start: this point is one read endpoint that detect as peak start but it not mean firat start of peak cause coulde merge multiple peaks
             peak_start assigne when signal turn True in peakcalling function
-        :param peak_strand: presents gene strand 
+        :param peak_strand: presents gene strand
         :param cb_dict: collect all CellBarcodes are in peak
         '''
-        self.peak_list = peak_list
+        self.peak_list = peak_list if peak_list is not None else []
         self.peak_start = peak_start
         self.last_peak_end = last_peak_end
         self.peak_strand = peak_strand
-        self.cb_dict = cb_dict
+        self.cb_dict = cb_dict if cb_dict is not None else {}
+        self.cb_positions = cb_positions if cb_positions is not None else {}
 
     # each time data_array slicing ubdate peak_add 
     def peak_add(self, data_array:list, slice_loc:int):
@@ -34,7 +46,16 @@ class Peak():
             self.cb_dict[cb] = 1
 
 
-    
+    def cb_position_counting(self, end_pos:int, cb:str):
+        '''Track which CB contributed a read at which position.'''
+        if end_pos not in self.cb_positions:
+            self.cb_positions[end_pos] = {}
+        try:
+            self.cb_positions[end_pos][cb] += 1
+        except KeyError:
+            self.cb_positions[end_pos][cb] = 1
+
+
     def pasfind(self) -> int:
         '''
         pasfind method loop on peak_list and fidn max_height
@@ -79,6 +100,6 @@ class Peak():
                     else:
                         return 0, 0
 
-        except:
+        except Exception:
             return 0, 0
         
