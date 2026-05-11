@@ -36,6 +36,17 @@ class PDUIStrategy(ABC):
 
     name: str  # registry key — defined in each subclass
 
+    # Output filename (relative to the run's out_dir).  Defined per strategy
+    # because the prefix "pdui_" only makes semantic sense for the classic
+    # PDUI computation — other strategies produce different quantities
+    # (proportions, entropy) and were previously misfiled as ``pdui_*.tsv``.
+    output_filename: str = "scores.tsv"
+
+    # Column in compute()'s long-format output that carries the strategy's
+    # principal numeric quantity.  Used by the viz orchestrator in
+    # ``ema/viz/pipeline_hooks.py`` to pick the right figure type.
+    score_column: str = "score"
+
     @abstractmethod
     def compute(
         self,

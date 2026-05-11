@@ -565,6 +565,72 @@ def run_length(
             @contextmanager
             def _threadpool_limits(limits=1):  # type: ignore[misc]
                 yield
+        # Look up pasbed near the h5ad input so we can decorate each row
+        # with genomic coordinates.  Same walk-up logic as the per_isoform
+        # branch above, but applied unconditionally — even per_gene runs
+        # benefit from coords-per-PAS.
+        _pasbed_cols: pd.DataFrame | None = None
+        try:
+            pb_candidates: list[Path] = []
+            sr = Path(h5ad_path).resolve().parent
+            for _ in range(4):
+                pb_candidates.append(sr / "pasbed.bed")
+                sr = sr.parent
+            _pb = next((p for p in pb_candidates if p.exists()), None)
+            if _pb is not None:
+                _pasbed_cols = pd.read_csv(
+                    _pb, sep="\t", header=None,
+                    names=["chrom", "start", "end", "pas_id", "score", "strand"],
+                    usecols=["chrom", "start", "end", "pas_id", "strand"],
+                    dtype={"pas_id": str, "chrom": str, "strand": str,
+                           "start": "Int64", "end": "Int64"},
+                ).set_index("pas_id")[["chrom", "start", "end", "strand"]]
+        except Exception as _e:
+            log.warning("run_length: could not read pasbed coords: %s", _e)
+            _pasbed_cols = None
+
+        # Cell -> cluster map from the AnnData (typically "leiden", but
+        # honour whatever the user passed via --cluster-key).
+        _cluster_series: pd.Series | None = None
+        if cluster_key and cluster_key in adata.obs.columns:
+            _cluster_series = adata.obs[cluster_key].astype(str)
+
+        def _augment_pdui_df(df_raw: pd.DataFrame) -> pd.DataFrame:
+            """Left-join cluster + per-PAS coordinates onto a strategy output.
+
+            Adds a `cluster` column (cell -> cluster lookup) and, for every
+            PAS-id-like column present (`pas_id`, `proximal_pas_id`,
+            `distal_pas_id`), four coordinate columns: ``<col>_chrom``,
+            ``<col>_start``, ``<col>_end``, ``<col>_strand``.  Falls back
+            to empty strings when a lookup is unavailable so the TSV
+            structure stays consistent across runs.
+            """
+            aug = df_raw.copy()
+
+            # Cluster column
+            if _cluster_series is not None and "cell" in aug.columns:
+                aug["cluster"] = aug["cell"].map(_cluster_series).fillna("")
+            else:
+                aug["cluster"] = ""
+
+            # Coordinate joins per PAS-id column.  Use a join on a temporary
+            # str-cast column so we don't disturb the original dtype.
+            pas_cols = [c for c in ("pas_id", "proximal_pas_id", "distal_pas_id")
+                        if c in aug.columns]
+            for col in pas_cols:
+                prefix = "" if col == "pas_id" else col.rsplit("_pas_id", 1)[0] + "_"
+                if _pasbed_cols is None:
+                    for sub in ("chrom", "start", "end", "strand"):
+                        aug[f"{prefix}{sub}"] = ""
+                    continue
+                key = aug[col].astype(str)
+                joined = key.map(_pasbed_cols["chrom"]).rename(f"{prefix}chrom")
+                aug[f"{prefix}chrom"] = joined.fillna("")
+                aug[f"{prefix}start"] = key.map(_pasbed_cols["start"]).astype("Int64")
+                aug[f"{prefix}end"] = key.map(_pasbed_cols["end"]).astype("Int64")
+                aug[f"{prefix}strand"] = key.map(_pasbed_cols["strand"]).fillna("")
+            return aug
+
         for method in pdui_methods:
             strat = get_pdui_strategy(method)
             with _threadpool_limits(limits=1):
@@ -576,9 +642,16 @@ def run_length(
                         isoform_collapse=isoform_collapse,
                         pseudocount=pseudocount,
                     )
-            out_path = out_dir / f"pdui_{method}.tsv"
-            df.to_csv(out_path, sep="\t", index=False)
-            log.info("run_length: PDUI (%s): %d rows -> %s", method, len(df), out_path)
+            # Filename comes from the strategy class (not f"pdui_{method}"):
+            # proportion and shannon produce non-PDUI quantities so prefixing
+            # them with "pdui_" was misleading.  See PDUIStrategy.output_filename.
+            out_path = out_dir / getattr(strat, "output_filename", f"pdui_{method}.tsv")
+            df_out = _augment_pdui_df(df)
+            df_out.to_csv(out_path, sep="\t", index=False)
+            log.info(
+                "run_length: %s: %d rows -> %s (augmented with cluster + coords)",
+                method, len(df_out), out_path,
+            )
             _last_pdui_df = df
 
     log.info("run_length: done.")

@@ -111,11 +111,13 @@ def _process_gene_per_gene(
     sub = count_matrix.loc[valid].values.astype(float)  # (n_valid, n_cells)
     entropy, norm_entropy, n_pas = _shannon_from_counts(sub, pseudocount)
     cells = count_matrix.columns.tolist()
+    pas_ids_str = ";".join(str(p) for p in valid)
 
     return [
         {
             "gene_id": gene_id,
             "transcript_id": "_gene_",
+            "pas_ids": pas_ids_str,
             "cell": cell,
             "entropy": float(entropy[i]),
             "normalized_entropy": float(norm_entropy[i]),
@@ -153,11 +155,14 @@ def _process_gene_per_isoform(
 
         sub = count_matrix.loc[valid].values.astype(float)
         entropy, norm_entropy, n_pas = _shannon_from_counts(sub, pseudocount)
+        # Materialise once; same for every cell of this transcript.
+        pas_ids_str = ";".join(str(p) for p in valid)
 
         for i, cell in enumerate(cells):
             rows.append({
                 "gene_id": gene_id,
                 "transcript_id": transcript_id,
+                "pas_ids": pas_ids_str,
                 "cell": cell,
                 "entropy": float(entropy[i]),
                 "normalized_entropy": float(norm_entropy[i]),
@@ -191,6 +196,8 @@ class ShannonPDUIStrategy(PDUIStrategy):
     """
 
     name: str = "shannon"
+    output_filename: str = "entropy_shannon.tsv"
+    score_column: str = "entropy"
 
     def compute(
         self,

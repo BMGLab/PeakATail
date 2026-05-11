@@ -203,6 +203,8 @@ class ProportionPDUIStrategy(PDUIStrategy):
     """
 
     name: str = "proportion"
+    output_filename: str = "proportion.tsv"
+    score_column: str = "proportion"
 
     def compute(
         self,

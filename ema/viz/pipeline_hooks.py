@@ -453,26 +453,26 @@ def render_switch_length_outputs(
     try:
         import numpy as _np
         import pandas as _pd
-        import scipy.sparse as _sp
 
         figs_dir = Path(out_dir) / "figures"
         figs_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- pdui_distribution ---
+        # --- per-strategy primary figure ---
         #
-        # Previous implementation assumed ``pdui_df`` was indexed by PAS (one
-        # row per PAS aligned to adata.var) and tried to multiply X * pas_pdui
-        # to get a per-cell weighted score.  But the PDUI strategies produce
-        # LONG format — one row per (gene, transcript, cell) — so the length
-        # check ``len(pdui_df) == X.shape[1]`` was *never* true and the
-        # fallback ``np.zeros(...)`` made every per-cell score 0.  That's the
-        # "all PDUI distributions are zero" bug the user reported.
+        # Each PDUI strategy produces a different quantity:
+        #   * classic    → 'pdui' column          → per-cluster PDUI violin
+        #   * shannon    → 'entropy' column       → per-cluster entropy violin
+        #   * proportion → 'proportion' column    → PAS x cluster heatmap
         #
-        # The correct aggregation: mean PDUI per cell across all (gene,
-        # transcript) entries, joined onto adata.obs by barcode.  NaN values
-        # in the long frame are skipped by groupby().mean(), so cells with
-        # no detectable multi-PAS genes correctly land at NaN (not 0).
-        if pdui_df is not None and "pdui" in pdui_df.columns and "cell" in pdui_df.columns:
+        # Picking the figure by which column is present (rather than by
+        # strategy name) keeps the orchestrator decoupled from the strategy
+        # registry — a new strategy that emits one of these columns gets the
+        # right viz for free.  The previous unconditional ``pdui_distribution``
+        # branch silently produced a pas_detection_rate fallback figure
+        # mislabelled as PDUI when the strategy wasn't classic.
+        cols = set(pdui_df.columns) if pdui_df is not None else set()
+
+        if "pdui" in cols and "cell" in cols:
             score_key = "mean_pdui"
             per_cell = (
                 pdui_df.dropna(subset=["pdui"])
@@ -494,15 +494,47 @@ def render_switch_length_outputs(
                 figs_dir / "pdui_distribution", engines=engines,
             )
             log.info("ema switch length: pdui_distribution=%d file(s)", len(w))
-        elif cluster_key in last_adata.obs.columns:
-            X2 = last_adata.X.toarray() if _sp.issparse(last_adata.X) else last_adata.X
-            last_adata.obs["pas_detection_rate"] = (X2 > 0).mean(axis=1)
-            w = render_all(
-                "pdui_distribution", (last_adata, "pas_detection_rate"),
-                figs_dir / "pdui_distribution", engines=engines,
+
+        elif "entropy" in cols and "cell" in cols:
+            score_key = "mean_entropy"
+            per_cell = (
+                pdui_df.dropna(subset=["entropy"])
+                       .groupby("cell")["entropy"].mean()
+            )
+            last_adata.obs[score_key] = (
+                last_adata.obs_names.to_series().map(per_cell)
             )
             log.info(
-                "ema switch length: pdui_distribution (fallback) = %d file(s)", len(w),
+                "ema switch length: per-cell entropy computed (%d/%d cells have "
+                "a non-NaN mean entropy)",
+                int(last_adata.obs[score_key].notna().sum()), last_adata.n_obs,
+            )
+            w = render_all(
+                "entropy_distribution", (last_adata, score_key),
+                figs_dir / "entropy_distribution", engines=engines,
+            )
+            log.info("ema switch length: entropy_distribution=%d file(s)", len(w))
+
+        elif "proportion" in cols and "pas_id" in cols and "cell" in cols:
+            w = render_all(
+                "proportion_heatmap",
+                {
+                    "pdui_df": pdui_df,
+                    "adata": last_adata,
+                    "cluster_key": cluster_key,
+                    "top_n": 50,
+                },
+                figs_dir / "proportion_heatmap", engines=engines,
+            )
+            log.info("ema switch length: proportion_heatmap=%d file(s)", len(w))
+
+        else:
+            # No strategy column present — log loudly, do NOT silently emit a
+            # pas_detection_rate figure that looks like a real result.
+            log.warning(
+                "ema switch length: pdui_df missing a known score column "
+                "(pdui/entropy/proportion); skipping primary figure. cols=%s",
+                sorted(cols),
             )
 
         # --- length_shifts: ΔPDUI per (gene × cluster pair) ---

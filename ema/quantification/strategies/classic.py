@@ -96,6 +96,8 @@ def _pdui_per_gene_gene_level(
         {
             "gene_id": gene_id,
             "transcript_id": "_gene_",
+            "proximal_pas_id": proximal_id,
+            "distal_pas_id": distal_id,
             "cell": cell,
             "pdui": float(pdui_vals[i]),
         }
@@ -148,6 +150,8 @@ def _pdui_per_gene_isoform_level(
                 {
                     "gene_id": gene_id,
                     "transcript_id": transcript_id,
+                    "proximal_pas_id": proximal_id,
+                    "distal_pas_id": distal_id,
                     "cell": cell,
                     "pdui": float(pdui_vals[i]),
                 }
@@ -209,6 +213,8 @@ class ClassicPDUIStrategy(PDUIStrategy):
     """
 
     name: str = "classic"
+    output_filename: str = "pdui_classic.tsv"
+    score_column: str = "pdui"
 
     def compute(
         self,
@@ -278,6 +284,8 @@ class ClassicPDUIStrategy(PDUIStrategy):
                 cells = count_matrix.columns.tolist()
                 return [
                     {"gene_id": gid, "transcript_id": "_gene_",
+                     "proximal_pas_id": proximal_id,
+                     "distal_pas_id": distal_id,
                      "cell": c, "pdui": float(pdui_vals[i])}
                     for i, c in enumerate(cells)
                 ]

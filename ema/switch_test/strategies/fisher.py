@@ -151,6 +151,10 @@ class FisherStrategy(DiffAPAStrategy):
                     "odds_ratio": odds_ratio,
                     "delta_proportion": delta_prop,
                     "log2fc": log2fc,
+                    "n_cells_cluster1": len(cells1),
+                    "n_cells_cluster2": len(cells2),
+                    "n_reads_pas_cluster1": pas_c1,
+                    "n_reads_pas_cluster2": pas_c2,
                     "n_cells": len(cells1) + len(cells2),
                 }
             )
