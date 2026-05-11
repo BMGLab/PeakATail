@@ -103,59 +103,66 @@ class FisherStrategy(DiffAPAStrategy):
                          "delta_proportion", "log2fc"]
             )
 
-        # --- aggregate counts per PAS per cluster ---
-        agg1 = count_matrix.loc[cells1].sum(axis=0)  # Series indexed by pas_id
-        agg2 = count_matrix.loc[cells2].sum(axis=0)
+        # Cell-level binarisation: each cell is "expressing" a PAS iff it has
+        # >=1 read mapped there.  Sample size = number of cells per cluster,
+        # not reads — reads aggregated across cells are NOT independent
+        # observations, so the previous read-based Fisher pseudo-replicated
+        # massively (median 66% PAS flagged significant at q<0.05, hits with
+        # |delta_proportion| < 0.1%).
+        cm1 = count_matrix.loc[cells1]
+        cm2 = count_matrix.loc[cells2]
+        n1 = int(len(cells1))
+        n2 = int(len(cells2))
 
-        # Build the aggregated (PAS,) × (cluster1, cluster2) DataFrame that
-        # mirrors what the original fishertest() expects — but we run the logic
-        # directly here to produce the unified output schema.
+        # Per-PAS: # cells expressing in each cluster, # reads (info only)
+        expr1 = (cm1 > 0).sum(axis=0).astype(int)   # cells with >=1 read, c1
+        expr2 = (cm2 > 0).sum(axis=0).astype(int)   # cells with >=1 read, c2
+        reads1 = cm1.sum(axis=0).astype(int)        # for info (no longer used in test)
+        reads2 = cm2.sum(axis=0).astype(int)
+
         pas_ids = count_matrix.columns.tolist()
-        total1 = agg1.sum()
-        total2 = agg2.sum()
-
         results: list[dict] = []
         for pas_id in pas_ids:
-            pas_c1 = int(agg1[pas_id])
-            pas_c2 = int(agg2[pas_id])
-            other_c1 = int(total1) - pas_c1
-            other_c2 = int(total2) - pas_c2
+            a = int(expr1[pas_id])   # cells in c1 expressing PAS
+            b = int(expr2[pas_id])   # cells in c2 expressing PAS
+            c = n1 - a               # cells in c1 NOT expressing PAS
+            d = n2 - b               # cells in c2 NOT expressing PAS
 
-            # Skip degenerate tables
-            if (pas_c1 + pas_c2) == 0:
-                continue
-            if (pas_c1 + other_c1) == 0 or (pas_c2 + other_c2) == 0:
+            # Skip PAS expressed in neither cluster (uninformative).
+            if a + b == 0:
                 continue
 
-            table = np.array([
-                [pas_c1, pas_c2],
-                [other_c1, other_c2],
-            ])
-
+            # 2x2 cell-level contingency table:
+            #                    cluster1   cluster2
+            #   expressing  PAS:    a         b
+            #   not expressing:     c         d
+            table = np.array([[a, b], [c, d]])
             odds_ratio, pvalue = fisher_exact(table, alternative="two-sided")
 
-            prop1 = pas_c1 / total1 if total1 > 0 else 0.0
-            prop2 = pas_c2 / total2 if total2 > 0 else 0.0
+            # Effect sizes computed at the CELL level.
+            prop1 = a / n1
+            prop2 = b / n2
             delta_prop = prop1 - prop2
 
-            # log2fc: log2(mean_expression_c2 / mean_expression_c1)
-            mean1 = pas_c1 / max(len(cells1), 1)
-            mean2 = pas_c2 / max(len(cells2), 1)
-            eps = 1e-8
-            log2fc = float(np.log2((mean2 + eps) / (mean1 + eps)))
+            # log2fc of expression frequency (bounded: both denominators >= 1
+            # since min_cells_per_group >= 10 and numerators bounded by them).
+            eps = 1.0 / max(n1, n2)  # half-cell pseudo so 0/N -> log2 ~ -log2(2N)
+            log2fc = float(np.log2((prop2 + eps) / (prop1 + eps)))
 
             results.append(
                 {
                     "pas_id": pas_id,
                     "pvalue": pvalue,
-                    "odds_ratio": odds_ratio,
+                    "odds_ratio": float(odds_ratio),
                     "delta_proportion": delta_prop,
                     "log2fc": log2fc,
-                    "n_cells_cluster1": len(cells1),
-                    "n_cells_cluster2": len(cells2),
-                    "n_reads_pas_cluster1": pas_c1,
-                    "n_reads_pas_cluster2": pas_c2,
-                    "n_cells": len(cells1) + len(cells2),
+                    "n_cells_cluster1": n1,
+                    "n_cells_cluster2": n2,
+                    "n_cells_expr_cluster1": a,
+                    "n_cells_expr_cluster2": b,
+                    "n_reads_pas_cluster1": int(reads1[pas_id]),
+                    "n_reads_pas_cluster2": int(reads2[pas_id]),
+                    "n_cells": n1 + n2,
                 }
             )
 
@@ -174,6 +181,7 @@ class FisherStrategy(DiffAPAStrategy):
         return df[[
             "pvalue", "qvalue",
             "n_cells", "n_cells_cluster1", "n_cells_cluster2",
+            "n_cells_expr_cluster1", "n_cells_expr_cluster2",
             "n_reads_pas_cluster1", "n_reads_pas_cluster2",
             "odds_ratio", "delta_proportion", "log2fc",
         ]].sort_values("qvalue")
