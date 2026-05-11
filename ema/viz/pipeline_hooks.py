@@ -399,7 +399,11 @@ def render_switch_diff_outputs(
                 sig_sets[key] = set(df.loc[df["qvalue"] < fdr, "pas_id"].astype(str))
             else:
                 sig_sets[key] = set(df.index[df["qvalue"] < fdr].astype(str))
-        if len(sig_sets) >= 2:
+        # diff_agreement uses upsetplot which enumerates 2^N intersections;
+        # cap at 8 sig-sets to keep render time bounded.  Above that the chart
+        # is also visually unreadable so a top-K trim would be lossy too.
+        _MAX_DIFF_AGREEMENT_SETS = 8
+        if 2 <= len(sig_sets) <= _MAX_DIFF_AGREEMENT_SETS:
             w = render_all(
                 "diff_agreement", sig_sets,
                 figs_dir / "diff_agreement", engines=engines,
@@ -407,6 +411,12 @@ def render_switch_diff_outputs(
             log.info(
                 "ema switch diff: diff_agreement=%d file(s) (%d sig-sets)",
                 len(w), len(sig_sets),
+            )
+        elif len(sig_sets) > _MAX_DIFF_AGREEMENT_SETS:
+            log.info(
+                "ema switch diff: diff_agreement skipped (got %d sig-sets, "
+                "max %d for upsetplot — too many for a readable chart)",
+                len(sig_sets), _MAX_DIFF_AGREEMENT_SETS,
             )
         else:
             log.info(
