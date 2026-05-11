@@ -13,7 +13,9 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["bioinformatics", "scRNA-seq", "polyadenylation", "APA"]
 classifiers = [
-    "License :: OSI Approved :: MIT License",
+    # NOTE: do NOT add a "License :: OSI Approved :: ..." classifier here —
+    # PEP 639 forbids combining a license-expression field (above) with a
+    # legacy license classifier.  PyPI reads the SPDX expression instead.
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Bio-Informatics",

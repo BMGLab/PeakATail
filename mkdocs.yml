@@ -49,13 +49,27 @@ markdown_extensions:
       anchor_linenums: true
       line_spans: __span
       pygments_lang_class: true
-  - pymdownx.superfences
+  # Custom-fence config promotes ```mermaid``` code blocks into Mermaid SVG
+  # diagrams (rendered client-side by Material's bundled mermaid.js).
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.tasklist:
       custom_checkbox: true
+  # LaTeX math support: $...$ inline, $$...$$ block.
+  # `generic: true` keeps the source raw so MathJax (loaded below) typesets it.
+  - pymdownx.arithmatex:
+      generic: true
   - toc:
       permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 plugins:
   - search
