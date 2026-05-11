@@ -72,5 +72,32 @@ def match(**kwargs) -> None:
         out_file = out_dir / "cluster_match.tsv"
         df.to_csv(out_file, sep="\t")
         log.info("Wrote %s (%d rows)", out_file, len(df))
+
+        # Viz wire-in: render cluster_match_sankey + match_confidence figures
+        try:
+            from ema.cli.common import parse_plot_engines
+            from ema.viz import render_all
+            engines = parse_plot_engines(
+                kwargs.get("plot_engine", "both"),
+                kwargs.get("no_plots", False),
+            )
+            if engines and df is not None and not df.empty:
+                figs_dir = out_dir / "figures"
+                figs_dir.mkdir(parents=True, exist_ok=True)
+                render_all(
+                    plot_type="cluster_match_sankey",
+                    data=df,
+                    output_basepath=figs_dir / "cluster_match_sankey",
+                    engines=engines,
+                )
+                render_all(
+                    plot_type="match_confidence",
+                    data=df,
+                    output_basepath=figs_dir / "match_confidence",
+                    engines=engines,
+                )
+                log.info("ema switch match: viz figures written to %s", figs_dir)
+        except Exception as _viz_exc:
+            log.warning("ema switch match: viz rendering failed (non-fatal): %s", _viz_exc)
     finally:
         teardown_logging()

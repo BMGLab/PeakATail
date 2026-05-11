@@ -107,7 +107,7 @@ def run_diff(
     fdr: float,
     threads: int | None,
     per_worker_mb: int,
-) -> None:
+) -> dict[tuple[str, str], pd.DataFrame]:
     """Library-level entry point for differential APA testing.
 
     Runs differential APA (Fisher / NB regression) across cluster pairs on
@@ -128,6 +128,11 @@ def run_diff(
         fdr: FDR q-value threshold for significance.
         threads: Max parallel workers ceiling (or None for auto).
         per_worker_mb: Estimated peak RAM per parallel worker (MB).
+
+    Returns:
+        Dict mapping ``(c1, c2)`` pairs to their result DataFrames (all h5ads
+        accumulated). For omnibus strategies the key is ``("omnibus", "")`` and
+        the value is the omnibus DataFrame. Empty dict if no pairs were run.
     """
     reset_resource_manager()
     rm = ResourceManager(
@@ -147,6 +152,9 @@ def run_diff(
     diff_dir.mkdir(exist_ok=True)
 
     diff_strat = get_diff_strategy(strategy)
+
+    # Accumulate all pair results across h5ads (returned to caller for viz).
+    all_pair_results: dict[tuple[str, str], pd.DataFrame] = {}
 
     for h5ad_path in h5ad_paths:
         log.info("run_diff: loading %s", h5ad_path)
@@ -192,6 +200,7 @@ def run_diff(
             df.to_csv(out_path, sep="\t")
             sig = (df["qvalue"] < fdr).sum() if "qvalue" in df.columns else 0
             log.info("run_diff: omnibus: %d significant PAS (q<%s) -> %s", sig, fdr, out_path)
+            all_pair_results[("omnibus", "")] = df
         else:
             if cluster_pairs:
                 pairs = parse_cell_combinations(cluster_pairs)
@@ -239,6 +248,7 @@ def run_diff(
                 df.to_csv(out_path, sep="\t")
                 if "qvalue" in df.columns:
                     total_sig += (df["qvalue"] < fdr).sum()
+                all_pair_results[(c1, c2)] = df
 
             log.info(
                 "run_diff: %d pairs: %d total significant PAS (q<%s) -> %s",
@@ -246,6 +256,7 @@ def run_diff(
             )
 
     log.info("run_diff: done.")
+    return all_pair_results
 
 
 def run_length(
@@ -258,7 +269,7 @@ def run_length(
     isoform_agg: str,
     isoform_collapse: str,
     threads: int | None,
-) -> None:
+) -> tuple[pd.DataFrame | None, "ad.AnnData | None"]:
     """Library-level entry point for 3'UTR length / PDUI quantification.
 
     Computes per-cluster PDUI scores using the requested strategy on one or
@@ -279,6 +290,11 @@ def run_length(
         isoform_collapse: How to summarise isoforms — ``"none"`` / ``"mean"`` /
             ``"majority"``.
         threads: Max parallel workers ceiling (or None for auto).
+
+    Returns:
+        Tuple ``(pdui_df, adata)`` from the last h5ad processed, or
+        ``(None, None)`` if nothing was computed.  ``pdui_df`` is the PDUI
+        result DataFrame; ``adata`` is the loaded AnnData (for cluster obs).
     """
     # Backward-compat: translate legacy {"gene","isoform"} tokens to the
     # canonical {"per_gene","per_isoform"} the strategy code branches on.
@@ -320,9 +336,14 @@ def run_length(
 
     pdui_methods = [strategy] if strategy and strategy != "none" else []
 
+    # Track the last computed PDUI df + adata for viz (returned to caller).
+    _last_pdui_df: pd.DataFrame | None = None
+    _last_adata: "ad.AnnData | None" = None
+
     for h5ad_path in h5ad_paths:
         log.info("run_length: loading %s", h5ad_path)
         adata = ad.read_h5ad(h5ad_path)
+        _last_adata = adata
 
         pdui_df_full, _, _, _ = build_count_dfs(adata)
 
@@ -358,8 +379,10 @@ def run_length(
             out_path = out_dir / f"pdui_{method}.tsv"
             df.to_csv(out_path, sep="\t", index=False)
             log.info("run_length: PDUI (%s): %d rows -> %s", method, len(df), out_path)
+            _last_pdui_df = df
 
     log.info("run_length: done.")
+    return _last_pdui_df, _last_adata
 
 
 # NOTE: The old argparse cli() has been removed.
