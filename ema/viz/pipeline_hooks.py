@@ -181,14 +181,16 @@ def render_run_outputs(
     unique_ds_ids: list[str],
     bed_paths: Iterable[str | Path],
     atlas_enabled: bool,
-    per_dataset_dir: Path | None = None,
+    clustering_dir: Path | None = None,
     single_sample_h5ad: Path | None = None,
+    # Legacy alias kept for external callers that still pass per_dataset_dir.
+    per_dataset_dir: Path | None = None,
 ) -> None:
     """One-call viz for ``ema run``.  Runs after the pipeline body completes.
 
     Reads only on-disk artifacts the pipeline produced:
 
-    - ``output_dir/per_dataset/<ds>/clusters.h5ad``        (multi-sample mode)
+    - ``07_clustering/<ds>/clusters.h5ad``                  (multi-sample mode)
     - ``single_sample_h5ad``                               (single-sample mode)
     - ``output_dir/peakcalling/*.{pos,neg}.bed``           (peak BEDs)
     - ``output_dir/unified/atlas_mapping.tsv``             (when --atlas)
@@ -209,6 +211,10 @@ def render_run_outputs(
     top_figs = output_dir / "figures"
     top_figs.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the clustering directory (new layout: 07_clustering/<ds>/).
+    # Accept the legacy per_dataset_dir kwarg for external callers.
+    _clustering_dir: Path | None = clustering_dir or per_dataset_dir
+
     # ----- 1. per-dataset UMAP/cluster_sizes/peak_qc -----------------------
     per_ds_adata: dict[str, Any] = {}
     pas_sets: dict[str, set[str]] = {}
@@ -226,11 +232,11 @@ def render_run_outputs(
         else:
             log.info("single-sample viz: clusters h5ad not on disk; skipping")
     else:
-        if per_dataset_dir is None:
-            log.warning("multi-sample viz: per_dataset_dir not provided; skipping")
+        if _clustering_dir is None:
+            log.warning("multi-sample viz: clustering_dir not provided; skipping")
         else:
             for ds in unique_ds_ids:
-                h5 = per_dataset_dir / ds / "clusters.h5ad"
+                h5 = _clustering_dir / ds / "clusters.h5ad"
                 if not h5.exists():
                     continue
                 try:
@@ -238,7 +244,7 @@ def render_run_outputs(
                     ad_obj = ad.read_h5ad(h5)
                     per_ds_adata[ds] = ad_obj
                     pas_sets[ds] = set(ad_obj.var_names)
-                    figs_ds = per_dataset_dir / ds / "figures"
+                    figs_ds = _clustering_dir / ds / "figures"
                     ds_beds = [b for b in beds_list if Path(b).name.startswith(f"{ds}_")]
                     _render_per_dataset_tier1(ad_obj, ds, ds_beds, figs_ds, eng)
                 except Exception as exc:

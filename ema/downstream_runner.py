@@ -49,7 +49,7 @@ def run_one_dataset_downstream(
     sub_indices: list[int],
     sub_cbs: list[str],
     unified_mtx: str,
-    per_dataset_dir: str,
+    output_dir: str,
     genes_pkl: bytes,
     min_read: int,
     filter_min_cells: int,
@@ -84,8 +84,10 @@ def run_one_dataset_downstream(
             (same length, same order).
         unified_mtx: Absolute path to the unified concatenated MatrixMarket
             file produced by ``concat_matrices``.
-        per_dataset_dir: Absolute path to the parent directory where a
-            ``{ds_id}/`` subdirectory will be created for all outputs.
+        output_dir: Absolute path to the pipeline run root.  The worker
+            initialises ``directory_config.output_dir`` with this value so all
+            ``directory_config.*_for(ds_id)`` accessors resolve correctly in
+            the spawned process.
         genes_pkl: ``pickle.dumps()`` of the ``genes`` DataFrame returned by
             ``find_close``.  Serialised so it can be passed through the process
             boundary without relying on shared memory.
@@ -98,8 +100,8 @@ def run_one_dataset_downstream(
 
     Returns:
         A stats dictionary with keys ``dataset_id``, ``final_cells``,
-        ``final_pas``.  Also writes ``{per_dataset_dir}/{ds_id}/clusters.h5ad``
-        and ``{per_dataset_dir}/{ds_id}/clustering_stats.json`` on disk.
+        ``final_pas``.  Also writes ``07_clustering/{ds_id}/clusters.h5ad``
+        and a ``clustering_stats.json`` alongside it on disk.
 
     Raises:
         RuntimeError: If no sub_indices were supplied (caller should skip
@@ -119,21 +121,29 @@ def run_one_dataset_downstream(
     if not sub_indices:
         raise RuntimeError(f"{prefix} no sub_indices supplied — caller must skip empty datasets")
 
+    # Initialise directory_config in this (possibly spawned) process so all
+    # directory_config.*_for() accessors resolve to the correct run root.
+    from ema.config import set_directory_config
+    set_directory_config(output_dir=Path(output_dir))
+
     # Late imports so the heavy stack is only loaded in the worker process.
     # NOTE: extract_per_dataset_mtx is defined in this same module (no ema.main import).
+    from ema.config import directory_config
     from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
     from ema.annotate.annotate import annotate
     from ema.clustering.clustering import clustering
 
     genes = pickle.loads(genes_pkl)
 
-    ds_dir = Path(per_dataset_dir) / ds_id
-    ds_dir.mkdir(parents=True, exist_ok=True)
+    # Scratch dir: use the clustering stage dir for this dataset as the working
+    # area (pre_filter.mtx and filtered_matrix.mtx are transient).
+    ds_scratch = directory_config.clustering_dir / ds_id
+    ds_scratch.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ #
     # 1. Extract per-dataset sub-matrix from unified MTX                  #
     # ------------------------------------------------------------------ #
-    pre_filter_mtx = ds_dir / "pre_filter.mtx"
+    pre_filter_mtx = ds_scratch / "pre_filter.mtx"
     log.info("%s extracting %d columns from unified MTX", prefix, len(sub_indices))
     extract_per_dataset_mtx(
         input_mtx=Path(unified_mtx),
@@ -146,8 +156,8 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 2. Filter barcodes by minimum read count                            #
     # ------------------------------------------------------------------ #
-    filtered_mtx = ds_dir / "filtered_matrix.mtx"
-    filtered_cb_path = ds_dir / "filtered_cb.tsv"
+    filtered_mtx = ds_scratch / "filtered_matrix.mtx"
+    filtered_cb_path = ds_scratch / "filtered_cb.tsv"
     log.info("%s filtering barcodes (min_read=%d)", prefix, min_read)
     filter_cb(
         input_matrix_paths=[str(pre_filter_mtx)],
@@ -162,7 +172,7 @@ def run_one_dataset_downstream(
     from ema.outputs import write_filtered_cb
     if filtered_cb_path.exists():
         write_filtered_cb(
-            Path(per_dataset_dir).parent, ds_id,
+            Path(output_dir), ds_id,
             [b.strip() for b in filtered_cb_path.read_text().splitlines() if b.strip()],
             min_read,
         )
@@ -196,11 +206,11 @@ def run_one_dataset_downstream(
     # count matrix for this dataset.  See ema/outputs.py for the layout.
     from ema.outputs import write_pas_gene_artifacts, write_annotated_matrix
     write_pas_gene_artifacts(
-        Path(per_dataset_dir).parent, ds_id,
+        Path(output_dir), ds_id,
         result.pas_ids, result.gene_ids,
     )
     write_annotated_matrix(
-        Path(per_dataset_dir).parent, ds_id,
+        Path(output_dir), ds_id,
         result.sparse_matrix, result.pas_ids, result.collist,
     )
 
@@ -222,7 +232,7 @@ def run_one_dataset_downstream(
 
     # Persist the post-filter AnnData snapshot (pre-clustering).
     from ema.outputs import write_preprocessed_h5ad
-    write_preprocessed_h5ad(Path(per_dataset_dir).parent, ds_id, adata)
+    write_preprocessed_h5ad(Path(output_dir), ds_id, adata)
 
     if progress_client is not None:
         progress_client.advance(1)  # tick 5/6: preprocess
@@ -230,7 +240,8 @@ def run_one_dataset_downstream(
     # ------------------------------------------------------------------ #
     # 6. Cluster                                                          #
     # ------------------------------------------------------------------ #
-    cluster_h5ad = ds_dir / "clusters.h5ad"
+    cluster_h5ad = directory_config.clusters_h5ad_for(ds_id)
+    cluster_h5ad.parent.mkdir(parents=True, exist_ok=True)
     log.info(
         "%s clustering (%d cells x %d PAS) — method=%s resolution=%s",
         prefix, adata.n_obs, adata.n_vars,
@@ -263,7 +274,7 @@ def run_one_dataset_downstream(
         "final_cells": int(adata.n_obs),
         "final_pas": int(adata.n_vars),
     }
-    with open(ds_dir / "clustering_stats.json", "w") as fh:
+    with open(cluster_h5ad.parent / "clustering_stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
 
     log.info("%s done — %d cells, %d PAS -> %s", prefix, adata.n_obs, adata.n_vars, cluster_h5ad)

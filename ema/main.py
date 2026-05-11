@@ -253,7 +253,7 @@ def run(
             unique_ds_ids=_pipeline_result["unique_ds_ids"],
             bed_paths=_pipeline_result["bed_paths"],
             atlas_enabled=_pipeline_result["atlas_enabled"],
-            per_dataset_dir=_pipeline_result.get("per_dataset_dir"),
+            clustering_dir=_pipeline_result.get("clustering_dir"),
             single_sample_h5ad=_pipeline_result.get("single_sample_h5ad"),
         )
 
@@ -733,10 +733,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         write_preprocessed_h5ad(output_dir, bam_list[0][0], adata)
 
         # Forward all CLI/YAML clustering hyperparameters into clustering().
-        # Persist the clustered AnnData to a deterministic on-disk path so the
-        # post-pipeline viz orchestrator can reload it (matches the multi-sample
-        # layout: per_dataset/<ds>/clusters.h5ad).
-        _ss_h5ad = output_dir / "per_dataset" / bam_list[0][0] / "clusters.h5ad"
+        # Persist the clustered AnnData to the canonical on-disk path via
+        # directory_config (07_clustering/<ds>/clusters.h5ad).
+        _ss_h5ad = directory_config.clusters_h5ad_for(bam_list[0][0])
         _ss_h5ad.parent.mkdir(parents=True, exist_ok=True)
         clustering(
             adata=adata,
@@ -768,7 +767,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "bed_paths": all_pos_beds + all_neg_beds,
             "atlas_enabled": bool(directory_config.atlas),
             "single_sample_h5ad": _ss_h5ad,
-            "per_dataset_dir": output_dir / "per_dataset",
+            "clustering_dir": directory_config.clustering_dir,
         }
 
     # =========================================================================
@@ -872,8 +871,6 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
 
     # Per-dataset clustering (each dataset_id clusters independently)
     unique_ds_ids: list[str] = list(dict.fromkeys(all_ds_ids))  # dedupe, preserve order
-    per_dataset_dir = output_dir / "per_dataset"
-    per_dataset_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ #
     # Phase 6: parallel per-dataset downstream pipeline                   #
@@ -913,7 +910,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             sub_indices,
             sub_cbs,
             str(unified_mtx),
-            str(per_dataset_dir),
+            str(output_dir),
             genes_pkl,
             filter_config.min_read,
             filter_config.min_cells,
@@ -1012,7 +1009,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # programming bug and re-raises so it is visible in the run log instead
     # of being silently demoted to a one-line WARNING.
     if len(unique_ds_ids) > 1:
-        h5ad_paths = [per_dataset_dir / ds / "clusters.h5ad" for ds in unique_ds_ids]
+        h5ad_paths = [directory_config.clusters_h5ad_for(ds) for ds in unique_ds_ids]
         existing = [(p, ds) for p, ds in zip(h5ad_paths, unique_ds_ids) if p.exists()]
         if len(existing) > 1:
             try:
@@ -1046,7 +1043,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "unique_ds_ids": unique_ds_ids,
         "bed_paths": all_pos_beds + all_neg_beds,
         "atlas_enabled": bool(directory_config.atlas),
-        "per_dataset_dir": per_dataset_dir,
+        "clustering_dir": directory_config.clustering_dir,
         "single_sample_h5ad": None,
     }
 

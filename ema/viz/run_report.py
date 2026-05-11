@@ -89,15 +89,26 @@ def _classify_file(f: Path, out_dir: Path) -> _FigFile | None:
             kind = knd
             break
 
-    # Infer dataset from path: per_dataset/<ds_id>/figures/<file>
+    # Infer dataset from path.  New layout: 0X_<stage>/<ds>/figures/<file>.
+    # Legacy layout: per_dataset/<ds>/figures/<file> (kept for old runs).
+    import re as _re
+    _STAGE_PAT = _re.compile(r"^\d{2}_")
     dataset = ""
     parts = f.parts
-    try:
-        pd_idx = parts.index("per_dataset")
-        if pd_idx + 1 < len(parts):
-            dataset = parts[pd_idx + 1]
-    except ValueError:
-        pass
+    # Try new layout: look for a numbered stage dir immediately above the ds dir.
+    for i, part in enumerate(parts):
+        if _STAGE_PAT.match(part) and i + 2 < len(parts) and parts[i + 2] == "figures":
+            dataset = parts[i + 1]
+            break
+    # Fallback: legacy per_dataset/<ds>/... layout (for runs produced before
+    # the 0X_<stage>/<ds>/ migration).
+    if not dataset:
+        try:
+            pd_idx = parts.index("per_dataset")
+            if pd_idx + 1 < len(parts):
+                dataset = parts[pd_idx + 1]
+        except ValueError:
+            pass
 
     try:
         rel = str(f.relative_to(out_dir))
@@ -258,10 +269,14 @@ def _build_html(
     if "datasets" in cfg:
         n_datasets = len(cfg["datasets"])
     else:
-        # Infer from per_dataset/ subdirectories
-        pd = out_dir / "per_dataset"
-        if pd.is_dir():
-            n_datasets = sum(1 for x in pd.iterdir() if x.is_dir())
+        # Infer from 07_clustering/ subdirectories (new layout).
+        # Fallback: legacy per_dataset/ for runs produced before migration.
+        clustering_d = out_dir / "07_clustering"
+        per_dataset_d = out_dir / "per_dataset"
+        if clustering_d.is_dir():
+            n_datasets = sum(1 for x in clustering_d.iterdir() if x.is_dir())
+        elif per_dataset_d.is_dir():
+            n_datasets = sum(1 for x in per_dataset_d.iterdir() if x.is_dir())
 
     # Group by section
     by_section: dict[str, list[_FigFile]] = {}

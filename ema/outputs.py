@@ -115,7 +115,7 @@ def write_raw_peak_outputs(
 ) -> None:
     """Persist the **raw** peak-calling outputs per dataset, before any filter.
 
-    Files written under ``<run>/per_dataset/<ds>/raw/``:
+    Files written under ``<run>/01_peak_calling/<ds>/raw/``:
 
       * ``pos.bed`` / ``neg.bed`` — raw per-strand BEDs (concatenated across
         BAM replicates for that dataset)
@@ -123,16 +123,12 @@ def write_raw_peak_outputs(
       * ``pos.mtx`` / ``neg.mtx`` — raw count matrices (one column per
         unfiltered cell barcode)
       * ``cb.tsv`` — raw cell-barcode index aligned to the MTX columns
-
-    Downstream consumers reading e.g. ``per_dataset/<ds>/pas.bed`` always
-    get the unfiltered call set, while ``per_dataset/<ds>/pasbed.bed``
-    represents the filtered/post-merge view (see
-    :func:`write_per_dataset_beds`).
     """
     import shutil
+    from ema.config import directory_config
 
     for ds_id in set(pos_beds_by_ds) | set(neg_beds_by_ds):
-        raw_dir = output_dir / "per_dataset" / ds_id / "raw"
+        raw_dir = directory_config.raw_dir_for(ds_id)
         raw_dir.mkdir(parents=True, exist_ok=True)
         if pos_beds_by_ds.get(ds_id):
             _concat_beds(pos_beds_by_ds[ds_id], raw_dir / "pos.bed")
@@ -162,20 +158,21 @@ def write_filtered_cb(
 ) -> Path:
     """Persist the list of cell barcodes that passed the ``min_read`` filter.
 
-    Writes ``<run>/per_dataset/<ds>/filtered_cb.tsv`` with a single column
+    Writes ``<run>/02_cb_filter/<ds>/filtered_cb.tsv`` with a single column
     of barcodes plus a header ``barcode\tmin_read=<n>``.  Useful for
     downstream tools that need to subset other data to the same cells.
     """
-    ds_root = output_dir / "per_dataset" / dataset_id
-    ds_root.mkdir(parents=True, exist_ok=True)
-    dst = ds_root / "filtered_cb.tsv"
+    from ema.config import directory_config
+
+    dst = directory_config.filtered_cb_for(dataset_id)
+    dst.parent.mkdir(parents=True, exist_ok=True)
     with open(dst, "w") as f:
         f.write(f"barcode\tmin_read={min_read}\n")
         for cb in filtered_barcodes:
             f.write(f"{cb}\n")
     log.info(
-        "Persisted filtered cell barcodes (%d kept) for %r at %s",
-        sum(1 for _ in filtered_barcodes if True), dataset_id, dst,
+        "Persisted filtered cell barcodes for %r at %s",
+        dataset_id, dst,
     )
     return dst
 
@@ -190,21 +187,21 @@ def write_annotated_matrix(
     """Persist the annotated count matrix (post PAS-gene join) for one dataset.
 
     Writes:
-      * ``<run>/per_dataset/<ds>/annotated_matrix.mtx`` — MatrixMarket
+      * ``<run>/05_annotated_matrix/<ds>/annotated_matrix.mtx`` — MatrixMarket
         sparse matrix, rows = PAS (with gene assignment), cols = cells.
-      * ``<run>/per_dataset/<ds>/annotated_pas_ids.tsv`` — row index.
-      * ``<run>/per_dataset/<ds>/annotated_cells.tsv`` — column index.
+      * ``<run>/05_annotated_matrix/<ds>/annotated_pas_ids.tsv`` — row index.
+      * ``<run>/05_annotated_matrix/<ds>/annotated_cells.tsv`` — column index.
     """
     import scipy.io as _sci
+    from ema.config import directory_config
 
-    ds_root = output_dir / "per_dataset" / dataset_id
-    ds_root.mkdir(parents=True, exist_ok=True)
-    mtx_path = ds_root / "annotated_matrix.mtx"
+    mtx_path = directory_config.annotated_matrix_for(dataset_id)
+    mtx_path.parent.mkdir(parents=True, exist_ok=True)
     _sci.mmwrite(str(mtx_path), sparse_matrix.astype(int), field="integer")
-    (ds_root / "annotated_pas_ids.tsv").write_text(
+    directory_config.annotated_pas_ids_for(dataset_id).write_text(
         "pas_id\n" + "\n".join(str(p) for p in pas_ids) + "\n"
     )
-    (ds_root / "annotated_cells.tsv").write_text(
+    directory_config.annotated_cells_for(dataset_id).write_text(
         "barcode\n" + "\n".join(cells) + "\n"
     )
     log.info(
@@ -221,13 +218,14 @@ def write_preprocessed_h5ad(
 ) -> Path:
     """Persist the preprocessed (filtered) AnnData before clustering.
 
-    Saves to ``<run>/per_dataset/<ds>/preprocessed.h5ad`` so users can
+    Saves to ``<run>/06_preprocessing/<ds>/preprocessed.h5ad`` so users can
     inspect the filtered count matrix shape independently of cluster
-    labels (which live in ``clusters.h5ad``).
+    labels (which live in ``07_clustering/<ds>/clusters.h5ad``).
     """
-    ds_root = output_dir / "per_dataset" / dataset_id
-    ds_root.mkdir(parents=True, exist_ok=True)
-    dst = ds_root / "preprocessed.h5ad"
+    from ema.config import directory_config
+
+    dst = directory_config.preprocessed_h5ad_for(dataset_id)
+    dst.parent.mkdir(parents=True, exist_ok=True)
     adata.write(dst)
     log.info(
         "Persisted preprocessed AnnData for %r at %s (%d cells × %d PAS)",
@@ -243,8 +241,10 @@ def write_per_dataset_beds(
 ) -> dict[str, Path]:
     """Write canonical posbed / negbed / pasbed per dataset.
 
+    Files land under ``<run>/01_peak_calling/<ds>/``.
+
     Args:
-        output_dir: Pipeline run-root.
+        output_dir: Pipeline run-root (kept for API compat; not used directly).
         pos_beds_by_ds: ``{dataset_id: [path, ...]}`` positive-strand BEDs.
         neg_beds_by_ds: same for negative strand.
 
@@ -252,21 +252,24 @@ def write_per_dataset_beds(
         ``{dataset_id: pasbed_path}`` for callers that need it (e.g. the
         annotation step needs the pasbed to build annotatedpas.bed).
     """
+    from ema.config import directory_config
+
     pasbeds: dict[str, Path] = {}
     for ds_id in set(pos_beds_by_ds) | set(neg_beds_by_ds):
-        ds_root = output_dir / "per_dataset" / ds_id
-        ds_root.mkdir(parents=True, exist_ok=True)
+        posbed = directory_config.posbed_for(ds_id)
+        posbed.parent.mkdir(parents=True, exist_ok=True)
         if pos_beds_by_ds.get(ds_id):
-            _concat_beds(pos_beds_by_ds[ds_id], ds_root / "posbed.bed")
+            _concat_beds(pos_beds_by_ds[ds_id], posbed)
+        negbed = directory_config.negbed_for(ds_id)
         if neg_beds_by_ds.get(ds_id):
-            _concat_beds(neg_beds_by_ds[ds_id], ds_root / "negbed.bed")
-        pasbed = ds_root / "pasbed.bed"
+            _concat_beds(neg_beds_by_ds[ds_id], negbed)
+        pasbed = directory_config.pasbed_for(ds_id)
         _concat_beds(
             list(pos_beds_by_ds.get(ds_id, [])) + list(neg_beds_by_ds.get(ds_id, [])),
             pasbed,
         )
         pasbeds[ds_id] = pasbed
-        log.info("Persisted per-dataset BEDs for %r at %s", ds_id, ds_root)
+        log.info("Persisted per-dataset BEDs for %r at %s", ds_id, posbed.parent)
     return pasbeds
 
 
@@ -288,8 +291,8 @@ def write_pas_gene_artifacts(
     yet we skip the BED part and warn.
 
     Args:
-        output_dir: Pipeline run-root.
-        dataset_id: Dataset name (matches ``per_dataset/<ds>/``).
+        output_dir: Pipeline run-root (kept for API compat; not used directly).
+        dataset_id: Dataset name.
         pas_ids: Array-like of PAS IDs (parallel to ``gene_ids``).
         gene_ids: Array-like of gene IDs aligned to ``pas_ids``.
 
@@ -298,17 +301,17 @@ def write_pas_gene_artifacts(
         may not exist if pasbed wasn't on disk.
     """
     import pandas as pd  # local import — heavy module
+    from ema.config import directory_config
 
-    ds_root = output_dir / "per_dataset" / dataset_id
-    ds_root.mkdir(parents=True, exist_ok=True)
-
-    pas_gene_tsv = ds_root / "pas_gene.tsv"
+    pas_gene_tsv = directory_config.pas_gene_for(dataset_id)
+    pas_gene_tsv.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"pas_id": pas_ids, "gene_id": gene_ids}).to_csv(
         pas_gene_tsv, sep="\t", index=False,
     )
 
-    annot_bed = ds_root / "annotatedpas.bed"
-    pasbed = ds_root / "pasbed.bed"
+    annot_bed = directory_config.annotatedpas_for(dataset_id)
+    annot_bed.parent.mkdir(parents=True, exist_ok=True)
+    pasbed = directory_config.pasbed_for(dataset_id)
     if pasbed.exists():
         lookup = dict(zip([str(p) for p in pas_ids], gene_ids))
         with open(pasbed) as src, open(annot_bed, "w") as dst:
@@ -324,6 +327,6 @@ def write_pas_gene_artifacts(
         )
     log.info(
         "Persisted PAS->gene mapping (%d rows) at %s",
-        len(pas_ids), ds_root,
+        len(pas_ids), pas_gene_tsv.parent,
     )
     return pas_gene_tsv, annot_bed

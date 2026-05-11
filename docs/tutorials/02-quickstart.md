@@ -99,32 +99,37 @@ peakatail_runs/emaout_<timestamp>/
 
 ## Step 3 — Inspect what landed on disk
 
-```bash
-ls peakatail_runs/emaout_<timestamp>/per_dataset/sample1/
-```
-
-You will see:
+Each pipeline stage writes into its own numbered directory, with per-dataset
+data nested inside:
 
 ```
-annotated_cells.tsv      # cell barcode column index for the annotated matrix
-annotated_matrix.mtx     # PAS-by-cell count matrix (post gene annotation, pre filter)
-annotated_pas_ids.tsv    # PAS row index for the annotated matrix
-annotatedpas.bed         # pasbed.bed extended with a gene_id column
-clusters.h5ad            # AnnData with leiden cluster labels — the main output
-filtered_cb.tsv          # cell barcodes that passed min_read filter
-negbed.bed               # negative-strand PAS BED
-pas_gene.tsv             # PAS-to-gene two-column mapping
-pasbed.bed               # combined positive+negative PAS BED
-posbed.bed               # positive-strand PAS BED
-preprocessed.h5ad        # AnnData after cell/PAS filtering, before clustering
-raw/                     # pre-filter snapshots: pos.bed, neg.bed, pas.bed, pos.mtx, neg.mtx, cb.tsv
+peakatail_runs/emaout_<timestamp>/
+  01_peak_calling/sample1/
+    pasbed.bed               # combined positive+negative PAS BED
+    posbed.bed               # positive-strand PAS BED
+    negbed.bed               # negative-strand PAS BED
+    raw/                     # pre-filter snapshots: pos.bed, neg.bed, pas.bed, pos.mtx, neg.mtx, cb.tsv
+  02_cb_filter/sample1/
+    filtered_cb.tsv          # cell barcodes that passed min_read filter
+  03_gtf_annotation/sample1/
+    annotatedpas.bed         # pasbed.bed extended with a gene_id column
+  04_pas_gene_assignment/sample1/
+    pas_gene.tsv             # PAS-to-gene two-column mapping
+  05_annotated_matrix/sample1/
+    annotated_matrix.mtx     # PAS-by-cell count matrix (post gene annotation, pre filter)
+    annotated_pas_ids.tsv    # PAS row index for the annotated matrix
+    annotated_cells.tsv      # cell barcode column index for the annotated matrix
+  06_preprocessing/sample1/
+    preprocessed.h5ad        # AnnData after cell/PAS filtering, before clustering
+  07_clustering/sample1/
+    clusters.h5ad            # AnnData with leiden cluster labels — the main output
 ```
 
 The `clusters.h5ad` is the primary artifact for all downstream analysis. Load it with:
 
 ```python
 import anndata as ad
-adata = ad.read_h5ad("peakatail_runs/emaout_.../per_dataset/sample1/clusters.h5ad")
+adata = ad.read_h5ad("peakatail_runs/emaout_.../07_clustering/sample1/clusters.h5ad")
 print(adata)
 # AnnData object with n_obs x n_vars = <cells> x <PAS>
 # obs: 'leiden', ...
@@ -145,8 +150,8 @@ Point `ema switch diff` at the h5ad produced above:
 
 ```bash
 uv run ema switch diff \
-  --h5ad peakatail_runs/emaout_<timestamp>/per_dataset/sample1/clusters.h5ad \
-  --pasbed peakatail_runs/emaout_<timestamp>/per_dataset/sample1/pasbed.bed \
+  --h5ad peakatail_runs/emaout_<timestamp>/07_clustering/sample1/clusters.h5ad \
+  --pasbed peakatail_runs/emaout_<timestamp>/01_peak_calling/sample1/pasbed.bed \
   --strategy fisher \
   --fdr 0.05
 ```

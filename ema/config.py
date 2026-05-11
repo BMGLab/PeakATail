@@ -117,10 +117,6 @@ class DirectoryConfig:
         return self.output_dir / "figures"
 
     @property
-    def per_dataset_dir(self) -> Path:
-        return self.output_dir / "per_dataset"
-
-    @property
     def switch_dir(self) -> Path:
         return self.output_dir / "switch_out"
 
@@ -209,45 +205,51 @@ class DirectoryConfig:
         return self.output_dir / "write" / "pbmc3k.h5ad"
 
     # ─── per-dataset accessors ───────────────────────────────────────────
-
-    def dataset_dir(self, ds: str) -> Path:
-        return self.per_dataset_dir / ds
+    # Data files live inside their numbered stage directory, nested by ds:
+    #
+    #   01_peak_calling/<ds>/pasbed.bed, posbed.bed, negbed.bed, raw/
+    #   02_cb_filter/<ds>/filtered_cb.tsv
+    #   03_gtf_annotation/<ds>/annotatedpas.bed
+    #   04_pas_gene_assignment/<ds>/pas_gene.tsv
+    #   05_annotated_matrix/<ds>/annotated_matrix.mtx + index files
+    #   06_preprocessing/<ds>/preprocessed.h5ad
+    #   07_clustering/<ds>/clusters.h5ad
 
     def pasbed_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "pasbed.bed"
+        return self.peak_calling_dir / ds / self.filenames.get("pasbed", "pasbed.bed")
 
     def posbed_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "posbed.bed"
+        return self.peak_calling_dir / ds / self.filenames.get("posbed", "posbed.bed")
 
     def negbed_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "negbed.bed"
+        return self.peak_calling_dir / ds / self.filenames.get("negbed", "negbed.bed")
 
     def clusters_h5ad_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / self.filenames.get("clusters_h5ad", "clusters.h5ad")
+        return self.clustering_dir / ds / self.filenames.get("clusters_h5ad", "clusters.h5ad")
 
     def preprocessed_h5ad_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / self.filenames.get("preprocessed_h5ad", "preprocessed.h5ad")
+        return self.preprocessing_dir / ds / self.filenames.get("preprocessed_h5ad", "preprocessed.h5ad")
 
     def filtered_cb_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "filtered_cb.tsv"
+        return self.cb_filter_dir / ds / self.filenames.get("filtered_cb", "filtered_cb.tsv")
 
     def pas_gene_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "pas_gene.tsv"
+        return self.pas_gene_dir / ds / self.filenames.get("pas_geneid", "pas_gene.tsv")
 
     def annotatedpas_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "annotatedpas.bed"
+        return self.gtf_annotation_dir / ds / self.filenames.get("annotatedbed", "annotatedpas.bed")
 
     def annotated_matrix_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "annotated_matrix.mtx"
+        return self.annotated_dir / ds / self.filenames.get("annotated_matrix", "annotated_matrix.mtx")
 
     def annotated_pas_ids_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "annotated_pas_ids.tsv"
+        return self.annotated_dir / ds / "annotated_pas_ids.tsv"
 
     def annotated_cells_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "annotated_cells.tsv"
+        return self.annotated_dir / ds / "annotated_cells.tsv"
 
     def raw_dir_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "raw"
+        return self.peak_calling_dir / ds / "raw"
 
     # ─── helpers ─────────────────────────────────────────────────────────
 
@@ -258,7 +260,13 @@ class DirectoryConfig:
         return self.switch_dir / f"fisherresults_{c1}_{c2}.tsv"
 
     def setup(self) -> None:
-        """Create all standard pipeline directories under output_dir."""
+        """Create all standard pipeline stage directories under output_dir.
+
+        Per-dataset subdirectories inside each stage (01_peak_calling/<ds>/,
+        07_clustering/<ds>/, etc.) are created on-demand by writers via
+        ``path.parent.mkdir(parents=True, exist_ok=True)`` — no pre-creation
+        needed here.
+        """
         for p in (
             self.peak_calling_dir,
             self.cb_filter_dir,
@@ -269,7 +277,6 @@ class DirectoryConfig:
             self.clustering_dir,
             self.differential_dir,
             self.gtf_cache_dir,
-            self.per_dataset_dir,
             self.figures_dir,
             self.switch_dir,
         ):
