@@ -579,6 +579,19 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "lambda_window": args.lambda_window,
     })
 
+    # Per-dataset canonical BED files (posbed / negbed / pasbed) — see
+    # ema/outputs.py for the file layout.  Used by switch_length per_isoform
+    # and any tool that wants the legacy combined BEDs.
+    from ema.outputs import write_per_dataset_beds
+    output_dir = Path(directory_config.output_dir)
+    _ds_pos = {}
+    _ds_neg = {}
+    for _ds_id, _bed in zip(all_dataset_ids_for_pos, all_pos_beds):
+        _ds_pos.setdefault(_ds_id, []).append(_bed)
+    for _ds_id, _bed in zip(all_dataset_ids_for_neg, all_neg_beds):
+        _ds_neg.setdefault(_ds_id, []).append(_bed)
+    write_per_dataset_beds(output_dir, _ds_pos, _ds_neg)
+
     # =========================================================================
     # Single-sample path (len(bam_list) == 1)
     # Copy outputs to legacy paths and continue with the existing pipeline.
@@ -643,6 +656,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "cell_count": len(result.collist),
         })
 
+        # Persist canonical PAS->gene mapping + annotatedpas.bed for
+        # this dataset.  See ema/outputs.py for the file layout.
+        from ema.outputs import write_pas_gene_artifacts
+        write_pas_gene_artifacts(
+            output_dir, bam_list[0][0],
+            result.pas_ids, result.gene_ids,
+        )
+
         # Preprocess and cluster.
         # Pass min_cells/min_genes EXPLICITLY: matrixfilter.preprocessing's
         # default kwargs are evaluated at function-def time, so they snapshot
@@ -668,7 +689,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         # Persist the clustered AnnData to a deterministic on-disk path so the
         # post-pipeline viz orchestrator can reload it (matches the multi-sample
         # layout: per_dataset/<ds>/clusters.h5ad).
-        _ss_h5ad = output_dir / "per_dataset" / "default" / "clusters.h5ad"
+        _ss_h5ad = output_dir / "per_dataset" / bam_list[0][0] / "clusters.h5ad"
         _ss_h5ad.parent.mkdir(parents=True, exist_ok=True)
         clustering(
             adata=adata,
@@ -688,11 +709,11 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
 
         return {  # done with single-sample path; viz happens in run() wrapper
             "is_single_sample": True,
-            "unique_ds_ids": ["default"],
+            "unique_ds_ids": [bam_list[0][0]],
             "bed_paths": all_pos_beds + all_neg_beds,
             "atlas_enabled": bool(directory_config.atlas),
             "single_sample_h5ad": _ss_h5ad,
-            "per_dataset_dir": None,
+            "per_dataset_dir": output_dir / "per_dataset",
         }
 
     # =========================================================================

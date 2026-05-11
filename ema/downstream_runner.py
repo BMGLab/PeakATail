@@ -175,6 +175,15 @@ def run_one_dataset_downstream(
         collist=collist,
         genes=genes,
     )
+
+    # Persist canonical PAS->gene mapping + annotatedpas.bed for this
+    # dataset.  See ema/outputs.py for the layout.
+    from ema.outputs import write_pas_gene_artifacts
+    write_pas_gene_artifacts(
+        Path(per_dataset_dir).parent, ds_id,
+        result.pas_ids, result.gene_ids,
+    )
+
     if progress_client is not None:
         progress_client.advance(1)  # tick 4/6: annotate
 
