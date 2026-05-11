@@ -827,6 +827,87 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                     type(e).__name__, e,
                 )
 
+    # =========================================================================
+    # Tier 3 visualizations — multi-sample cross-dataset plots
+    # Runs after all per-dataset h5ads are written and cross-dataset matching
+    # is complete.  All errors are caught so viz failure never crashes the run.
+    # =========================================================================
+    _ms_engines: list[str] = (
+        plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
+    )
+    if _ms_engines:
+        try:
+            from ema.viz import render_all
+            _top_figs = output_dir / "figures"
+
+            # --- pas_overlap: build per-dataset PAS ID sets from clusters.h5ad ---
+            _pas_sets: dict[str, set[str]] = {}
+            for _ds in unique_ds_ids:
+                _h5 = per_dataset_dir / _ds / "clusters.h5ad"
+                if _h5.exists():
+                    try:
+                        import anndata as ad
+                        _adata = ad.read_h5ad(_h5)
+                        _pas_sets[_ds] = set(_adata.var_names)
+                    except Exception as _h5_exc:
+                        log.warning(
+                            "pas_overlap: could not read %s: %s", _h5, _h5_exc
+                        )
+            if len(_pas_sets) >= 2:
+                render_all(
+                    "pas_overlap",
+                    _pas_sets,
+                    _top_figs / "pas_overlap",
+                    engines=_ms_engines,
+                )
+            else:
+                log.info(
+                    "pas_overlap skipped: need ≥2 datasets with h5ad, got %d",
+                    len(_pas_sets),
+                )
+
+            # --- atlas_snap_diag: only when --atlas was set ---
+            if directory_config.atlas:
+                _snap_mapping = output_dir / "unified" / "atlas_mapping.tsv"
+                _snap_stats: dict = {"snapped": 0, "unsnapped": 0, "snap_distances": []}
+                if _snap_mapping.exists():
+                    try:
+                        _distances: list[int] = []
+                        with open(_snap_mapping) as _f:
+                            next(_f, None)  # skip header
+                            for _line in _f:
+                                _parts = _line.strip().split("\t")
+                                if len(_parts) >= 3:
+                                    _snap_stats["snapped"] = _snap_stats["snapped"] + 1
+                        _snap_stats["snapped"] = int(_snap_stats["snapped"])
+                        # Count unsnapped: total called peaks minus snapped
+                        _all_called = sum(
+                            1 for _b in (
+                                output_dir / "peakcalling"
+                            ).glob("*.pos.bed") for _line in open(_b)
+                            if _line.strip()
+                        )
+                        _snap_stats["unsnapped"] = max(
+                            0, _all_called - _snap_stats["snapped"]
+                        )
+                    except Exception as _snap_exc:
+                        log.warning("atlas_snap_diag stats collection failed: %s", _snap_exc)
+                render_all(
+                    "atlas_snap_diag",
+                    _snap_stats,
+                    _top_figs / "atlas_snap",
+                    engines=_ms_engines,
+                )
+        except Exception as _tier3_exc:
+            log.warning("Tier 3 viz failed: %s", _tier3_exc)
+
+    # --- Run report: always attempt, even if viz failed above ---
+    try:
+        from ema.viz.run_report import generate_run_report
+        generate_run_report(output_dir, output_html=output_dir / "figures" / "run_report.html")
+    except Exception as _report_exc:
+        log.warning("run_report generation failed: %s", _report_exc)
+
     return  # done with multi-sample path
 
 
