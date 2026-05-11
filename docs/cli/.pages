@@ -5,3 +5,6 @@ nav:
   - switch-length.md
   - switch-match.md
   - switch-geneview.md
+  - merge.md
+  - parse-gtf.md
+  - wizard.md

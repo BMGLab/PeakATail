@@ -30,12 +30,18 @@ optionally `obs["leiden"]`, plus a dataset identifier string.
 colored by Leiden cluster label when `obs["leiden"]` is present; otherwise
 rendered in a single color.
 
+![UMAP example: 1051 cells coloured by leiden cluster](../assets/figures/umap_default.png)
+*Real output from the `full_v8` reference run — 12 leiden clusters.*
+
 **When to interpret it:** After clustering, as a sanity check that clusters
 are well-separated and biologically interpretable. Cells of the same cluster
 should form spatially coherent regions. Scattered single-cell islands in the
 middle of a large cluster usually indicate that `n_neighbors` is too low.
 
 ---
+
+![Cluster sizes — bar plot of cells per leiden cluster](../assets/figures/clusters_default.png)
+*Real output: 12 clusters ranging from 14 cells (cluster 11) to 210 cells (cluster 2).*
 
 ## `cluster_sizes` {#cluster_sizes}
 
@@ -75,6 +81,11 @@ A bimodal `per_cell_pas` distribution may indicate a doublet population. Very
 wide peaks (> 500 bp) may indicate that `peackcalling` parameters need tighter
 window constraints.
 
+![peak_qc 4-panel QC](../assets/figures/peak_qc_default.png)
+*Real output from the `full_v8` run — chromosomal coverage (top-left), PAS-per-cell
+distribution (top-right), peak-width histogram (bottom-left), reads-per-cell
+(bottom-right).*
+
 ---
 
 ## `volcano` {#volcano}
@@ -104,6 +115,11 @@ contains PAS used more in cluster 2; upper-left contains PAS used more in
 cluster 1. Points near the horizontal line but inside the vertical lines have
 significant but small effect size; approach with caution.
 
+![Volcano: cluster 0 vs 4](../assets/figures/volcano_0_vs_4.png)
+*Real output from `ema switch diff` on the `full_v8` run. Red dots = PAS used more
+in cluster 4; blue dots = PAS used more in cluster 0. The top-N genes are
+auto-labeled.*
+
 ---
 
 ## `pdui_distribution` {#pdui_distribution}
@@ -123,6 +139,9 @@ Medians are shown as horizontal lines.
 longer 3' UTRs. Clusters with median near 0.0 tend toward shorter UTRs.
 Bimodal violins within a cluster indicate heterogeneous PAS usage and may
 warrant sub-clustering.
+
+![PDUI distribution per cluster](../assets/figures/pdui_distribution.png)
+*Real output: per-cluster violins of `mean_pdui` across the 12 leiden clusters.*
 
 ---
 

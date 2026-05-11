@@ -34,7 +34,22 @@ min_pas_per_cell: 50
 pas_gap: 100
 ```
 
-`merge_strategy: before` tells the `DatasetManager` to concatenate the replicate BAMs with `samtools merge` before peak-calling. This produces more reads at each PAS coordinate and improves peak detection in lowly-covered regions. `merge_strategy: after` instead calls peaks on each BAM independently and then merges the coordinate sets.
+### `merge_strategy` — which one to pick
+
+PeakATail supports three values for `merge_strategy` per dataset. Pick by what
+your BAMs represent biologically:
+
+| `merge_strategy` | Use when… | What it does |
+|---|---|---|
+| `before` | Multiple BAMs are **technical replicates / lanes of the same library** — same cells, same barcodes, different sequencing runs. | `samtools merge` all BAMs into one before peak calling. More reads per PAS → better detection in lowly-covered regions. |
+| `after` | Multiple BAMs are **separate libraries with potentially different cells** but you still want to call them as one logical dataset (rare). | Peak-call each BAM independently, then merge the PAS coordinate sets (union with gap-collapse). PAS counts are NOT summed across BAMs. |
+| `none` | **Single BAM per dataset**. The typical case. | Skip the merge step entirely. |
+
+!!! warning "Don't merge libraries with different cell-barcode spaces"
+    `merge_strategy: before` does NOT correct barcodes. If you merge BAMs from
+    two distinct 10x runs, identical-looking barcodes from different cells
+    will collide. Use multi-dataset mode (one `datasets:` entry per library)
+    + `ema switch match` for cross-library analysis instead.
 
 ---
 

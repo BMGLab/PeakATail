@@ -1,8 +1,17 @@
 # PeakATail
 
-PeakATail detects poly(A) sites (PAS) at single-cell resolution from 10x Chromium scRNA-seq BAM files,
-clusters cells by their 3' UTR usage patterns, and tests for differential alternative polyadenylation (APA)
-between cell types or conditions. The tool is packaged as the `ema` CLI, installable via `pip` or `uv`.
+PeakATail detects poly(A) sites (PAS) at single-cell resolution from any scRNA-seq BAM
+that carries cell-barcode (`CB`) and UMI (`UB`) tags — STARsolo, CellRanger, Alevin-fry,
+or any aligner that emits the standard 10x-style tag schema. It clusters cells by their
+3' UTR usage patterns and tests for differential alternative polyadenylation (APA) between
+cell types or conditions. The tool is packaged as the `ema` CLI, installable via `pip` or
+`uv`.
+
+!!! tip "Input requirements"
+    PeakATail does **not** correct cell barcodes — your aligner must already have applied a
+    barcode whitelist. The BAM must carry `CB:Z` (corrected barcode) and `UB:Z` (corrected UMI)
+    tags. See [Preparing your BAM](#preparing-your-bam) below for the recommended STAR/STARsolo
+    command.
 
 ## Why PeakATail
 
@@ -43,6 +52,44 @@ PeakATail requires **samtools** and **bedtools** on your system path, and Python
     ```bash
     sudo apt-get install samtools bedtools   # Debian / Ubuntu
     ```
+
+## Preparing your BAM
+
+PeakATail reads only what's already in your BAM — it does **not** correct
+barcodes, demultiplex reads, or align FASTQs. You need a coord-sorted BAM with
+the standard 10x-style `CB:Z` (corrected cell barcode) and `UB:Z` (corrected
+UMI) tags. The recommended STARsolo invocation (matches the protocol the
+reference benchmarks were run on):
+
+```bash
+STAR \
+    --runThreadN 16 \
+    --genomeDir <STAR_INDEX> \
+    --readFilesIn R2.fastq.gz R1.fastq.gz \
+    --readFilesCommand zcat \
+    --outFileNamePrefix sample_ \
+    --outSAMtype BAM SortedByCoordinate \
+    --outSAMattributes NH HI nM AS CR UR CB UB GX GN sS sQ sM \
+    --soloType CB_UMI_Simple \
+    --soloCBstart 1  --soloCBlen 16 \
+    --soloUMIstart 17 --soloUMIlen 10 \
+    --soloCBwhitelist /path/to/737K-august-2016.txt
+```
+
+!!! warning "Barcode whitelist is required"
+    `--soloCBwhitelist` is mandatory. PeakATail trusts the `CB:Z` tag — if you
+    skip the whitelist, sequencing errors will appear as thousands of
+    spurious "cells". For 10x v2/v3 the whitelists ship with CellRanger
+    (`737K-august-2016.txt`, `3M-february-2018.txt`). For Drop-seq /
+    inDrops / smart-seq3 / etc., use the protocol-specific whitelist that
+    your aligner accepts (see your aligner's docs).
+
+!!! note "What about CellRanger / Alevin-fry / kallisto|bustools?"
+    Any aligner that emits the standard `CB`/`UB` tag schema works. CellRanger
+    BAMs work out-of-the-box. Alevin-fry emits the same tags via its
+    `--sketch` / `--rad`-then-`convert` flow. For salmon/kallisto-bustools you
+    need to convert the busfile back to a tagged BAM before passing it to
+    PeakATail.
 
 ## Quick start
 

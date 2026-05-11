@@ -20,9 +20,9 @@ Bulk RNA-seq averages APA signals over thousands of cells and can detect only th
 
 Several published studies have documented this:
 
-- Bai et al. (2020) showed cell-type-specific APA in complex tissues using single-cell data, finding that APA patterns distinguish cell types that are otherwise similar by gene expression alone. (DOI: [10.1101/2020.01.23.917104](https://doi.org/10.1101/2020.01.23.917104))
+- Bai et al. (2020) showed cell-type-specific APA in complex tissues using single-cell data, finding that APA patterns distinguish cell types that are otherwise similar by gene expression alone. (DOI: [10.1101/2020.07.30.229096](https://doi.org/10.1101/2020.07.30.229096))
 - Tian et al. (2005) established the role of APA in regulating 3'UTR length across tissues and development stages, providing the foundational evidence that proximal/distal PAS selection is a widespread regulatory layer. (DOI: [10.1038/ng1533](https://doi.org/10.1038/ng1533))
-- The PASTA paper (Kowalski et al., 2019) specifically demonstrated that single-cell APA patterns can cluster cells into biologically meaningful groups that do not overlap with transcription-based clusters, motivating the PAS-by-cell matrix approach that PeakATail implements. (DOI: [10.1038/s41592-019-0572-7](https://doi.org/10.1038/s41592-019-0572-7))
+- Wu et al. (2021) developed scAPAtrap, demonstrating that single-cell APA sites can be detected genome-wide and that APA usage heterogeneity between cell types is a reproducible biological signal distinct from gene expression differences. (DOI: [10.1093/bib/bbaa273](https://doi.org/10.1093/bib/bbaa273))
 
 ---
 

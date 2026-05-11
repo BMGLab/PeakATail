@@ -17,8 +17,9 @@ The full content of `example.yaml` with explanations for every key:
 ```yaml
 # my_run.yaml
 # Each dataset is one logical sample group. BAMs within a dataset share
-# cell barcodes (same 10x library). merge_strategy controls how multiple
-# BAMs are combined before peak-calling.
+# cell barcodes (same sequencing library — 10x, STARsolo, Alevin-fry, or
+# any aligner emitting CB:Z / UB:Z tags). merge_strategy controls how
+# multiple BAMs are combined before peak-calling (see Tutorial 3).
 #
 # merge_strategy options:
 #   before  — merge all BAMs into one, then peak-call (more signal)
@@ -44,7 +45,7 @@ output_dir: emaout
 
 # Read geometry — match your sequencing protocol
 seqlen: 150      # total read length
-cb_len: 16       # cell barcode length (10x v2/v3 = 16)
+cb_len: 16       # cell barcode length: 10x v2/v3 = 16, Drop-seq = 12, etc.
 barcode_tag: CB  # BAM tag holding the cell barcode
 
 # Cell filtering
