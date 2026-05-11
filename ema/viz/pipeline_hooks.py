@@ -451,17 +451,36 @@ def render_switch_length_outputs(
         figs_dir.mkdir(parents=True, exist_ok=True)
 
         # --- pdui_distribution ---
-        if pdui_df is not None and "pdui" in pdui_df.columns:
+        #
+        # Previous implementation assumed ``pdui_df`` was indexed by PAS (one
+        # row per PAS aligned to adata.var) and tried to multiply X * pas_pdui
+        # to get a per-cell weighted score.  But the PDUI strategies produce
+        # LONG format — one row per (gene, transcript, cell) — so the length
+        # check ``len(pdui_df) == X.shape[1]`` was *never* true and the
+        # fallback ``np.zeros(...)`` made every per-cell score 0.  That's the
+        # "all PDUI distributions are zero" bug the user reported.
+        #
+        # The correct aggregation: mean PDUI per cell across all (gene,
+        # transcript) entries, joined onto adata.obs by barcode.  NaN values
+        # in the long frame are skipped by groupby().mean(), so cells with
+        # no detectable multi-PAS genes correctly land at NaN (not 0).
+        if pdui_df is not None and "pdui" in pdui_df.columns and "cell" in pdui_df.columns:
             score_key = "mean_pdui"
-            last_adata.obs[score_key] = _np.nan
-            X = last_adata.X.toarray() if _sp.issparse(last_adata.X) else last_adata.X
-            if X.shape[1] > 0:
-                pas_pdui = (
-                    pdui_df["pdui"].values
-                    if len(pdui_df) == X.shape[1]
-                    else _np.zeros(X.shape[1])
-                )
-                last_adata.obs[score_key] = (X * pas_pdui).sum(axis=1) / (X.sum(axis=1) + 1e-9)
+            per_cell = (
+                pdui_df.dropna(subset=["pdui"])
+                       .groupby("cell")["pdui"].mean()
+            )
+            last_adata.obs[score_key] = (
+                last_adata.obs_names.to_series().map(per_cell)
+            )
+            n_cells_with_score = int(last_adata.obs[score_key].notna().sum())
+            log.info(
+                "ema switch length: per-cell PDUI computed (%d/%d cells have a "
+                "non-NaN mean PDUI; mean=%.3f, std=%.3f)",
+                n_cells_with_score, last_adata.n_obs,
+                float(last_adata.obs[score_key].mean(skipna=True)),
+                float(last_adata.obs[score_key].std(skipna=True)),
+            )
             w = render_all(
                 "pdui_distribution", (last_adata, score_key),
                 figs_dir / "pdui_distribution", engines=engines,
