@@ -67,7 +67,8 @@ def _do_leiden_tfidf(adata: ad.AnnData,
                      n_neighbors=30,
                      tfidf_scale_factor=1e4,
                      depth_corr_threshold=0.75,
-                     n_svd_components=50):
+                     n_svd_components=50,
+                     **_ignored):  # n_top_hvg etc. — libsize-only knobs
     """Run the TF-IDF + LSI + Leiden pipeline."""
     strategy = get_strategy("leiden_tfidf",
                             resolution=resolution,
@@ -97,7 +98,8 @@ def _do_leiden_libsize(adata: ad.AnnData,
                        output_h5ad=None,
                        n_neighbors=10,
                        n_svd_components=50,
-                       n_top_hvg=2000):
+                       n_top_hvg=2000,
+                       **_ignored):  # tfidf_scale_factor, depth_corr_threshold — tfidf-only
     """Run the library-size normalization + PCA + Leiden pipeline."""
     strategy = get_strategy("leiden_libsize",
                             resolution=resolution,
