@@ -382,10 +382,18 @@ def render_switch_diff_outputs(
         figs_dir.mkdir(parents=True, exist_ok=True)
 
         # --- volcano: one per pair ---
+        # Pass FDR through so the volcano cutoff matches the user's --fdr.
+        # log2fc_thresh stays at the renderer default until it's surfaced via
+        # RunConfig (Wave 2).
         vol_count = 0
         for (c1, c2), df in pair_results.items():
             stem = f"volcano_{c1}_vs_{c2}" if c2 else "volcano_omnibus"
-            w = render_all("volcano", df, figs_dir / stem, engines=engines)
+            w = render_all(
+                "volcano",
+                {"df": df, "fdr": fdr},
+                figs_dir / stem,
+                engines=engines,
+            )
             vol_count += len(w)
         log.info("ema switch diff: volcano=%d file(s)", vol_count)
 

@@ -5,7 +5,7 @@ This allows users to choose between discovery mode (all peaks) and
 publication mode (filtered, high-confidence peaks).
 
 Usage:
-    from ema.filters import apply_filters
+    from ema.experimental.peak_filters import apply_filters
     stats = apply_filters(input_bed, output_bed, config)
 """
 
