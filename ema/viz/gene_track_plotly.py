@@ -161,20 +161,16 @@ class GeneTrackPlotly(VizStrategy):
     def _select_clusters(
         panel: GenePanel, top_n: int
     ) -> tuple[list[int], bool]:
-        """Pick up to *top_n* cluster indices, ranked by total reads for the gene.
+        """Pick up to *top_n* non-empty cluster indices by total reads.
 
-        Returns:
-            (selected_indices_in_display_order, was_capped)
+        Aligned with GeneTrackMatplotlib._select_top_clusters: clusters whose
+        row of ``reads`` sums to zero are excluded before capping.
         """
-        # Total reads per cluster for this gene.
-        total_reads = panel.reads.sum(axis=1)  # shape (n_clusters,)
-        ranked = sorted(
-            range(len(panel.clusters)),
-            key=lambda i: total_reads[i],
-            reverse=True,
-        )
+        total_reads = panel.reads.sum(axis=1)
+        non_empty = [i for i in range(len(panel.clusters)) if total_reads[i] > 0]
+        ranked = sorted(non_empty, key=lambda i: total_reads[i], reverse=True)
         capped = len(ranked) > top_n
-        selected = sorted(ranked[:top_n])  # restore display order
+        selected = sorted(ranked[:top_n])
         return selected, capped
 
     def _build_figure(
