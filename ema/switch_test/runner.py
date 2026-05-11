@@ -64,6 +64,7 @@ def _dispatch_pair(
     cluster_labels: pd.Series,
     n_jobs_inner: int,
     min_cells_per_group: int = 10,
+    pas_gene_map: dict[str, str] | None = None,
 ) -> tuple[str, str, pd.DataFrame]:
     """Top-level wrapper for ``run_one_pair`` suitable for ``Pool.imap_unordered``.
 
@@ -94,6 +95,7 @@ def _dispatch_pair(
         c2,
         n_jobs_inner=n_jobs_inner,
         min_cells_per_group=min_cells_per_group,
+        pas_gene_map=pas_gene_map,
     )
 
 
@@ -227,6 +229,29 @@ def run_diff(
                 len(pairs), n_outer, n_inner,
             )
 
+            # Build pas_gene_map for the WITHIN-GENE Fisher framing.  The
+            # fisher strategy uses this to group PAS by gene; nb_pairwise /
+            # nb_multi accept-and-ignore via **_ignored.  When the h5ad has
+            # no gene_id column the map is left as None and Fisher logs a
+            # warning + falls back to the (less APA-correct) global path.
+            pas_gene_map: dict[str, str] | None = None
+            if "gene_id" in adata.var.columns:
+                pas_gene_map = {
+                    str(k): str(v)
+                    for k, v in adata.var["gene_id"].dropna().items()
+                    if str(v).strip()
+                }
+                log.info(
+                    "run_diff: pas_gene_map: %d PAS -> %d unique genes "
+                    "(within-gene Fisher comparison enabled)",
+                    len(pas_gene_map), len(set(pas_gene_map.values())),
+                )
+            else:
+                log.warning(
+                    "run_diff: adata.var has no 'gene_id' column; Fisher "
+                    "will fall back to cross-gene comparison."
+                )
+
             pair_results: dict[tuple[str, str], pd.DataFrame] = {}
 
             if n_outer <= 1 or len(pairs) <= 1:
@@ -235,6 +260,7 @@ def run_diff(
                         strategy, diff_df, cluster_labels, c1, c2,
                         n_jobs_inner=n_inner,
                         min_cells_per_group=min_cells_per_group,
+                        pas_gene_map=pas_gene_map,
                     )
                     pair_results[(c1, c2)] = df
             else:
@@ -245,6 +271,7 @@ def run_diff(
                     cluster_labels=cluster_labels,
                     n_jobs_inner=n_inner,
                     min_cells_per_group=min_cells_per_group,
+                    pas_gene_map=pas_gene_map,
                 )
                 ctx = multiprocessing.get_context("spawn")
                 with ctx.Pool(n_outer) as pool:

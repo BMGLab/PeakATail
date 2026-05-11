@@ -100,6 +100,11 @@ def _pdui_per_gene_gene_level(
             "distal_pas_id": distal_id,
             "cell": cell,
             "pdui": float(pdui_vals[i]),
+            # Raw counts that produced this PDUI — lets a user audit the row
+            # without re-querying the count matrix.
+            "proximal_reads": float(proximal[i]),
+            "distal_reads": float(distal[i]),
+            "total_reads": float(proximal[i] + distal[i]),
         }
         for i, cell in enumerate(cells)
     ]
@@ -154,6 +159,9 @@ def _pdui_per_gene_isoform_level(
                     "distal_pas_id": distal_id,
                     "cell": cell,
                     "pdui": float(pdui_vals[i]),
+                    "proximal_reads": float(proximal[i]),
+                    "distal_reads": float(distal[i]),
+                    "total_reads": float(proximal[i] + distal[i]),
                 }
             )
 
@@ -286,7 +294,10 @@ class ClassicPDUIStrategy(PDUIStrategy):
                     {"gene_id": gid, "transcript_id": "_gene_",
                      "proximal_pas_id": proximal_id,
                      "distal_pas_id": distal_id,
-                     "cell": c, "pdui": float(pdui_vals[i])}
+                     "cell": c, "pdui": float(pdui_vals[i]),
+                     "proximal_reads": float(proximal[i]),
+                     "distal_reads": float(distal[i]),
+                     "total_reads": float(proximal[i] + distal[i])}
                     for i, c in enumerate(cells)
                 ]
 

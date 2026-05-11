@@ -34,6 +34,7 @@ class DiffAPAStrategy(ABC):
         cluster1: str | None = None,
         cluster2: str | None = None,
         min_cells_per_group: int = 10,
+        pas_gene_map: dict[str, str] | None = None,
         n_jobs: int = -1,
     ) -> pd.DataFrame:
         """Run differential APA test across PAS rows.

@@ -45,11 +45,8 @@ def _proportions_for_rows(
     row_indices: list[int],
     count_matrix: pd.DataFrame,
     pseudocount: float,
-) -> np.ndarray:
-    """Return a (len(row_indices), n_cells) float64 array of proportions.
-
-    Uses sparse normalization: extracts rows as a CSR sub-matrix, sums
-    across PAS (axis=0 of transposed), then divides.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return per-PAS proportions plus the raw read counts behind them.
 
     Args:
         row_indices: Positional (iloc) indices into *count_matrix*.
@@ -57,18 +54,23 @@ def _proportions_for_rows(
         pseudocount: Added to each count before normalization.
 
     Returns:
-        float64 array of shape ``(n_selected_pas, n_cells)``.
-        NaN where column total = 0.
-    """
-    # Extract sub-matrix as dense (small slice per gene)
-    sub = count_matrix.iloc[row_indices].values.astype(float)
-    if pseudocount != 0.0:
-        sub = sub + pseudocount
+        ``(props, reads, totals)``:
+          * ``props``  — (n_selected_pas, n_cells) proportion (NaN if col total 0)
+          * ``reads``  — (n_selected_pas, n_cells) raw counts BEFORE pseudocount
+          * ``totals`` — (n_cells,) sum of reads across selected PAS (the
+            per-cell, per-gene denominator)
 
+        Returning reads + totals so the row-wise TSV can carry the raw
+        evidence behind each proportion (``reads_at_pas`` and
+        ``total_reads_gene``).  Researchers can then audit a 0.8
+        proportion as e.g. "8 of 10 reads", not just trust the ratio.
+    """
+    reads = count_matrix.iloc[row_indices].values.astype(float)
+    sub = reads + pseudocount if pseudocount != 0.0 else reads
     col_totals = sub.sum(axis=0)  # (n_cells,)
     with np.errstate(divide="ignore", invalid="ignore"):
         props = np.where(col_totals > 0, sub / col_totals, np.nan)
-    return props
+    return props, reads, col_totals
 
 
 def _process_gene_per_gene(
@@ -103,8 +105,9 @@ def _process_gene_per_gene(
         return None
 
     iloc_indices = [count_matrix.index.get_loc(pid) for pid in valid]
-    props = _proportions_for_rows(iloc_indices, count_matrix, pseudocount)
-    # props: (n_pas, n_cells), float64
+    props, reads, totals = _proportions_for_rows(
+        iloc_indices, count_matrix, pseudocount,
+    )
 
     if cells is None:
         cells = np.asarray(count_matrix.columns.tolist(), dtype=object)
@@ -116,6 +119,7 @@ def _process_gene_per_gene(
         (rank_map.get(p, -1) for p in valid), dtype=np.int64, count=n_pas,
     )
     pas_arr = np.asarray(valid, dtype=np.int64)
+    totals_tiled = np.tile(totals.astype(np.float64), n_pas)
 
     return {
         "gene_id": np.full(n_total, gene_id, dtype=object),
@@ -124,6 +128,8 @@ def _process_gene_per_gene(
         "rank": np.repeat(ranks_arr, n_cells),
         "cell": np.tile(cells, n_pas),
         "proportion": props.reshape(n_total).astype(np.float64, copy=False),
+        "reads_at_pas": reads.reshape(n_total).astype(np.float64, copy=False),
+        "total_reads_gene": totals_tiled,
     }
 
 
@@ -155,9 +161,12 @@ def _process_gene_per_isoform(
         pas_ids_t = [p for p, _ in valid_pairs]
         ranks_t = [r for _, r in valid_pairs]
         iloc_indices = [count_matrix.index.get_loc(pid) for pid in pas_ids_t]
-        props = _proportions_for_rows(iloc_indices, count_matrix, pseudocount)
+        props, reads, totals = _proportions_for_rows(
+            iloc_indices, count_matrix, pseudocount,
+        )
         n_pas = props.shape[0]
         n_total = n_pas * n_cells
+        totals_tiled = np.tile(totals.astype(np.float64), n_pas)
 
         chunks.append({
             "gene_id": np.full(n_total, gene_id, dtype=object),
@@ -166,6 +175,8 @@ def _process_gene_per_isoform(
             "rank": np.repeat(np.asarray(ranks_t, dtype=np.int64), n_cells),
             "cell": np.tile(cells, n_pas),
             "proportion": props.reshape(n_total).astype(np.float64, copy=False),
+            "reads_at_pas": reads.reshape(n_total).astype(np.float64, copy=False),
+            "total_reads_transcript": totals_tiled,
         })
 
     if not chunks:
@@ -310,15 +321,21 @@ class ProportionPDUIStrategy(PDUIStrategy):
         # a long-format dict-per-row list peaks at ~10 GB on real datasets;
         # column-wise concat is bounded by the final DataFrame footprint.
         chunks = [r for r in results if r is not None]
+        # Column order: identifiers, score, raw read evidence.
+        # The denominator column differs by aggregation:
+        #   per_gene     -> total_reads_gene
+        #   per_isoform  -> total_reads_transcript
+        if aggregation == "per_gene":
+            col_order = ("gene_id", "transcript_id", "pas_id", "rank", "cell",
+                         "proportion", "reads_at_pas", "total_reads_gene")
+        else:
+            col_order = ("gene_id", "transcript_id", "pas_id", "rank", "cell",
+                         "proportion", "reads_at_pas", "total_reads_transcript")
         if not chunks:
-            return pd.DataFrame(
-                columns=["gene_id", "transcript_id", "pas_id", "rank",
-                         "cell", "proportion"]
-            )
+            return pd.DataFrame(columns=list(col_order))
         df = pd.DataFrame({
             col: np.concatenate([c[col] for c in chunks])
-            for col in ("gene_id", "transcript_id", "pas_id", "rank",
-                        "cell", "proportion")
+            for col in col_order
         })
         df["proportion"] = df["proportion"].astype("float64", copy=False)
         return df

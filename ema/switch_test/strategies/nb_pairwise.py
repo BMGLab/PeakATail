@@ -236,6 +236,7 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         cluster2: str | None = None,
         min_cells_per_group: int = 10,
         n_jobs: int = -1,
+        **_ignored,  # pas_gene_map is fisher-only — accept & drop
     ) -> pd.DataFrame:
         """Run NB pairwise test.
 

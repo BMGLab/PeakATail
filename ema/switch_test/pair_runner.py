@@ -29,6 +29,7 @@ def run_one_pair(
     c2: str,
     n_jobs_inner: int = 1,
     min_cells_per_group: int = 10,
+    pas_gene_map: dict[str, str] | None = None,
 ) -> tuple[str, str, pd.DataFrame]:
     """Run a single cluster-pair differential APA test.
 
@@ -56,6 +57,10 @@ def run_one_pair(
     from ema.switch_test.strategies import get_diff_strategy
 
     strategy = get_diff_strategy(strategy_name)
+    # pas_gene_map is keyword-only on the strategy interface; pass it through
+    # only when the caller supplied one so strategies that ignore it (NB)
+    # don't see an unexpected None in their **kwargs path.
+    extra: dict = {"pas_gene_map": pas_gene_map} if pas_gene_map is not None else {}
     result_df = strategy.test(
         count_matrix=diff_df,
         cluster_labels=cluster_labels,
@@ -63,5 +68,6 @@ def run_one_pair(
         cluster2=c2,
         min_cells_per_group=min_cells_per_group,
         n_jobs=n_jobs_inner,
+        **extra,
     )
     return (c1, c2, result_df)

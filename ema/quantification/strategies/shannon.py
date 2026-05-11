@@ -112,6 +112,7 @@ def _process_gene_per_gene(
     entropy, norm_entropy, n_pas = _shannon_from_counts(sub, pseudocount)
     cells = count_matrix.columns.tolist()
     pas_ids_str = ";".join(str(p) for p in valid)
+    total_reads_per_cell = sub.sum(axis=0)  # (n_cells,) — gene-level read depth
 
     return [
         {
@@ -122,6 +123,7 @@ def _process_gene_per_gene(
             "entropy": float(entropy[i]),
             "normalized_entropy": float(norm_entropy[i]),
             "n_pas": n_pas,
+            "total_reads_gene": float(total_reads_per_cell[i]),
         }
         for i, cell in enumerate(cells)
     ]
@@ -157,6 +159,7 @@ def _process_gene_per_isoform(
         entropy, norm_entropy, n_pas = _shannon_from_counts(sub, pseudocount)
         # Materialise once; same for every cell of this transcript.
         pas_ids_str = ";".join(str(p) for p in valid)
+        total_reads_per_cell = sub.sum(axis=0)
 
         for i, cell in enumerate(cells):
             rows.append({
@@ -167,6 +170,7 @@ def _process_gene_per_isoform(
                 "entropy": float(entropy[i]),
                 "normalized_entropy": float(norm_entropy[i]),
                 "n_pas": n_pas,
+                "total_reads_transcript": float(total_reads_per_cell[i]),
             })
 
     return rows

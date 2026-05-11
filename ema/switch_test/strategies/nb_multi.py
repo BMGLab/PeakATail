@@ -229,6 +229,7 @@ class NbMultiStrategy(DiffAPAStrategy):
         cluster2: str | None = None,   # ignored for multi-condition
         min_cells_per_group: int = 10,
         n_jobs: int = -1,
+        **_ignored,  # pas_gene_map is fisher-only
     ) -> pd.DataFrame:
         """Run NB omnibus test across all cluster levels.
 
