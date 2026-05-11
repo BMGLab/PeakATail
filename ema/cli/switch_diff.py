@@ -12,6 +12,7 @@ from ema.cli.common import (
     resolve_subcommand_output_dir,
 )
 from ema.cli.defaults import DEFAULTS
+from ema.progress import ProgressManager
 
 log = logging.getLogger(__name__)
 
@@ -99,21 +100,23 @@ def diff(ctx: click.Context, **kwargs) -> None:
         log.info("ema switch diff: %d h5ad input(s); strategy=%s",
                  len(kwargs["h5ad"]), kwargs["strategy"])
         from ema.switch_test.runner import run_diff
-        pair_results = run_diff(
-            h5ad_paths=list(kwargs["h5ad"]),
-            pasbed=kwargs["pasbed"],
-            gtf=kwargs["gtf"],
-            output_dir=str(out_dir),
-            cluster_pairs=kwargs["cluster_pairs"],
-            cluster_key=kwargs["cluster_key"],
-            marker_top_n=kwargs["marker_top_n"],
-            marker_method=kwargs["marker_method"],
-            strategy=kwargs["strategy"],
-            fdr=kwargs["fdr"],
-            threads=kwargs["threads"],
-            per_worker_mb=kwargs["per_worker_mb"],
-            min_cells_per_group=kwargs["min_cells_per_group"],
-        )
+        with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:
+            pair_results = run_diff(
+                h5ad_paths=list(kwargs["h5ad"]),
+                pasbed=kwargs["pasbed"],
+                gtf=kwargs["gtf"],
+                output_dir=str(out_dir),
+                cluster_pairs=kwargs["cluster_pairs"],
+                cluster_key=kwargs["cluster_key"],
+                marker_top_n=kwargs["marker_top_n"],
+                marker_method=kwargs["marker_method"],
+                strategy=kwargs["strategy"],
+                fdr=kwargs["fdr"],
+                threads=kwargs["threads"],
+                per_worker_mb=kwargs["per_worker_mb"],
+                min_cells_per_group=kwargs["min_cells_per_group"],
+                progress_manager=pm,
+            )
 
         # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
         # CLI command).  Failures are warned, never raised.

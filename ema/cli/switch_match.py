@@ -12,6 +12,7 @@ from ema.cli.common import (
     resolve_subcommand_output_dir,
 )
 from ema.cli.defaults import DEFAULTS
+from ema.progress import ProgressManager
 
 log = logging.getLogger(__name__)
 
@@ -90,12 +91,30 @@ def match(ctx: click.Context, **kwargs) -> None:
             mnn_components=kwargs["mnn_components"],
             mnn_k_neighbors=kwargs["mnn_k_neighbors"],
         )
-        df = strat.match(
-            list(kwargs["h5ad"]),
-            [str(i) for i in range(len(kwargs["h5ad"]))],  # synthetic ds ids
-            n_top_markers=kwargs["n_top_markers"],
-            n_jobs=kwargs["threads"] or -1,
-        )
+        n_datasets = len(kwargs["h5ad"])
+        with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:
+            # Marker ranking: one tick per dataset (only meaningful for >=5 datasets).
+            if n_datasets >= 5:
+                _marker_stage = pm.add_stage("Marker ranking", total=n_datasets)
+                _marker_client = pm.client(_marker_stage)
+            else:
+                _marker_client = None
+
+            # Cross-dataset matching: indeterminate spinner (opaque single call).
+            _match_stage = pm.add_stage("Cross-dataset matching", total=None)
+
+            df = strat.match(
+                list(kwargs["h5ad"]),
+                [str(i) for i in range(n_datasets)],  # synthetic ds ids
+                n_top_markers=kwargs["n_top_markers"],
+                n_jobs=kwargs["threads"] or -1,
+            )
+            # Advance marker stage if it was created (approximation — strat ran internally).
+            if _marker_client is not None:
+                _marker_client.advance(n_datasets)
+            # Mark matching stage complete by updating its total to 1 and advancing.
+            pm.client(_match_stage).advance(1)
+
         out_file = out_dir / "cluster_match.tsv"
         df.to_csv(out_file, sep="\t")
         log.info("Wrote %s (%d rows)", out_file, len(df))

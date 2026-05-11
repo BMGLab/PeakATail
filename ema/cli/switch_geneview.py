@@ -12,6 +12,7 @@ from ema.cli.common import (
     parse_plot_engines,
     resolve_subcommand_output_dir,
 )
+from ema.progress import ProgressManager
 
 log = logging.getLogger(__name__)
 
@@ -229,39 +230,50 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         figs_dir.mkdir(parents=True, exist_ok=True)
 
         rendered_count = 0
-        for gene_id in gene_list:
-            # Optionally load isoform structure.
-            isoforms = None
-            if kwargs.get("gtf"):
-                try:
-                    isoforms = load_isoforms_for_gene(Path(kwargs["gtf"]), gene_id)
-                    log.debug(
-                        "Loaded %d isoform(s) for %s from GTF", len(isoforms), gene_id
-                    )
-                except Exception as exc:
-                    log.warning(
-                        "load_isoforms_for_gene failed for %s: %s", gene_id, exc
-                    )
+        with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:
+            if len(gene_list) >= 5:
+                _gene_stage = pm.add_stage("Gene rendering", total=len(gene_list))
+                _gene_client = pm.client(_gene_stage)
+            else:
+                _gene_client = None
 
-            panel = build_gene_panel(
-                gene_id=gene_id,
-                adata=adata,
-                pasbed=pasbed,
-                cluster_key=kwargs["cluster_key"],
-                isoforms=isoforms,
-            )
-            if panel is None:
-                log.warning(
-                    "Gene %s has no PAS in the AnnData or pasbed — skipping.", gene_id
+            for gene_id in gene_list:
+                # Optionally load isoform structure.
+                isoforms = None
+                if kwargs.get("gtf"):
+                    try:
+                        isoforms = load_isoforms_for_gene(Path(kwargs["gtf"]), gene_id)
+                        log.debug(
+                            "Loaded %d isoform(s) for %s from GTF", len(isoforms), gene_id
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "load_isoforms_for_gene failed for %s: %s", gene_id, exc
+                        )
+
+                panel = build_gene_panel(
+                    gene_id=gene_id,
+                    adata=adata,
+                    pasbed=pasbed,
+                    cluster_key=kwargs["cluster_key"],
+                    isoforms=isoforms,
                 )
-                continue
+                if panel is None:
+                    log.warning(
+                        "Gene %s has no PAS in the AnnData or pasbed — skipping.", gene_id
+                    )
+                    if _gene_client is not None:
+                        _gene_client.advance(1)
+                    continue
 
-            basepath = figs_dir / f"gene_{gene_id}"
-            written = render_all("gene_track", panel, basepath, engines=engines)
-            log.info(
-                "Gene %s: %d figure file(s) written", gene_id, len(written)
-            )
-            rendered_count += 1
+                basepath = figs_dir / f"gene_{gene_id}"
+                written = render_all("gene_track", panel, basepath, engines=engines)
+                log.info(
+                    "Gene %s: %d figure file(s) written", gene_id, len(written)
+                )
+                rendered_count += 1
+                if _gene_client is not None:
+                    _gene_client.advance(1)
 
         log.info(
             "ema switch geneview complete: %d/%d gene(s) rendered into %s",

@@ -229,9 +229,16 @@ def peak_calling(
     _open_threads = 1 if region is not None else bam_threads
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=_open_threads)
     # Report total chromosomes to the progress bar (monolithic full-scan only).
+    # `len(bamfile.references)` includes every reference in the BAM header —
+    # for GRCh38 that's ~194 names with alts/decoys/HLA, most of which carry
+    # zero reads.  We only fire one advance per chrom that actually has reads,
+    # so denominate by `references with mapped reads` × 2 (one peak_calling
+    # invocation per strand).  `get_index_statistics()` is O(n_refs) and reads
+    # from the BAI, so it's effectively free.
     if progress_client is not None and region is None:
         try:
-            progress_client.set_total(len(bamfile.references))
+            nonempty = sum(1 for s in bamfile.get_index_statistics() if s.mapped > 0)
+            progress_client.set_total(max(1, nonempty) * 2)
         except Exception:
             pass
     matrix = open(matrixpath, "w")

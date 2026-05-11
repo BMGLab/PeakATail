@@ -558,8 +558,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
 
             # Pass the progress client to the pos-strand call so the bar
             # shows per-chromosome progress.  set_total() fires once the BAM
-            # is opened; advance() fires on each chromosome boundary.  The
-            # neg-strand call gets None to avoid double-counting.
+            # is opened; advance() fires on each chromosome boundary.  Both
+            # strand passes share the same client — peak_calling() sets total
+            # to `nonempty_refs * 2` so the advances from both passes fill
+            # the bar.
             _peak_client = _client(_peak_stage)
             peak_calling(
                 False,
@@ -574,6 +576,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                 bedfilepath=str(neg_bed),
                 matrixpath=str(neg_mtx),
                 bamfile_dir=str(bam_path),
+                progress_client=_peak_client,
                 **peak_kwargs,
             )
 

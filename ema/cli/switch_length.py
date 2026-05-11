@@ -12,6 +12,7 @@ from ema.cli.common import (
     resolve_subcommand_output_dir,
 )
 from ema.cli.defaults import DEFAULTS
+from ema.progress import ProgressManager
 
 log = logging.getLogger(__name__)
 
@@ -95,18 +96,28 @@ def length(ctx: click.Context, **kwargs) -> None:
     try:
         log.info("ema switch length: strategy=%s", kwargs["strategy"])
         from ema.switch_test.runner import run_length
-        pdui_df, last_adata = run_length(
-            h5ad_paths=list(kwargs["h5ad"]),
-            gtf=kwargs["gtf"],
-            output_dir=str(out_dir),
-            cluster_pairs=kwargs["cluster_pairs"],
-            cluster_key=kwargs["cluster_key"],
-            strategy=kwargs["strategy"],
-            isoform_agg=kwargs["isoform_agg"],
-            isoform_collapse=kwargs["isoform_collapse"],
-            threads=kwargs["threads"],
-            pseudocount=kwargs["pdui_pseudocount"],
-        )
+        n_h5ads = len(kwargs["h5ad"])
+        with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:
+            # PDUI compute: one tick per h5ad processed (strategy compute is opaque).
+            if n_h5ads >= 5:
+                _pdui_stage = pm.add_stage("PDUI compute", total=n_h5ads)
+                _pdui_client = pm.client(_pdui_stage)
+            else:
+                _pdui_client = None
+
+            pdui_df, last_adata = run_length(
+                h5ad_paths=list(kwargs["h5ad"]),
+                gtf=kwargs["gtf"],
+                output_dir=str(out_dir),
+                cluster_pairs=kwargs["cluster_pairs"],
+                cluster_key=kwargs["cluster_key"],
+                strategy=kwargs["strategy"],
+                isoform_agg=kwargs["isoform_agg"],
+                isoform_collapse=kwargs["isoform_collapse"],
+                threads=kwargs["threads"],
+                pseudocount=kwargs["pdui_pseudocount"],
+                progress_client=_pdui_client,
+            )
 
         from ema.cli.common import parse_plot_engines
         from ema.viz.pipeline_hooks import render_switch_length_outputs

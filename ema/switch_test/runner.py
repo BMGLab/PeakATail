@@ -113,6 +113,7 @@ def run_diff(
     threads: int | None,
     per_worker_mb: int,
     min_cells_per_group: int = 10,
+    progress_manager=None,
 ) -> dict[tuple[str, str], pd.DataFrame]:
     """Library-level entry point for differential APA testing.
 
@@ -136,6 +137,9 @@ def run_diff(
         per_worker_mb: Estimated peak RAM per parallel worker (MB).
         min_cells_per_group: Minimum cells (with nonzero counts for NB strategies)
             in each cluster for a PAS to enter differential testing. Default 10.
+        progress_manager: Optional :class:`~ema.progress.ProgressManager`.  When
+            supplied, a ``"Cluster-pair testing"`` stage is registered and
+            advanced once per pair completed (both serial and parallel paths).
 
     Returns:
         Dict mapping ``(c1, c2)`` pairs to their result DataFrames (all h5ads
@@ -229,6 +233,15 @@ def run_diff(
                 len(pairs), n_outer, n_inner,
             )
 
+            # Register the cluster-pair testing progress stage (only for >=5 pairs
+            # so trivial single-pair calls don't show a pointless bar).
+            _pair_client = None
+            if progress_manager is not None and len(pairs) >= 5:
+                _pair_stage = progress_manager.add_stage(
+                    "Cluster-pair testing", total=len(pairs)
+                )
+                _pair_client = progress_manager.client(_pair_stage)
+
             # Build pas_gene_map for the WITHIN-GENE Fisher framing.  The
             # fisher strategy uses this to group PAS by gene; nb_pairwise /
             # nb_multi accept-and-ignore via **_ignored.  When the h5ad has
@@ -263,6 +276,8 @@ def run_diff(
                         pas_gene_map=pas_gene_map,
                     )
                     pair_results[(c1, c2)] = df
+                    if _pair_client is not None:
+                        _pair_client.advance(1)
             else:
                 worker_fn = functools.partial(
                     _dispatch_pair,
@@ -277,6 +292,8 @@ def run_diff(
                 with ctx.Pool(n_outer) as pool:
                     for c1, c2, df in pool.imap_unordered(worker_fn, pairs, chunksize=1):
                         pair_results[(c1, c2)] = df
+                        if _pair_client is not None:
+                            _pair_client.advance(1)
 
             # Build annotation lookup once per h5ad, shared across all pairs.
             # gene_id from adata.var (index = pas_id as str).
@@ -403,6 +420,7 @@ def run_length(
     isoform_collapse: str,
     threads: int | None,
     pseudocount: float = 0.0,
+    progress_client=None,
 ) -> tuple[pd.DataFrame | None, "ad.AnnData | None"]:
     """Library-level entry point for 3'UTR length / PDUI quantification.
 
@@ -427,6 +445,9 @@ def run_length(
         pseudocount: Added to each per-cell count before PDUI / entropy
             computation.  Default 0.0 preserves original behaviour.  Set to
             e.g. 1.0 to eliminate NaN on zero-count cells.
+        progress_client: Optional :class:`~ema.progress.ProgressClient`.  When
+            supplied, ``advance(1)`` is called after each h5ad is processed so
+            the CLI progress bar ticks forward.
 
     Returns:
         Tuple ``(pdui_df, adata)`` from the last h5ad processed, or
@@ -683,6 +704,13 @@ def run_length(
                 method, len(df_out), out_path,
             )
             _last_pdui_df = df
+
+        # Advance the progress bar once per h5ad (all methods for this h5ad done).
+        if progress_client is not None:
+            try:
+                progress_client.advance(1)
+            except Exception:
+                pass
 
     log.info("run_length: done.")
     return _last_pdui_df, _last_adata
