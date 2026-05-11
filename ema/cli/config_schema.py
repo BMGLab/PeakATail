@@ -120,6 +120,29 @@ class RunConfig:
     :meth:`from_yaml` to construct from a YAML file, and
     :meth:`apply_to_legacy_globals` to push the values into the legacy
     ``ema.config`` module-level dataclasses the pipeline body reads.
+
+    Filename overrides
+    ------------------
+    The ``filenames`` dict lets users rename specific pipeline output files
+    without touching ``DirectoryConfig``.  Supply it under the ``filenames:``
+    YAML key; CLI override is not supported (use the YAML instead).
+
+    Overrideable keys (all optional; shown with their defaults)::
+
+        filenames:
+          pasbed:             pasbed.bed
+          posbed:             posbed.bed
+          negbed:             negbed.bed
+          filtered_cb:        filtered_cb.tsv
+          annotated_matrix:   annotated_matrix.mtx
+          annotatedbed:       annotatedpas.bed
+          pas_geneid:         pas_gene.tsv
+          endbed:             gene_end.bed
+          raw_features:       raw_feature.tsv
+          utr_lengths:        utr_lengths.tsv
+          cluster_labels:     clusterlabels.csv
+          clusters_h5ad:      clusters.h5ad
+          preprocessed_h5ad:  preprocessed.h5ad
     """
 
     # ─── inputs / outputs ────────────────────────────────────────────────
@@ -185,6 +208,17 @@ class RunConfig:
             cli_flag="--atlas-distance", yaml_key="atlas_distance",
             legacy_dataclass_attr="directory_config.atlas_distance",
             description="Atlas snap distance (bp).",
+        ),
+    )
+    filenames: Optional[dict] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag=None, yaml_key="filenames",
+            skip_legacy_bridge=True,  # wired manually in main.py via set_directory_config
+            description=(
+                "Optional dict of output filename overrides "
+                "(YAML only — see RunConfig docstring for valid keys)."
+            ),
         ),
     )
 

@@ -198,6 +198,9 @@ def run(
             _dc_kwargs["atlas"] = cfg["atlas"]
         if cfg.get("atlas_distance") is not None:
             _dc_kwargs["atlas_distance"] = cfg["atlas_distance"]
+        # Filename overrides from RunConfig.filenames (YAML key "filenames")
+        if rc.filenames:
+            _dc_kwargs["filenames"] = rc.filenames
         if _dc_kwargs:
             set_directory_config(**_dc_kwargs)
 

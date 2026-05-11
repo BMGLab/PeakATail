@@ -73,6 +73,7 @@ class DirectoryConfig:
     atlas: str | None = None
     atlas_distance: int = 50
     datasets: list = field(default_factory=list)
+    filenames: dict = field(default_factory=dict)
 
     # ─── stage directories (run-root level) ──────────────────────────────
     @property
@@ -142,47 +143,47 @@ class DirectoryConfig:
 
     @property
     def posbed(self) -> Path:
-        return self.output_dir / "posbed.bed"
+        return self.output_dir / self.filenames.get("posbed", "posbed.bed")
 
     @property
     def negbed(self) -> Path:
-        return self.output_dir / "negbed.bed"
+        return self.output_dir / self.filenames.get("negbed", "negbed.bed")
 
     @property
     def pasbed(self) -> Path:
-        return self.output_dir / "pasbed.bed"
+        return self.output_dir / self.filenames.get("pasbed", "pasbed.bed")
 
     @property
     def filtered_cb(self) -> Path:
-        return self.output_dir / "filtered_cb.tsv"
+        return self.output_dir / self.filenames.get("filtered_cb", "filtered_cb.tsv")
 
     @property
     def annotated_matrix(self) -> Path:
-        return self.output_dir / "annotated_matrix.mtx"
+        return self.output_dir / self.filenames.get("annotated_matrix", "annotated_matrix.mtx")
 
     @property
     def annotatedbed(self) -> Path:
-        return self.output_dir / "annotatedpas.bed"
+        return self.output_dir / self.filenames.get("annotatedbed", "annotatedpas.bed")
 
     @property
     def pas_geneid(self) -> Path:
-        return self.output_dir / "pas_gene.tsv"
+        return self.output_dir / self.filenames.get("pas_geneid", "pas_gene.tsv")
 
     @property
     def endbed(self) -> Path:
-        return self.output_dir / "gene_end.bed"
+        return self.output_dir / self.filenames.get("endbed", "gene_end.bed")
 
     @property
     def raw_features(self) -> Path:
-        return self.output_dir / "raw_feature.tsv"
+        return self.output_dir / self.filenames.get("raw_features", "raw_feature.tsv")
 
     @property
     def utr_lengths(self) -> Path:
-        return self.output_dir / "utr_lengths.tsv"
+        return self.output_dir / self.filenames.get("utr_lengths", "utr_lengths.tsv")
 
     @property
     def cluster_labels(self) -> Path:
-        return self.output_dir / "clusterlabels.csv"
+        return self.output_dir / self.filenames.get("cluster_labels", "clusterlabels.csv")
 
     # ─── legacy-named properties (stale filenames, kept for callsite compat)
     # These are preserved until all callsites migrate to per-dataset accessors.
@@ -222,10 +223,10 @@ class DirectoryConfig:
         return self.dataset_dir(ds) / "negbed.bed"
 
     def clusters_h5ad_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "clusters.h5ad"
+        return self.dataset_dir(ds) / self.filenames.get("clusters_h5ad", "clusters.h5ad")
 
     def preprocessed_h5ad_for(self, ds: str) -> Path:
-        return self.dataset_dir(ds) / "preprocessed.h5ad"
+        return self.dataset_dir(ds) / self.filenames.get("preprocessed_h5ad", "preprocessed.h5ad")
 
     def filtered_cb_for(self, ds: str) -> Path:
         return self.dataset_dir(ds) / "filtered_cb.tsv"
