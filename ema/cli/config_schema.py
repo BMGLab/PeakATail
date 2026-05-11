@@ -882,7 +882,13 @@ class RunConfig:
                 # RunConfig but variable_config.ignore_chro must be a list.
                 if attr == "ignore_chro" and isinstance(value, str):
                     value = [c.strip() for c in value.split(",") if c.strip()]
-                setattr(targets[holder], attr, value)
+                if holder == "directory_config":
+                    # directory_config is a frozen dataclass — go through the
+                    # set_directory_config helper, which uses object.__setattr__
+                    # internally to mutate the singleton in-place.
+                    _cfg.set_directory_config(**{attr: value})
+                else:
+                    setattr(targets[holder], attr, value)
                 # min_pas_per_cell is read by preprocessing() as
                 # filter_config.min_genes; bridge that too.
                 if spec.legacy_alias == "min_genes":
