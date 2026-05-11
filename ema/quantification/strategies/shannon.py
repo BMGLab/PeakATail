@@ -178,6 +178,16 @@ class ShannonPDUIStrategy(PDUIStrategy):
     H = 0 when all reads go to one PAS (most specific).
     H = log2(N) for uniform usage across N PAS (least specific).
     H_norm = H / log2(N) normalizes to [0, 1].
+
+    Tunable hyperparameters:
+        pseudocount (default 0.0): Added to each count before computing
+            proportions.  The default 0.0 preserves original behaviour; set to
+            e.g. 1.0 to avoid NaN for zero-total cells (though note that any
+            pseudocount shifts the entropy distribution toward uniformity).
+            CLI: ``--pdui-pseudocount`` / YAML: ``pdui_pseudocount``.
+        aggregation (default "per_isoform"): Whether entropy is computed per
+            gene or per transcript isoform.  CLI: ``--isoform-agg`` /
+            YAML: ``isoform_agg``.
     """
 
     name: str = "shannon"

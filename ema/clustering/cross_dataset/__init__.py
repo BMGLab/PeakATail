@@ -55,14 +55,26 @@ def register_match_strategy(cls: type["ClusterMatchStrategy"]) -> type["ClusterM
     return cls
 
 
-def get_match_strategy(name: str) -> "ClusterMatchStrategy":
+def get_match_strategy(
+    name: str,
+    mnn_components: int = 30,
+    mnn_k_neighbors: int = 10,
+) -> "ClusterMatchStrategy":
     """Instantiate and return a registered cluster match strategy by name.
+
+    MNN-specific kwargs (``mnn_components``, ``mnn_k_neighbors``) are forwarded
+    only to :class:`MNNStrategy`; they are silently ignored for other strategies
+    so callers can pass them unconditionally.
 
     Args:
         name: Strategy name as registered (e.g. ``"marker_overlap"``).
+        mnn_components: Number of LSI components for the MNN shared embedding.
+            Only used when ``name="mnn"``. Default 30.
+        mnn_k_neighbors: Number of nearest neighbours for MNN search.
+            Only used when ``name="mnn"``. Default 10.
 
     Returns:
-        A fresh instance of the requested strategy with default parameters.
+        A fresh instance of the requested strategy.
 
     Raises:
         KeyError: If ``name`` is not a registered strategy.
@@ -73,7 +85,10 @@ def get_match_strategy(name: str) -> "ClusterMatchStrategy":
             f"Unknown cluster match strategy '{name}'. "
             f"Available strategies: {available}"
         )
-    return _REGISTRY[name]()
+    cls = _REGISTRY[name]
+    if name == "mnn":
+        return cls(n_components=mnn_components, k_neighbors=mnn_k_neighbors)
+    return cls()
 
 
 def list_match_strategies() -> list[str]:

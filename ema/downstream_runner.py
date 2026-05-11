@@ -63,6 +63,11 @@ def run_one_dataset_downstream(
     cluster_random_seed: int = 42,
     cluster_external_clusters: str | None = None,
     plot_engines: list[str] | None = None,
+    cluster_n_neighbors: int | None = None,
+    cluster_tfidf_scale_factor: float = 1e4,
+    cluster_depth_corr_threshold: float = 0.75,
+    cluster_n_svd_components: int = 50,
+    cluster_n_top_hvg: int = 2000,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -239,6 +244,11 @@ def run_one_dataset_downstream(
         random_seed=cluster_random_seed,
         external_clusters=cluster_external_clusters,
         output_h5ad=str(cluster_h5ad),
+        n_neighbors=cluster_n_neighbors,
+        tfidf_scale_factor=cluster_tfidf_scale_factor,
+        depth_corr_threshold=cluster_depth_corr_threshold,
+        n_svd_components=cluster_n_svd_components,
+        n_top_hvg=cluster_n_top_hvg,
     )
     if progress_client is not None:
         progress_client.advance(1)  # tick 6/6: cluster

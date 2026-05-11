@@ -42,6 +42,12 @@ def _list_strategies_callback(ctx, param, value):
               help="Per-dataset clusters.h5ad files.")
 @click.option("--strategy", "-s", "strategy", type=str, default=DEFAULTS["match-method"])
 @click.option("--n-top-markers", "n_top_markers", type=int, default=DEFAULTS["n-top-markers"])
+@click.option("--mnn-components", "mnn_components", type=int,
+              default=DEFAULTS["mnn-components"],
+              help="SVD components for MNN shared embedding (--strategy mnn). Default 30.")
+@click.option("--mnn-k-neighbors", "mnn_k_neighbors", type=int,
+              default=DEFAULTS["mnn-k-neighbors"],
+              help="Nearest neighbours for MNN search (--strategy mnn). Default 10.")
 @click.pass_context
 def match(ctx: click.Context, **kwargs) -> None:
     """Cross-dataset cluster matching (marker_overlap / mnn / jaccard)."""
@@ -79,7 +85,11 @@ def match(ctx: click.Context, **kwargs) -> None:
         log.info("ema switch match: strategy=%s, %d datasets",
                  kwargs["strategy"], len(kwargs["h5ad"]))
         from ema.clustering.cross_dataset import get_match_strategy
-        strat = get_match_strategy(kwargs["strategy"])
+        strat = get_match_strategy(
+            kwargs["strategy"],
+            mnn_components=kwargs["mnn_components"],
+            mnn_k_neighbors=kwargs["mnn_k_neighbors"],
+        )
         df = strat.match(
             list(kwargs["h5ad"]),
             [str(i) for i in range(len(kwargs["h5ad"]))],  # synthetic ds ids

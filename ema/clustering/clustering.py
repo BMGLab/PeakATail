@@ -63,12 +63,20 @@ def _do_leiden_tfidf(adata: ad.AnnData,
                      n_pcs=40,
                      external_clusters=None,
                      outputpath=None,
-                     output_h5ad=None):
+                     output_h5ad=None,
+                     n_neighbors=30,
+                     tfidf_scale_factor=1e4,
+                     depth_corr_threshold=0.75,
+                     n_svd_components=50):
     """Run the TF-IDF + LSI + Leiden pipeline."""
     strategy = get_strategy("leiden_tfidf",
                             resolution=resolution,
                             random_seed=random_seed,
-                            n_dims=n_pcs)
+                            n_dims=n_pcs,
+                            n_neighbors=n_neighbors,
+                            scale_factor=tfidf_scale_factor,
+                            depth_corr_threshold=depth_corr_threshold,
+                            n_components=n_svd_components)
 
     print(f"Clustering with strategy: leiden_tfidf")
     print(f"Parameters: {strategy.get_params()}")
@@ -86,12 +94,18 @@ def _do_leiden_libsize(adata: ad.AnnData,
                        n_pcs=40,
                        external_clusters=None,
                        outputpath=None,
-                       output_h5ad=None):
+                       output_h5ad=None,
+                       n_neighbors=10,
+                       n_svd_components=50,
+                       n_top_hvg=2000):
     """Run the library-size normalization + PCA + Leiden pipeline."""
     strategy = get_strategy("leiden_libsize",
                             resolution=resolution,
                             random_seed=random_seed,
-                            n_pcs=n_pcs)
+                            n_pcs=n_pcs,
+                            n_neighbors=n_neighbors,
+                            n_comps=n_svd_components,
+                            n_top_genes=n_top_hvg)
 
     print(f"Clustering with strategy: leiden_libsize")
     print(f"Parameters: {strategy.get_params()}")
@@ -109,7 +123,8 @@ def _do_external(adata: ad.AnnData,
                  n_pcs=40,
                  external_clusters=None,
                  outputpath=None,
-                 output_h5ad=None):
+                 output_h5ad=None,
+                 **_ignored):
     """Load pre-computed external cluster labels."""
     strategy = get_strategy("external",
                             resolution=resolution,
@@ -137,7 +152,12 @@ def clustering(adata: ad.AnnData,
                random_seed=42,
                external_clusters=None,
                outputpath=None,
-               output_h5ad=None):
+               output_h5ad=None,
+               n_neighbors: int | None = None,
+               tfidf_scale_factor: float = 1e4,
+               depth_corr_threshold: float = 0.75,
+               n_svd_components: int = 50,
+               n_top_hvg: int = 2000):
     """Cluster cells based on PAS peak count data.
 
     Args:
@@ -153,12 +173,24 @@ def clustering(adata: ad.AnnData,
             default from directory_config.
         output_h5ad: Path to save AnnData as h5ad. If None, uses
             default from directory_config.
+        n_neighbors: kNN graph size. Defaults to 30 for leiden_tfidf and
+            10 for leiden_libsize when None.
+        tfidf_scale_factor: TF-IDF scale factor for leiden_tfidf (default: 10000).
+        depth_corr_threshold: Correlation threshold for depth-component removal
+            in leiden_tfidf (default: 0.75).
+        n_svd_components: SVD/PCA components computed before filtering
+            (default: 50).
+        n_top_hvg: Highly variable genes selected by leiden_libsize (default: 2000).
 
     Returns:
         AnnData object with cluster labels in .obs['leiden'],
         UMAP embedding in .obsm['X_umap'], and dimensionality
         reduction in .obsm['X_pca'] or .obsm['X_lsi'].
     """
+    # Resolve method-specific n_neighbors defaults when caller passes None.
+    if n_neighbors is None:
+        n_neighbors = 10 if method == "leiden_libsize" else 30
+
     from ema.clustering.registry import get_clustering_strategy
     return get_clustering_strategy(method)(
         adata,
@@ -168,4 +200,9 @@ def clustering(adata: ad.AnnData,
         external_clusters=external_clusters,
         outputpath=outputpath,
         output_h5ad=output_h5ad,
+        n_neighbors=n_neighbors,
+        tfidf_scale_factor=tfidf_scale_factor,
+        depth_corr_threshold=depth_corr_threshold,
+        n_svd_components=n_svd_components,
+        n_top_hvg=n_top_hvg,
     )

@@ -12,6 +12,7 @@ import numpy as np
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 
 @register_viz_strategy
@@ -24,6 +25,7 @@ class UmapMatplotlib(VizStrategy):
         adata, ds_id = data
         coords = adata.obsm["X_umap"]
         labels = adata.obs.get("leiden")
+        color_key = "leiden" if labels is not None else None
         fig, ax = plt.subplots(figsize=(7, 6))
         if labels is not None:
             cats = sorted(set(labels))
@@ -40,4 +42,12 @@ class UmapMatplotlib(VizStrategy):
         ax.set_title(f"UMAP — {ds_id}")
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "dataset_id": ds_id,
+            "n_cells": int(adata.n_obs),
+            "n_genes_used": int(adata.n_vars),
+            "color_key": color_key,
+        })
+        return paths

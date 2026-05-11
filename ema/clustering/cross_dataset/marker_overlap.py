@@ -264,6 +264,11 @@ class MarkerOverlapStrategy(ClusterMatchStrategy):
 
     Suitable for datasets with overlapping PAS features.  If datasets share
     very few PAS (different genomic regions captured), use ``mnn`` instead.
+
+    Tunable hyperparameters:
+        n_top_markers (default 50): Top-N marker PAS per cluster used as the
+            cluster "fingerprint" for Jaccard comparison.  Passed directly via
+            ``match()``; set via ``--n-top-markers`` / YAML ``n_top_markers``.
     """
 
     name = "marker_overlap"

@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 
 
 @register_viz_strategy
@@ -34,4 +35,11 @@ class PeakQCPlotly(VizStrategy):
         if len(per_cell_reads) > 0:
             fig.add_trace(go.Histogram(x=list(per_cell_reads), nbinsx=40), row=2, col=2)
         fig.update_layout(template="plotly_white", showlegend=False, height=700)
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_chromosomes": len(ppc),
+            "n_peaks_total": sum(ppc.values()),
+            "n_cells": len(per_cell_pas),
+        })
+        return paths

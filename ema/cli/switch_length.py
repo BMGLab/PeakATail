@@ -54,6 +54,11 @@ def _list_strategies_callback(ctx, param, value):
               default=DEFAULTS["isoform-collapse"], show_default=True,
               help="How to collapse multiple isoforms when --isoform-agg=per_gene "
                    "and the strategy tracks isoforms internally.")
+@click.option("--pdui-pseudocount", "pdui_pseudocount", type=float,
+              default=DEFAULTS["pdui-pseudocount"], show_default=True,
+              help="Pseudocount added to counts before PDUI/entropy computation. "
+                   "Default 0.0 (original behaviour). Use 1.0 to avoid NaN on "
+                   "zero-count cells.")
 @click.pass_context
 def length(ctx: click.Context, **kwargs) -> None:
     """3'UTR shortening / lengthening quantification (PDUI variants)."""
@@ -100,6 +105,7 @@ def length(ctx: click.Context, **kwargs) -> None:
             isoform_agg=kwargs["isoform_agg"],
             isoform_collapse=kwargs["isoform_collapse"],
             threads=kwargs["threads"],
+            pseudocount=kwargs["pdui_pseudocount"],
         )
 
         from ema.cli.common import parse_plot_engines

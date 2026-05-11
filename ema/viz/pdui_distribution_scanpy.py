@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -78,4 +79,13 @@ class PduiDistributionScanpy(VizStrategy):
 
         fig = plt.gcf()
         fig.suptitle(f"PDUI distribution per cluster ({score_key})", y=1.01)
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        n_clusters = int(adata.obs["leiden"].nunique()) if "leiden" in adata.obs else 0
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "cluster_key": "leiden",
+            "score_key": score_key,
+            "n_clusters": n_clusters,
+            "n_observations": int(adata.n_obs),
+        })
+        return paths

@@ -195,6 +195,17 @@ class ClassicPDUIStrategy(PDUIStrategy):
 
     Mirrors ``ema.quantification.pdui.calculate_pdui`` behaviour exactly
     when ``aggregation="per_gene"`` and ``pseudocount=0.0``.
+
+    Tunable hyperparameters:
+        pseudocount (default 0.0): Added to the denominator of each per-cell
+            PDUI computation (proximal + distal + pseudocount).  The default 0.0
+            preserves original behaviour; set to e.g. 1.0 to avoid NaN for
+            cells where both proximal and distal counts are zero.
+            CLI: ``--pdui-pseudocount`` / YAML: ``pdui_pseudocount``.
+        aggregation (default "per_isoform"): Level at which proximal/distal PAS
+            are selected.  ``"per_gene"`` uses genomic-coordinate ordering;
+            ``"per_isoform"`` uses transcript-coordinate ranks.
+            CLI: ``--isoform-agg`` / YAML: ``isoform_agg``.
     """
 
     name: str = "classic"

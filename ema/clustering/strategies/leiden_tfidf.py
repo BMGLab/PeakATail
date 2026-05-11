@@ -98,6 +98,27 @@ class LeidenTfidfStrategy(ClusteringStrategy):
         depth_corr_threshold: Threshold for removing depth-correlated
             components (default: 0.75).
         random_seed: Random seed for reproducibility (default: 42).
+
+    Tunable hyperparameters:
+        resolution (default 1.0): Leiden resolution. Higher values produce more,
+            smaller clusters. CLI: ``--resolution`` / YAML: ``resolution``.
+        n_components (default 50): SVD components computed before depth-
+            correlation filtering. CLI: ``--n-svd-components`` /
+            YAML: ``n_svd_components``.
+        n_dims (default 40): LSI dimensions used for the kNN graph (applied
+            after depth-correlation filtering). CLI: ``--n-pcs`` /
+            YAML: ``n_pcs``.
+        n_neighbors (default 30): kNN graph size. Larger values smooth cluster
+            boundaries. CLI: ``--n-neighbors`` / YAML: ``n_neighbors``.
+        scale_factor (default 10000): TF-IDF scale factor. Adjust if your
+            counts have very different dynamic range. CLI: ``--tfidf-scale-factor``
+            / YAML: ``tfidf_scale_factor``.
+        depth_corr_threshold (default 0.75): Pearson |r| threshold for
+            removing LSI components correlated with sequencing depth (ArchR-style).
+            Set to 1.0 to disable. CLI: ``--depth-corr-threshold`` /
+            YAML: ``depth_corr_threshold``.
+        random_seed (default 42): RNG seed for SVD and Leiden.
+            CLI: ``--random-seed`` / YAML: ``random_seed``.
     """
 
     def __init__(self, resolution=1.0, n_components=50, n_dims=40,

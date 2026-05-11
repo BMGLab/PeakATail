@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 
 @register_viz_strategy
@@ -34,4 +35,12 @@ class ClusterSizesMatplotlib(VizStrategy):
         ax.spines["right"].set_visible(False)
         for i, s in enumerate(sizes):
             ax.text(i, s, str(s), ha="center", va="bottom", fontsize=9)
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "dataset_id": ds_id,
+            "cluster_key": "leiden",
+            "n_clusters": len(labels),
+            "n_observations": int(adata.n_obs),
+        })
+        return paths

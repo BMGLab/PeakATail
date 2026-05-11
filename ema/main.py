@@ -913,6 +913,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "cluster_n_pcs": getattr(args, "n_pcs", 40),
         "cluster_random_seed": getattr(args, "random_seed", 42),
         "cluster_external_clusters": getattr(args, "external_clusters", None),
+        # New tunable hyperparameters (default values match strategy constructors).
+        "cluster_n_neighbors": getattr(args, "n_neighbors", None),
+        "cluster_tfidf_scale_factor": getattr(args, "tfidf_scale_factor", 1e4),
+        "cluster_depth_corr_threshold": getattr(args, "depth_corr_threshold", 0.75),
+        "cluster_n_svd_components": getattr(args, "n_svd_components", 50),
+        "cluster_n_top_hvg": getattr(args, "n_top_hvg", 2000),
     }
     # Resolve plot_engines: default to both engines when not specified.
     _resolved_plot_engines: list[str] = (

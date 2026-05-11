@@ -25,6 +25,7 @@ import pandas as pd
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -129,4 +130,12 @@ class ClusterMatchSankeyMatplotlib(VizStrategy):
         fig.suptitle("Cross-dataset cluster correspondence", y=1.02)
         plt.tight_layout()
 
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_datasets": n_datasets,
+            "dataset_ids": datasets,
+            "n_canonical_clusters": n_canonical,
+            "n_match_rows": len(df),
+        })
+        return paths

@@ -19,6 +19,7 @@ import pandas as pd
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -148,4 +149,13 @@ class ClusterMatchSankeyPlotly(VizStrategy):
             font=dict(size=11),
         )
 
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        datasets = sorted(df["dataset_id"].unique())
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_datasets": len(datasets),
+            "dataset_ids": list(datasets),
+            "n_canonical_clusters": len(canonical_ids),
+            "n_match_rows": len(df),
+        })
+        return paths

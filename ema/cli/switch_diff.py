@@ -53,6 +53,12 @@ def _list_strategies_callback(ctx, param, value):
               help="Differential APA strategy (run --list-strategies to see).")
 @click.option("--fdr", "fdr", type=float, default=DEFAULTS["fdr"])
 @click.option("--per-worker-mb", "per_worker_mb", type=int, default=DEFAULTS["per-worker-mb"])
+@click.option("--min-cells-per-group", "min_cells_per_group", type=int,
+              default=DEFAULTS["min-cells-per-group"],
+              help="Minimum cells per group for a PAS to enter differential testing.")
+@click.option("--log2fc-thresh", "log2fc_thresh", type=float,
+              default=DEFAULTS["log2fc-thresh"],
+              help="log2 fold-change threshold drawn on the volcano plot. Default 1.0.")
 @click.pass_context
 def diff(ctx: click.Context, **kwargs) -> None:
     """Differential APA test (Fisher / NB regression) across cluster pairs."""
@@ -106,6 +112,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
             fdr=kwargs["fdr"],
             threads=kwargs["threads"],
             per_worker_mb=kwargs["per_worker_mb"],
+            min_cells_per_group=kwargs["min_cells_per_group"],
         )
 
         # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
@@ -116,6 +123,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
             out_dir=out_dir,
             pair_results=pair_results,
             fdr=kwargs["fdr"],
+            log2fc_thresh=kwargs["log2fc_thresh"],
             engines=parse_plot_engines(
                 kwargs.get("plot_engine", "both"),
                 kwargs.get("no_plots", False),

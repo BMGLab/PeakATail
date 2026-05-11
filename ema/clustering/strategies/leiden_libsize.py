@@ -23,6 +23,20 @@ class LeidenLibsizeStrategy(ClusteringStrategy):
         n_top_genes: Number of highly variable genes to select (default: 2000).
         n_neighbors: Number of neighbors for kNN graph (default: 10).
         random_seed: Random seed for reproducibility (default: 42).
+
+    Tunable hyperparameters:
+        resolution (default 1.0): Leiden resolution. CLI: ``--resolution`` /
+            YAML: ``resolution``.
+        n_comps (default 50): PCA components computed before neighbors.
+            CLI: ``--n-svd-components`` / YAML: ``n_svd_components``.
+        n_pcs (default 40): PCA components used for the kNN graph (must be
+            ≤ n_comps). CLI: ``--n-pcs`` / YAML: ``n_pcs``.
+        n_neighbors (default 10): kNN graph size. CLI: ``--n-neighbors`` /
+            YAML: ``n_neighbors``.
+        n_top_genes (default 2000): Highly variable PAS selected before PCA.
+            CLI: ``--n-top-hvg`` / YAML: ``n_top_hvg``.
+        random_seed (default 42): RNG seed. CLI: ``--random-seed`` /
+            YAML: ``random_seed``.
     """
 
     def __init__(self, resolution=1.0, n_pcs=40, n_comps=50,

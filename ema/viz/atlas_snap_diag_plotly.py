@@ -23,6 +23,7 @@ from plotly.subplots import make_subplots
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -115,4 +116,12 @@ class AtlasSnapDiagPlotly(VizStrategy):
         fig.update_xaxes(title_text="Distance to atlas (bp)", row=1, col=2)
         fig.update_yaxes(title_text="# peaks", row=1, col=2)
 
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_snapped": snapped,
+            "n_unsnapped": unsnapped,
+            "snap_rate": round(snapped / total, 4) if total > 0 else None,
+            "n_snap_distances": len(distances),
+        })
+        return paths

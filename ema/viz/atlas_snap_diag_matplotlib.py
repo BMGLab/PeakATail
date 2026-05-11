@@ -25,6 +25,7 @@ import numpy as np
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -99,4 +100,13 @@ class AtlasSnapDiagMatplotlib(VizStrategy):
         ax_hist.spines["right"].set_visible(False)
 
         plt.tight_layout()
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        total = snapped + unsnapped
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_snapped": snapped,
+            "n_unsnapped": unsnapped,
+            "snap_rate": round(snapped / total, 4) if total > 0 else None,
+            "n_snap_distances": len(distances),
+        })
+        return paths

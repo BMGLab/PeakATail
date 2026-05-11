@@ -36,6 +36,7 @@ import numpy as np
 
 from ema.viz import register_viz_strategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 from ema.viz.base import VizStrategy
 
 log = logging.getLogger(__name__)
@@ -121,4 +122,11 @@ class ResourceTimelineMatplotlib(VizStrategy):
         ax_cpu.spines["top"].set_visible(False)
 
         plt.tight_layout()
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_samples": len(samples),
+            "elapsed_range_s": [float(elapsed[0]), float(elapsed[-1])],
+            "n_stage_annotations": len(annotations),
+        })
+        return paths

@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 
 @register_viz_strategy
@@ -49,4 +50,11 @@ class PeakQCMatplotlib(VizStrategy):
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
         plt.tight_layout()
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_chromosomes": len(ppc),
+            "n_peaks_total": sum(ppc.values()),
+            "n_cells": len(per_cell_pas),
+        })
+        return paths

@@ -37,6 +37,7 @@ import plotly.graph_objects as go
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -149,4 +150,14 @@ class VolcanoPlotly(VizStrategy):
             height=580,
         )
 
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "fdr": fdr,
+            "log2fc_thresh": log2fc_thresh,
+            "n_tested": len(df),
+            "n_significant": int(sig_mask.sum()),
+            "n_up": n_up,
+            "n_down": n_down,
+        })
+        return paths

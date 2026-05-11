@@ -172,6 +172,15 @@ class ProportionPDUIStrategy(PDUIStrategy):
     at each PAS.  Proportions sum to 1.0 (NaN for zero-total cells).
 
     Uses scipy.sparse normalization; no full-matrix dense conversion.
+
+    Tunable hyperparameters:
+        pseudocount (default 0.0): Added to each count before per-gene
+            normalization.  The default 0.0 preserves original behaviour;
+            set to e.g. 1.0 to avoid NaN for zero-total cells.
+            CLI: ``--pdui-pseudocount`` / YAML: ``pdui_pseudocount``.
+        aggregation (default "per_isoform"): Whether proportions are computed
+            per gene or per isoform.  CLI: ``--isoform-agg`` /
+            YAML: ``isoform_agg``.
     """
 
     name: str = "proportion"

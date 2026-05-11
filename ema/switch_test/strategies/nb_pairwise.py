@@ -210,6 +210,19 @@ class NbPairwiseStrategy(DiffAPAStrategy):
     Parallelised with ``joblib.Parallel(backend="loky")`` over PAS batches.
     Dense numpy arrays are sliced before dispatch so workers never need to
     pickle sparse matrices.
+
+    Tunable hyperparameters:
+        min_cells_per_group (default 10): Minimum cells with *non-zero* counts
+            in each cluster for a PAS to be tested.  Raise to reduce noisy
+            low-count tests; lower only if your clusters are very small.
+            CLI: ``--min-cells-per-group`` / YAML: ``min_cells_per_group``.
+        fdr (default 0.05): Benjamini-Hochberg FDR threshold applied after
+            testing.  CLI: ``--fdr`` / YAML: ``fdr``.
+
+    Deliberately left hardcoded (internal numerics, not researcher-facing):
+        alpha dispersion clip: [1e-4, 10.0] — keeps GLM numerically stable.
+        maxiter (MLE): 200 iterations; fallback to 100 for the MoM path.
+        per_worker_mb: 300 MB — used by ResourceManager to cap parallelism.
     """
 
     name: str = "nb_pairwise"

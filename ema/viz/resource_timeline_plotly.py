@@ -26,6 +26,7 @@ from typing import Any
 
 from ema.viz import register_viz_strategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 from ema.viz.base import VizStrategy
 
 log = logging.getLogger(__name__)
@@ -150,4 +151,11 @@ class ResourceTimelinePlotly(VizStrategy):
             height=480,
         )
 
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_samples": len(samples),
+            "elapsed_range_s": [elapsed[0], elapsed[-1]],
+            "n_stage_annotations": len(annotations),
+        })
+        return paths

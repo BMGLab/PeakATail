@@ -279,6 +279,15 @@ class MNNStrategy(ClusterMatchStrategy):
             More components capture finer structure but increase cost.
         k_neighbors: Number of neighbours for MNN search.
         random_state: Seed for TruncatedSVD reproducibility.
+
+    Tunable hyperparameters:
+        n_components (default 30): Number of LSI/SVD components for the shared
+            embedding.  Set via ``--mnn-components`` / YAML ``mnn_components``.
+        k_neighbors (default 10): Number of nearest neighbours for MNN search.
+            Larger values produce denser MNN graphs but slow down kNN search.
+            Set via ``--mnn-k-neighbors`` / YAML ``mnn_k_neighbors``.
+        random_state (default 42): Seed for TruncatedSVD reproducibility; always
+            matches the global ``--random-seed`` / YAML ``random_seed``.
     """
 
     name = "mnn"

@@ -564,6 +564,133 @@ class RunConfig:
             applies_to=frozenset({"switch_length"}),
         ),
     )
+    pdui_pseudocount: float = field(
+        default=0.0,
+        metadata=_spec(
+            cli_flag="--pdui-pseudocount", yaml_key="pdui_pseudocount",
+            skip_legacy_bridge=True,
+            description=(
+                "Pseudocount added to per-cell PAS counts before PDUI / entropy "
+                "computation (classic / proportion / shannon). Default 0.0 preserves "
+                "original behaviour; raise to e.g. 1.0 to avoid NaN on zero-count cells."
+            ),
+            applies_to=frozenset({"switch_length"}),
+        ),
+    )
+
+    # ─── switch diff volcano parameters ──────────────────────────────────
+    log2fc_thresh: float = field(
+        default=1.0,
+        metadata=_spec(
+            cli_flag="--log2fc-thresh", yaml_key="log2fc_thresh",
+            skip_legacy_bridge=True,
+            description=(
+                "log2 fold-change threshold drawn on the volcano plot. "
+                "Also used to shade the 'significant' region. Default 1.0."
+            ),
+            applies_to=frozenset({"diff"}),
+        ),
+    )
+
+    # ─── switch diff / switch test parameters ────────────────────────────
+    min_cells_per_group: int = field(
+        default=10,
+        metadata=_spec(
+            cli_flag="--min-cells-per-group", yaml_key="min_cells_per_group",
+            skip_legacy_bridge=True,
+            description=(
+                "Minimum cells (with non-zero counts for NB strategies) in each "
+                "cluster group for a PAS to be included in differential testing. "
+                "Default 10."
+            ),
+            applies_to=frozenset({"diff"}),
+        ),
+    )
+
+    # ─── cross-dataset MNN parameters ────────────────────────────────────
+    mnn_components: int = field(
+        default=30,
+        metadata=_spec(
+            cli_flag="--mnn-components", yaml_key="mnn_components",
+            skip_legacy_bridge=True,
+            description=(
+                "Number of LSI/SVD components for the MNN shared embedding "
+                "(switch match --strategy mnn). Default 30."
+            ),
+            applies_to=frozenset({"switch_match"}),
+        ),
+    )
+    mnn_k_neighbors: int = field(
+        default=10,
+        metadata=_spec(
+            cli_flag="--mnn-k-neighbors", yaml_key="mnn_k_neighbors",
+            skip_legacy_bridge=True,
+            description=(
+                "Number of nearest neighbours for MNN search "
+                "(switch match --strategy mnn). Default 10."
+            ),
+            applies_to=frozenset({"switch_match"}),
+        ),
+    )
+
+    # ─── clustering fine-tuning (leiden_tfidf) ───────────────────────────
+    n_neighbors: int = field(
+        default=30,
+        metadata=_spec(
+            cli_flag="--n-neighbors", yaml_key="n_neighbors",
+            legacy_args_attr="n_neighbors",
+            description=(
+                "Number of nearest neighbours for the kNN graph used by Leiden "
+                "(leiden_tfidf default: 30; leiden_libsize default: 10 — set "
+                "--n-neighbors explicitly to override)."
+            ),
+        ),
+    )
+    tfidf_scale_factor: float = field(
+        default=1e4,
+        metadata=_spec(
+            cli_flag="--tfidf-scale-factor", yaml_key="tfidf_scale_factor",
+            legacy_args_attr="tfidf_scale_factor",
+            description=(
+                "Scale factor for Signac Method 1 TF-IDF (leiden_tfidf strategy). "
+                "Default 10000. Adjust if your counts have very different dynamic range."
+            ),
+        ),
+    )
+    depth_corr_threshold: float = field(
+        default=0.75,
+        metadata=_spec(
+            cli_flag="--depth-corr-threshold", yaml_key="depth_corr_threshold",
+            legacy_args_attr="depth_corr_threshold",
+            description=(
+                "Pearson |r| threshold for removing LSI components correlated with "
+                "sequencing depth (leiden_tfidf, ArchR-style). Default 0.75. "
+                "Set to 1.0 to disable depth-correlation filtering."
+            ),
+        ),
+    )
+    n_svd_components: int = field(
+        default=50,
+        metadata=_spec(
+            cli_flag="--n-svd-components", yaml_key="n_svd_components",
+            legacy_args_attr="n_svd_components",
+            description=(
+                "Number of SVD/PCA components computed before filtering/neighbor "
+                "graph (leiden_tfidf and leiden_libsize strategies). Default 50."
+            ),
+        ),
+    )
+    n_top_hvg: int = field(
+        default=2000,
+        metadata=_spec(
+            cli_flag="--n-top-hvg", yaml_key="n_top_hvg",
+            legacy_args_attr="n_top_hvg",
+            description=(
+                "Number of highly variable genes/PAS selected before PCA "
+                "(leiden_libsize strategy only). Default 2000."
+            ),
+        ),
+    )
 
     # ─── validation (warn-only knobs, no behaviour) ────────────────────
     benchmark: bool = field(

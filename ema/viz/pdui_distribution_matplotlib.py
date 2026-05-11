@@ -21,6 +21,7 @@ import pandas as pd
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -92,4 +93,12 @@ class PduiDistributionMatplotlib(VizStrategy):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "cluster_key": "leiden",
+            "score_key": score_key,
+            "n_clusters": len(labels),
+            "n_observations": int(adata.n_obs),
+        })
+        return paths

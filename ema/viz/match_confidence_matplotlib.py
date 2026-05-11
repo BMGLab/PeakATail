@@ -21,6 +21,7 @@ import pandas as pd
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -112,4 +113,11 @@ class MatchConfidenceMatplotlib(VizStrategy):
 
         ax.set_title("Cluster match confidence")
         plt.tight_layout()
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "n_source_rows": n_rows,
+            "n_canonical_clusters": n_cols,
+            "datasets": sorted(df["dataset_id"].unique().tolist()),
+        })
+        return paths

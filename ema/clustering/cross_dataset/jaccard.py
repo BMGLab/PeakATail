@@ -165,6 +165,11 @@ class JaccardCellSetStrategy(ClusterMatchStrategy):
     For datasets with distinct cell populations (different biological samples),
     this strategy will produce no matches and should not be used — use
     ``marker_overlap`` or ``mnn`` instead.
+
+    Tunable hyperparameters:
+        None. This strategy performs pure set operations; there are no
+        algorithm parameters to expose. ``n_top_markers`` and ``n_jobs`` are
+        accepted for interface compatibility but have no effect.
     """
 
     name = "jaccard"

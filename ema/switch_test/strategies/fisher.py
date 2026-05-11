@@ -43,6 +43,14 @@ class FisherStrategy(DiffAPAStrategy):
     This test is known to be **anti-conservative** for single-cell count
     data because it ignores overdispersion; prefer ``nb_pairwise`` when
     statistical rigour is required.
+
+    Tunable hyperparameters:
+        min_cells_per_group (default 10): Minimum cells in each cluster for a
+            PAS to be testable (checked as a total-cell count because Fisher
+            uses aggregated counts, not per-cell non-zero detection).
+            CLI: ``--min-cells-per-group`` / YAML: ``min_cells_per_group``.
+        fdr (default 0.05): Benjamini-Hochberg FDR threshold applied after
+            testing.  CLI: ``--fdr`` / YAML: ``fdr``.
     """
 
     name: str = "fisher"

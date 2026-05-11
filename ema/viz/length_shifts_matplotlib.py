@@ -19,6 +19,7 @@ import pandas as pd
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -76,4 +77,12 @@ class LengthShiftsMatplotlib(VizStrategy):
         ax.set_title("3'UTR length shifts (ΔPDUI per gene per cluster pair)")
 
         plt.tight_layout()
-        return save_matplotlib(fig, output_basepath)
+        paths = save_matplotlib(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "cluster_key": "leiden",
+            "n_genes_shown": n_genes,
+            "n_cluster_pairs": n_pairs,
+            "cluster_pairs": list(df.columns),
+        })
+        return paths

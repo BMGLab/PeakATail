@@ -203,6 +203,19 @@ class NbMultiStrategy(DiffAPAStrategy):
     ``log2fc`` column because the test is multi-level.
 
     Parallelised with ``joblib.Parallel(backend="loky")`` over PAS batches.
+
+    Tunable hyperparameters:
+        min_cells_per_group (default 10): Minimum cells with *non-zero* counts
+            across all clusters for a PAS to pass the omnibus filter.  Also
+            requires signal (non-zero counts) in at least 2 clusters.
+            CLI: ``--min-cells-per-group`` / YAML: ``min_cells_per_group``.
+        fdr (default 0.05): Benjamini-Hochberg FDR threshold applied after
+            testing.  CLI: ``--fdr`` / YAML: ``fdr``.
+
+    Deliberately left hardcoded (internal numerics, not researcher-facing):
+        alpha dispersion clip: [1e-4, 10.0] — keeps GLM numerically stable.
+        maxiter: 200 iterations for both full and null model fitting.
+        per_worker_mb: 300 MB — used by ResourceManager to cap parallelism.
     """
 
     name: str = "nb_multi"

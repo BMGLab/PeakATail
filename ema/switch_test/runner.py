@@ -63,6 +63,7 @@ def _dispatch_pair(
     diff_df: pd.DataFrame,
     cluster_labels: pd.Series,
     n_jobs_inner: int,
+    min_cells_per_group: int = 10,
 ) -> tuple[str, str, pd.DataFrame]:
     """Top-level wrapper for ``run_one_pair`` suitable for ``Pool.imap_unordered``.
 
@@ -79,6 +80,7 @@ def _dispatch_pair(
         diff_df: Full count matrix (cells × PAS).
         cluster_labels: Cell-to-cluster assignment Series.
         n_jobs_inner: Inner worker budget from ``ResourceManager.split_jobs()``.
+        min_cells_per_group: Minimum cells per group for a PAS to enter testing.
 
     Returns:
         Forwarded ``(c1, c2, result_df)`` from :func:`run_one_pair`.
@@ -91,6 +93,7 @@ def _dispatch_pair(
         c1,
         c2,
         n_jobs_inner=n_jobs_inner,
+        min_cells_per_group=min_cells_per_group,
     )
 
 
@@ -107,6 +110,7 @@ def run_diff(
     fdr: float,
     threads: int | None,
     per_worker_mb: int,
+    min_cells_per_group: int = 10,
 ) -> dict[tuple[str, str], pd.DataFrame]:
     """Library-level entry point for differential APA testing.
 
@@ -128,6 +132,8 @@ def run_diff(
         fdr: FDR q-value threshold for significance.
         threads: Max parallel workers ceiling (or None for auto).
         per_worker_mb: Estimated peak RAM per parallel worker (MB).
+        min_cells_per_group: Minimum cells (with nonzero counts for NB strategies)
+            in each cluster for a PAS to enter differential testing. Default 10.
 
     Returns:
         Dict mapping ``(c1, c2)`` pairs to their result DataFrames (all h5ads
@@ -195,6 +201,7 @@ def run_diff(
                 count_matrix=diff_df,
                 cluster_labels=cluster_labels,
                 n_jobs=n_jobs,
+                min_cells_per_group=min_cells_per_group,
             )
             out_path = diff_dir / f"{strategy}_omnibus.tsv"
             df.to_csv(out_path, sep="\t")
@@ -225,7 +232,9 @@ def run_diff(
             if n_outer <= 1 or len(pairs) <= 1:
                 for c1, c2 in pairs:
                     _, _, df = run_one_pair(
-                        strategy, diff_df, cluster_labels, c1, c2, n_jobs_inner=n_inner,
+                        strategy, diff_df, cluster_labels, c1, c2,
+                        n_jobs_inner=n_inner,
+                        min_cells_per_group=min_cells_per_group,
                     )
                     pair_results[(c1, c2)] = df
             else:
@@ -235,6 +244,7 @@ def run_diff(
                     diff_df=diff_df,
                     cluster_labels=cluster_labels,
                     n_jobs_inner=n_inner,
+                    min_cells_per_group=min_cells_per_group,
                 )
                 ctx = multiprocessing.get_context("spawn")
                 with ctx.Pool(n_outer) as pool:
@@ -362,6 +372,7 @@ def run_length(
     isoform_agg: str,
     isoform_collapse: str,
     threads: int | None,
+    pseudocount: float = 0.0,
 ) -> tuple[pd.DataFrame | None, "ad.AnnData | None"]:
     """Library-level entry point for 3'UTR length / PDUI quantification.
 
@@ -383,6 +394,9 @@ def run_length(
         isoform_collapse: How to summarise isoforms — ``"none"`` / ``"mean"`` /
             ``"majority"``.
         threads: Max parallel workers ceiling (or None for auto).
+        pseudocount: Added to each per-cell count before PDUI / entropy
+            computation.  Default 0.0 preserves original behaviour.  Set to
+            e.g. 1.0 to eliminate NaN on zero-count cells.
 
     Returns:
         Tuple ``(pdui_df, adata)`` from the last h5ad processed, or
@@ -560,6 +574,7 @@ def run_length(
                         pas_isoform_map=pas_isoform_map,
                         aggregation=isoform_agg,
                         isoform_collapse=isoform_collapse,
+                        pseudocount=pseudocount,
                     )
             out_path = out_dir / f"pdui_{method}.tsv"
             df.to_csv(out_path, sep="\t", index=False)

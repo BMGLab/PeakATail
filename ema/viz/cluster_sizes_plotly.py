@@ -9,6 +9,7 @@ import plotly.express as px
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 
 
 @register_viz_strategy
@@ -25,4 +26,12 @@ class ClusterSizesPlotly(VizStrategy):
         fig = px.bar(x=labels, y=sizes, labels={"x": "cluster", "y": "# cells"},
                      title=f"Cluster sizes — {ds_id}")
         fig.update_layout(template="plotly_white")
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "dataset_id": ds_id,
+            "cluster_key": "leiden",
+            "n_clusters": len(labels),
+            "n_observations": int(adata.n_obs),
+        })
+        return paths

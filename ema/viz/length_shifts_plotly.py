@@ -18,6 +18,7 @@ import plotly.graph_objects as go
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
+from ema.viz._meta import write_figure_meta
 
 log = logging.getLogger(__name__)
 
@@ -92,4 +93,12 @@ class LengthShiftsPlotly(VizStrategy):
             height=max(400, len(genes) * 14 + 150),
         )
 
-        return save_plotly(fig, output_basepath)
+        paths = save_plotly(fig, output_basepath)
+        write_figure_meta(output_basepath, {
+            "viz_strategy": self.name,
+            "cluster_key": "leiden",
+            "n_genes_shown": len(genes),
+            "n_cluster_pairs": len(pairs),
+            "cluster_pairs": pairs,
+        })
+        return paths
