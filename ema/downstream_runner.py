@@ -62,6 +62,7 @@ def run_one_dataset_downstream(
     cluster_n_pcs: int = 40,
     cluster_random_seed: int = 42,
     cluster_external_clusters: str | None = None,
+    plot_engines: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -213,6 +214,20 @@ def run_one_dataset_downstream(
         progress_client.advance(1)  # tick 6/6: cluster
 
     # ------------------------------------------------------------------ #
+    # 6b. Tier 1 visualizations (UMAP + cluster sizes)                   #
+    # ------------------------------------------------------------------ #
+    _engines = plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
+    if _engines:
+        try:
+            from ema.viz import render_all
+            figs_dir = Path(per_dataset_dir) / ds_id / "figures"
+            render_all("umap", (adata, ds_id), figs_dir / f"umap_{ds_id}", engines=_engines)
+            render_all("cluster_sizes", (adata, ds_id), figs_dir / f"clusters_{ds_id}",
+                       engines=_engines)
+        except Exception as _viz_exc:
+            log.warning("Tier 1 viz failed for dataset %r: %s", ds_id, _viz_exc)
+
+    # ------------------------------------------------------------------ #
     # 7. Persist stats                                                    #
     # ------------------------------------------------------------------ #
     stats: dict[str, Any] = {
@@ -251,6 +266,15 @@ def downstream_worker_star(args: tuple) -> dict:
     Returns:
         The stats dict returned by ``run_one_dataset_downstream``.
     """
+    if len(args) == 13:
+        *pos_args, log_queue, progress_client, cluster_kwargs, plot_engines = args
+        return run_one_dataset_downstream(
+            *pos_args,
+            log_queue=log_queue,
+            progress_client=progress_client,
+            plot_engines=plot_engines,
+            **(cluster_kwargs or {}),
+        )
     if len(args) == 12:
         *pos_args, log_queue, progress_client, cluster_kwargs = args
         return run_one_dataset_downstream(
