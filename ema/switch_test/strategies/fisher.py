@@ -171,5 +171,9 @@ class FisherStrategy(DiffAPAStrategy):
         qvalues = false_discovery_control(df["pvalue"].values, method="bh")
         df["qvalue"] = qvalues
 
-        return df[["pvalue", "qvalue", "n_cells", "odds_ratio",
-                   "delta_proportion", "log2fc"]].sort_values("qvalue")
+        return df[[
+            "pvalue", "qvalue",
+            "n_cells", "n_cells_cluster1", "n_cells_cluster2",
+            "n_reads_pas_cluster1", "n_reads_pas_cluster2",
+            "odds_ratio", "delta_proportion", "log2fc",
+        ]].sort_values("qvalue")
