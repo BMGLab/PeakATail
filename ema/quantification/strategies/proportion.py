@@ -77,7 +77,8 @@ def _process_gene_per_gene(
     ranks: list[int],
     count_matrix: pd.DataFrame,
     pseudocount: float,
-) -> list[dict]:
+    cells: np.ndarray | None = None,
+) -> dict | None:
     """Compute proportions for one gene (per_gene aggregation).
 
     Args:
@@ -86,34 +87,44 @@ def _process_gene_per_gene(
         ranks: Corresponding per-gene rank for each pas_id.
         count_matrix: Full count matrix.
         pseudocount: Added to each count.
+        cells: Pre-extracted cell index as object array. Passed in by the
+            caller to avoid rebuilding it for every gene.
 
     Returns:
-        List of dicts with keys:
-        [gene_id, transcript_id, pas_id, rank, cell, proportion].
+        Dict of per-column numpy arrays (each length n_pas * n_cells) or
+        ``None`` when no valid PAS for this gene. Returning column arrays
+        instead of a list of per-row dicts is the difference between
+        ~250 bytes/row and ~50 bytes/row at this scale — the dict-of-rows
+        materialisation peaked at 10 GB RSS on real datasets and tripped
+        the OOM-killer.
     """
     valid = [pid for pid in pas_ids if pid in count_matrix.index]
     if not valid:
-        return []
+        return None
 
-    iloc_map = {pid: count_matrix.index.get_loc(pid) for pid in valid}
-    iloc_indices = [iloc_map[pid] for pid in valid]
+    iloc_indices = [count_matrix.index.get_loc(pid) for pid in valid]
     props = _proportions_for_rows(iloc_indices, count_matrix, pseudocount)
+    # props: (n_pas, n_cells), float64
 
-    cells = count_matrix.columns.tolist()
+    if cells is None:
+        cells = np.asarray(count_matrix.columns.tolist(), dtype=object)
+    n_pas, n_cells = props.shape
+    n_total = n_pas * n_cells
+
     rank_map = dict(zip(pas_ids, ranks))
-    rows = []
-    for j, pid in enumerate(valid):
-        r = rank_map.get(pid, -1)
-        for k, cell in enumerate(cells):
-            rows.append({
-                "gene_id": gene_id,
-                "transcript_id": "_gene_",
-                "pas_id": pid,
-                "rank": r,
-                "cell": cell,
-                "proportion": float(props[j, k]),
-            })
-    return rows
+    ranks_arr = np.fromiter(
+        (rank_map.get(p, -1) for p in valid), dtype=np.int64, count=n_pas,
+    )
+    pas_arr = np.asarray(valid, dtype=np.int64)
+
+    return {
+        "gene_id": np.full(n_total, gene_id, dtype=object),
+        "transcript_id": np.full(n_total, "_gene_", dtype=object),
+        "pas_id": np.repeat(pas_arr, n_cells),
+        "rank": np.repeat(ranks_arr, n_cells),
+        "cell": np.tile(cells, n_pas),
+        "proportion": props.reshape(n_total).astype(np.float64, copy=False),
+    }
 
 
 def _process_gene_per_isoform(
@@ -121,22 +132,21 @@ def _process_gene_per_isoform(
     transcript_pas: dict[str, list[tuple[int, int]]],  # tid -> [(pas_id, rank)]
     count_matrix: pd.DataFrame,
     pseudocount: float,
-) -> list[dict]:
+    cells: np.ndarray | None = None,
+) -> dict | None:
     """Compute proportions for one gene (per_isoform aggregation).
 
-    Args:
-        gene_id: Gene identifier.
-        transcript_pas: transcript_id -> [(pas_id, rank), ...]
-        count_matrix: Full count matrix.
-        pseudocount: Added to each count.
-
-    Returns:
-        List of dicts.
+    Returns column-oriented numpy arrays (see :func:`_process_gene_per_gene`
+    for the rationale).  Returns ``None`` when no transcript yields a valid
+    PAS for this gene.
     """
-    rows = []
-    cells = count_matrix.columns.tolist()
+    if cells is None:
+        cells = np.asarray(count_matrix.columns.tolist(), dtype=object)
+    n_cells = len(cells)
     valid_index = set(count_matrix.index)
 
+    # Per-transcript chunks; we concatenate them into one gene-level chunk.
+    chunks: list[dict] = []
     for transcript_id, pid_rank_pairs in transcript_pas.items():
         valid_pairs = [(pid, r) for pid, r in pid_rank_pairs if pid in valid_index]
         if not valid_pairs:
@@ -146,18 +156,27 @@ def _process_gene_per_isoform(
         ranks_t = [r for _, r in valid_pairs]
         iloc_indices = [count_matrix.index.get_loc(pid) for pid in pas_ids_t]
         props = _proportions_for_rows(iloc_indices, count_matrix, pseudocount)
+        n_pas = props.shape[0]
+        n_total = n_pas * n_cells
 
-        for j, (pid, r) in enumerate(zip(pas_ids_t, ranks_t)):
-            for k, cell in enumerate(cells):
-                rows.append({
-                    "gene_id": gene_id,
-                    "transcript_id": transcript_id,
-                    "pas_id": pid,
-                    "rank": r,
-                    "cell": cell,
-                    "proportion": float(props[j, k]),
-                })
-    return rows
+        chunks.append({
+            "gene_id": np.full(n_total, gene_id, dtype=object),
+            "transcript_id": np.full(n_total, transcript_id, dtype=object),
+            "pas_id": np.repeat(np.asarray(pas_ids_t, dtype=np.int64), n_cells),
+            "rank": np.repeat(np.asarray(ranks_t, dtype=np.int64), n_cells),
+            "cell": np.tile(cells, n_pas),
+            "proportion": props.reshape(n_total).astype(np.float64, copy=False),
+        })
+
+    if not chunks:
+        return None
+    if len(chunks) == 1:
+        return chunks[0]
+    return {
+        col: np.concatenate([c[col] for c in chunks])
+        for col in ("gene_id", "transcript_id", "pas_id", "rank",
+                    "cell", "proportion")
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -244,13 +263,18 @@ class ProportionPDUIStrategy(PDUIStrategy):
         n_genes = len(genes)
         use_parallel = n_genes > 5000
 
+        # Pre-extract cell index ONCE; passed to every gene worker so we
+        # don't pay 22 k list rebuilds.
+        cells_arr = np.asarray(count_matrix.columns.tolist(), dtype=object)
+
         if aggregation == "per_gene":
-            def _do_gene(gid: str) -> list[dict]:
+            def _do_gene(gid: str) -> dict | None:
                 pid_rank = gene_pas_min_rank.get(gid, {})
                 pas_ids = list(pid_rank.keys())
                 ranks = [pid_rank[p] for p in pas_ids]
                 return _process_gene_per_gene(
-                    gid, pas_ids, ranks, count_matrix, pseudocount
+                    gid, pas_ids, ranks, count_matrix, pseudocount,
+                    cells=cells_arr,
                 )
 
             if use_parallel:
@@ -263,9 +287,10 @@ class ProportionPDUIStrategy(PDUIStrategy):
                 results = [_do_gene(g) for g in genes]
 
         else:  # per_isoform
-            def _do_gene_iso(gid: str) -> list[dict]:
+            def _do_gene_iso(gid: str) -> dict | None:
                 return _process_gene_per_isoform(
-                    gid, gene_transcript_map[gid], count_matrix, pseudocount
+                    gid, gene_transcript_map[gid], count_matrix, pseudocount,
+                    cells=cells_arr,
                 )
 
             if use_parallel:
@@ -279,16 +304,19 @@ class ProportionPDUIStrategy(PDUIStrategy):
             else:
                 results = [_do_gene_iso(g) for g in genes]
 
-        rows: list[dict] = []
-        for sub in results:
-            rows.extend(sub)
-
-        if not rows:
+        # Drop empty-gene results and assemble column-wise.  Going through
+        # a long-format dict-per-row list peaks at ~10 GB on real datasets;
+        # column-wise concat is bounded by the final DataFrame footprint.
+        chunks = [r for r in results if r is not None]
+        if not chunks:
             return pd.DataFrame(
                 columns=["gene_id", "transcript_id", "pas_id", "rank",
                          "cell", "proportion"]
             )
-
-        df = pd.DataFrame(rows)
-        df["proportion"] = df["proportion"].astype("float64")
+        df = pd.DataFrame({
+            col: np.concatenate([c[col] for c in chunks])
+            for col in ("gene_id", "transcript_id", "pas_id", "rank",
+                        "cell", "proportion")
+        })
+        df["proportion"] = df["proportion"].astype("float64", copy=False)
         return df
