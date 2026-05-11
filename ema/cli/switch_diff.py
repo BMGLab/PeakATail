@@ -128,6 +128,8 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 kwargs.get("plot_engine", "matplotlib"),
                 kwargs.get("no_plots", False),
             ),
+            h5ad_paths=list(kwargs["h5ad"]),
+            cluster_key=kwargs["cluster_key"],
         )
     finally:
         teardown_logging()

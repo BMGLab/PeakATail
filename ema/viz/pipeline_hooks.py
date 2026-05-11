@@ -36,6 +36,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_ENGINES: list[str] = ["matplotlib"]
 
+# Number of top genes rendered as gene-track figures by the auto-top-N block in
+# each switch orchestrator.  No CLI flag yet — Phase 2 if requested.
+_AUTO_TOP_N_GENES: int = 5
+
 
 # ===========================================================================
 # Pure data assemblers (shared across commands; safe to unit-test in isolation)
@@ -87,6 +91,30 @@ def build_peak_qc_data(bed_paths: Iterable[str | Path], adata: Any) -> dict[str,
         "peak_widths": peak_widths,
         "per_cell_reads": per_cell_reads,
     }
+
+
+def _find_pasbed_near(anchor: Path, max_walk: int = 4) -> Path | None:
+    """Walk up from *anchor* (a directory or file) to find ``pasbed.bed``.
+
+    Mirrors the same walk-up logic used by the runner.
+
+    Args:
+        anchor: Start path (file or directory).
+        max_walk: Maximum number of parent directories to ascend.
+
+    Returns:
+        First ``pasbed.bed`` found, or ``None``.
+    """
+    start = anchor if anchor.is_dir() else anchor.parent
+    search = start
+    for _ in range(max_walk + 1):
+        candidate = search / "pasbed.bed"
+        if candidate.exists():
+            return candidate
+        if search == search.parent:
+            break
+        search = search.parent
+    return None
 
 
 def load_resource_samples(jsonl_path: Path) -> list[dict[str, Any]]:
@@ -370,6 +398,8 @@ def render_switch_diff_outputs(
     fdr: float,
     engines: list[str] | None,
     log2fc_thresh: float = 1.0,
+    h5ad_paths: list[str] | None = None,
+    cluster_key: str = "leiden",
 ) -> None:
     """Render figures specific to ``ema switch diff``.
 
@@ -377,6 +407,17 @@ def render_switch_diff_outputs(
     omnibus tests) to the per-pair stats DataFrame.  ``fdr`` and
     ``log2fc_thresh`` flow from the CLI/YAML so the volcano cutoffs
     match the user's settings.
+
+    Args:
+        out_dir: Output directory for this diff run.
+        pair_results: Per-pair result DataFrames keyed by ``(c1, c2)``.
+        fdr: FDR threshold used for volcano cutoff lines.
+        engines: Rendering engine names (``["matplotlib"]``, etc.).
+        log2fc_thresh: log2FC threshold for volcano cutoff lines.
+        h5ad_paths: Optional list of h5ad paths (from the CLI ``--h5ad``
+            option).  Required for the auto-top-N gene_track block; if
+            omitted or empty the block is skipped with a warning.
+        cluster_key: AnnData obs column holding cluster labels.
     """
     if not engines or not pair_results:
         return
@@ -454,6 +495,20 @@ def render_switch_diff_outputs(
                 len(sig_sets),
             )
 
+        # --- auto-top-N gene_track: rank genes by volcano score, render tracks ---
+        try:
+            _render_diff_gene_tracks(
+                pair_results=pair_results,
+                h5ad_paths=h5ad_paths or [],
+                cluster_key=cluster_key,
+                figs_dir=figs_dir,
+                engines=engines or [],
+            )
+        except Exception as _gt_exc:
+            log.warning(
+                "ema switch diff: gene_track auto top-N failed: %s", _gt_exc
+            )
+
         # Walk the figures dir once and write a researcher-readable manifest.
         from ema.viz._meta import write_figures_index
         idx = write_figures_index(figs_dir, command="ema switch diff")
@@ -461,6 +516,291 @@ def render_switch_diff_outputs(
             log.info("ema switch diff: figures index -> %s", idx)
     except Exception as exc:
         log.warning("ema switch diff: viz rendering failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Gene-track auto-top-N helpers (shared by diff and length orchestrators)
+# ---------------------------------------------------------------------------
+
+def _render_diff_gene_tracks(
+    *,
+    pair_results: dict[tuple[str, str | None], Any],
+    h5ad_paths: list[str],
+    cluster_key: str,
+    figs_dir: Path,
+    engines: list[str],
+) -> None:
+    """Rank the top-N genes by volcano score and render one gene_track per gene.
+
+    Args:
+        pair_results: Per-pair result DataFrames (same object passed to the
+            orchestrator).
+        h5ad_paths: Paths to the h5ad files loaded by ``run_diff``.
+        cluster_key: AnnData obs column with cluster labels.
+        figs_dir: Figures output directory.
+        engines: Rendering engine names.
+    """
+    if not h5ad_paths:
+        log.warning(
+            "ema switch diff: gene_track auto top-%d skipped — no h5ad paths "
+            "provided (pass h5ad_paths= to render_switch_diff_outputs)",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    from ema.viz._gene_track_helpers import rank_top_genes, build_gene_panel
+
+    top_genes = rank_top_genes(pair_results, n=_AUTO_TOP_N_GENES)
+    if not top_genes:
+        log.info(
+            "ema switch diff: gene_track auto top-%d skipped — no gene_id "
+            "column found in pair_results",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    # Load the last (or first available) h5ad and its pasbed.
+    adata = _load_last_adata(h5ad_paths)
+    if adata is None:
+        log.warning(
+            "ema switch diff: gene_track auto top-%d skipped — could not load "
+            "any h5ad",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    # Walk up from h5ad dir to find pasbed.bed.
+    pasbed_path = _find_pasbed_near(Path(h5ad_paths[-1]))
+    if pasbed_path is None:
+        log.warning(
+            "ema switch diff: gene_track auto top-%d skipped — pasbed.bed not "
+            "found near %s",
+            _AUTO_TOP_N_GENES, Path(h5ad_paths[-1]).parent,
+        )
+        return
+
+    import pandas as _pd
+    pasbed_df = _pd.read_csv(
+        pasbed_path,
+        sep="\t",
+        header=None,
+        names=["chrom", "start", "end", "pas_id", "score", "strand"],
+    )
+
+    total_files = 0
+    rendered_genes: list[str] = []
+    for gene_id in top_genes:
+        try:
+            panel = build_gene_panel(
+                gene_id=gene_id,
+                adata=adata,
+                pasbed=pasbed_df,
+                cluster_key=cluster_key,
+            )
+            if panel is None:
+                continue
+            paths = render_all(
+                "gene_track",
+                panel,
+                figs_dir / f"gene_{gene_id}",
+                engines=engines,
+            )
+            total_files += len(paths)
+            rendered_genes.append(gene_id)
+        except Exception as _e:
+            log.warning(
+                "ema switch diff: gene_track for %r failed: %s", gene_id, _e
+            )
+
+    log.info(
+        "ema switch diff: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",
+        _AUTO_TOP_N_GENES,
+        total_files,
+        len(rendered_genes),
+        ", ".join(rendered_genes),
+    )
+
+
+def _render_length_gene_tracks(
+    *,
+    adata: Any,
+    pdui_df: Any,
+    cluster_key: str,
+    figs_dir: Path,
+    engines: list[str],
+    out_dir: Path | None = None,
+) -> None:
+    """Rank top-N genes by within-cluster score variance and render gene tracks.
+
+    For each gene, compute the mean score per cluster then take the variance
+    across clusters.  Top-N genes by variance are rendered.
+
+    Args:
+        adata: AnnData (already loaded by the length orchestrator).
+        pdui_df: Per-cell score DataFrame (from the PDUI/entropy/proportion
+            strategy).  May be ``None`` — skips with warning.
+        cluster_key: AnnData obs column with cluster labels.
+        figs_dir: Figures output directory.
+        engines: Rendering engine names.
+        out_dir: The switch-length output directory.  Used as an additional
+            anchor for the pasbed walk-up when ``adata`` carries no filename.
+    """
+    if pdui_df is None or pdui_df.empty:
+        log.info(
+            "ema switch length: gene_track auto top-%d skipped — pdui_df empty",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    import numpy as _np
+    import pandas as _pd
+    from ema.viz._gene_track_helpers import build_gene_panel
+
+    # Determine which score column to use for variance-based ranking.
+    score_col: str | None = None
+    for _col in ("pdui", "entropy", "proportion"):
+        if _col in pdui_df.columns:
+            score_col = _col
+            break
+
+    gene_col = "gene_id" if "gene_id" in pdui_df.columns else None
+
+    if score_col is None or gene_col is None or "cell" not in pdui_df.columns:
+        log.info(
+            "ema switch length: gene_track auto top-%d skipped — pdui_df "
+            "missing gene_id, cell, or a score column",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    # Map cell -> cluster from adata.
+    if cluster_key not in adata.obs.columns:
+        log.warning(
+            "ema switch length: gene_track auto top-%d skipped — cluster_key "
+            "%r not in adata.obs",
+            _AUTO_TOP_N_GENES, cluster_key,
+        )
+        return
+
+    cell_to_cluster = adata.obs[cluster_key].astype(str).to_dict()
+    valid = pdui_df[pdui_df[score_col].notna()].copy()
+    valid["__cluster__"] = valid["cell"].map(cell_to_cluster)
+    valid = valid[valid["__cluster__"].notna()]
+
+    if valid.empty:
+        log.info(
+            "ema switch length: gene_track auto top-%d skipped — no non-NaN "
+            "score rows after cluster mapping",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    # Mean score per (gene, cluster); variance across clusters.
+    per_gene_cluster = (
+        valid.groupby([gene_col, "__cluster__"])[score_col]
+        .mean()
+        .unstack(fill_value=_np.nan)
+    )
+    # Variance across cluster columns per gene.
+    gene_var = per_gene_cluster.var(axis=1, skipna=True)
+    top_genes = (
+        gene_var.dropna()
+        .sort_values(ascending=False)
+        .head(_AUTO_TOP_N_GENES)
+        .index.tolist()
+    )
+
+    if not top_genes:
+        log.info(
+            "ema switch length: gene_track auto top-%d skipped — no genes with "
+            "sufficient cluster coverage",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    # Walk up from adata filename to find pasbed.  adata may not carry its
+    # source path — use the h5ad paths registered in obs_names provenance if
+    # available; otherwise walk from out_dir / figs_dir.
+    pasbed_path: Path | None = None
+    h5ad_hint: str | None = getattr(adata, "filename", None)
+    if h5ad_hint:
+        pasbed_path = _find_pasbed_near(Path(str(h5ad_hint)))
+    if pasbed_path is None and out_dir is not None:
+        pasbed_path = _find_pasbed_near(out_dir, max_walk=6)
+    if pasbed_path is None:
+        pasbed_path = _find_pasbed_near(figs_dir, max_walk=6)
+
+    if pasbed_path is None:
+        log.warning(
+            "ema switch length: gene_track auto top-%d skipped — pasbed.bed "
+            "not found",
+            _AUTO_TOP_N_GENES,
+        )
+        return
+
+    pasbed_df = _pd.read_csv(
+        pasbed_path,
+        sep="\t",
+        header=None,
+        names=["chrom", "start", "end", "pas_id", "score", "strand"],
+    )
+
+    total_files = 0
+    rendered_genes: list[str] = []
+    for gene_id in top_genes:
+        try:
+            panel = build_gene_panel(
+                gene_id=gene_id,
+                adata=adata,
+                pasbed=pasbed_df,
+                cluster_key=cluster_key,
+            )
+            if panel is None:
+                continue
+            paths = render_all(
+                "gene_track",
+                panel,
+                figs_dir / f"gene_{gene_id}",
+                engines=engines,
+            )
+            total_files += len(paths)
+            rendered_genes.append(gene_id)
+        except Exception as _e:
+            log.warning(
+                "ema switch length: gene_track for %r failed: %s", gene_id, _e
+            )
+
+    log.info(
+        "ema switch length: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",
+        _AUTO_TOP_N_GENES,
+        total_files,
+        len(rendered_genes),
+        ", ".join(rendered_genes),
+    )
+
+
+def _load_last_adata(h5ad_paths: list[str]) -> Any:
+    """Load the last readable h5ad from the list.
+
+    Iterates in reverse so the most-recently-processed dataset is preferred.
+
+    Args:
+        h5ad_paths: Paths to h5ad files.
+
+    Returns:
+        AnnData object, or ``None`` if none could be loaded.
+    """
+    try:
+        import anndata as _ad
+    except ImportError:
+        log.warning("gene_track: anndata not installed; skipping")
+        return None
+    for p in reversed(h5ad_paths):
+        try:
+            return _ad.read_h5ad(p)
+        except Exception as _e:
+            log.warning("gene_track: could not load %s: %s", p, _e)
+    return None
 
 
 # ===========================================================================
@@ -622,6 +962,21 @@ def render_switch_length_outputs(
                 "ema switch length: length_shifts=%d file(s) "
                 "(%d genes × %d cluster pairs)",
                 len(w), len(shifts_df), len(shifts_data),
+            )
+
+        # --- auto-top-N gene_track: rank genes by score variance across clusters ---
+        try:
+            _render_length_gene_tracks(
+                adata=last_adata,
+                pdui_df=pdui_df,
+                cluster_key=cluster_key,
+                figs_dir=figs_dir,
+                engines=engines or [],
+                out_dir=Path(out_dir),
+            )
+        except Exception as _gt_exc:
+            log.warning(
+                "ema switch length: gene_track auto top-N failed: %s", _gt_exc
             )
 
         from ema.viz._meta import write_figures_index

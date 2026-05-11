@@ -378,7 +378,10 @@ def run_diff(
                 df_out.to_csv(out_path, sep="\t", index=False)
                 if "qvalue" in df.columns:
                     total_sig += (df["qvalue"] < fdr).sum()
-                all_pair_results[(c1, c2)] = df
+                # Store the augmented df (includes gene_id, chrom, strand) so
+                # downstream consumers such as the viz gene_track auto-top-N
+                # ranking can access gene annotations without re-parsing disk.
+                all_pair_results[(c1, c2)] = df_out
 
             log.info(
                 "run_diff: %d pairs: %d total significant PAS (q<%s) -> %s",
