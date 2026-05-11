@@ -305,7 +305,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             _filtered_kwargs = {k: v for k, v in _strategy_cls_kwargs.items() if k in _accepted}
         else:
             _filtered_kwargs = {}
-    except Exception:
+    except (ImportError, TypeError, AttributeError) as exc:
+        log.warning("strategy %r kwarg filter failed: %s — using empty kwargs", args.strategy, exc)
         _filtered_kwargs = {}
     strategy = get_strategy(args.strategy, **_filtered_kwargs)
     peak_kwargs = dict(

@@ -55,7 +55,7 @@ def apply_filters(input_bed: str, output_bed: str,
     # Filter 1: Internal priming
     if enable_internal_priming:
         if genome_fasta and os.path.exists(genome_fasta):
-            from ema.filters.internal_priming import filter_internal_priming
+            from ema.experimental.internal_priming import filter_internal_priming
             ip_output = output_bed + ".ip_tmp"
             ip_stats = filter_internal_priming(
                 current_input, genome_fasta, ip_output,

@@ -15,6 +15,11 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
+# TODO(refactor): This legacy fishertest() is still imported by
+# ema/switch_test/tests/fishertest_test.py (which is outside this slice's
+# ownership). The registered FisherStrategy in strategies/fisher.py does NOT
+# import it — it reimplements the logic directly. Once the test is updated to
+# target FisherStrategy.test() directly, this function can be deleted.
 def fishertest(selected_cells: pd.DataFrame,
                result_dir: str,
                level: str = 'Ensemble_ID',

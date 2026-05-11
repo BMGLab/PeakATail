@@ -489,42 +489,16 @@ def run_length(
             chosen_pasbed = next((p for p in pasbed_candidates if p.exists()), None)
 
             if chosen_pasbed is None:
-                # Build pasbed.bed on the fly from peakcalling/*.{pos,neg}.bed.
-                peak_dir = h5ad_run_root
-                for _ in range(4):
-                    if (peak_dir / "peakcalling").is_dir():
-                        peak_dir = peak_dir / "peakcalling"
-                        break
-                    peak_dir = peak_dir.parent
-                if peak_dir.name == "peakcalling":
-                    beds = sorted(peak_dir.glob("*.pos.bed")) + sorted(peak_dir.glob("*.neg.bed"))
-                    if beds:
-                        combined = peak_dir.parent / "pasbed.bed"
-                        with open(combined, "w") as out:
-                            for b in beds:
-                                with open(b) as f:
-                                    for line in f:
-                                        if line.strip():
-                                            out.write(line)
-                        chosen_pasbed = combined
-                        log.info(
-                            "run_length: built pasbed.bed by concatenating "
-                            "%d peak BEDs -> %s",
-                            len(beds), combined,
-                        )
-            if chosen_pasbed is not None:
-                pas_isoform_map = map_pas_to_isoforms(chosen_pasbed, isoform_utrs)
-                log.info(
-                    "run_length: isoform map: %d PAS mapped from %s",
-                    len(pas_isoform_map), chosen_pasbed,
+                raise FileNotFoundError(
+                    f"pasbed.bed not found near {Path(h5ad_path).resolve().parent}. "
+                    f"Either re-run the pipeline (it should produce per_dataset/<ds>/pasbed.bed) "
+                    f"or pass --pasbed explicitly."
                 )
-            else:
-                log.warning(
-                    "run_length: --isoform-agg=per_isoform requires a pasbed; "
-                    "none found near %s. Falling back to per_gene.",
-                    Path(h5ad_path).resolve(),
-                )
-                isoform_agg = "per_gene"
+            pas_isoform_map = map_pas_to_isoforms(chosen_pasbed, isoform_utrs)
+            log.info(
+                "run_length: isoform map: %d PAS mapped from %s",
+                len(pas_isoform_map), chosen_pasbed,
+            )
         elif isoform_agg == "per_isoform" and (not gtf or not Path(gtf).exists()):
             log.warning(
                 "run_length: --isoform-agg=per_isoform requires --gtf; "

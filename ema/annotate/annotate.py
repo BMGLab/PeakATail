@@ -30,6 +30,7 @@ def annotate(sparse_matrix, pas_ids, collist, genes,
     # The PAS IDs from make_dataframe() are the actual MatrixMarket row indices
 
     # Find which PAS IDs have gene annotations
+    assert genes.index.is_unique, "find_close produced duplicate PAS IDs — gene_id alignment will break"
     annotated_pas_ids = genes.index.intersection(pas_ids)
 
     if len(annotated_pas_ids) == 0:
