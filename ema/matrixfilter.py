@@ -194,7 +194,8 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=None):
 
 def preprocessing(sparse_matrix, pas_ids, collist,
                   min_cells=filter_config.min_cells,
-                  min_genes=filter_config.min_genes):
+                  min_genes=filter_config.min_genes,
+                  gene_ids=None):
     """Filter sparse PAS-by-cell matrix and return AnnData.
 
     Args:
@@ -203,16 +204,30 @@ def preprocessing(sparse_matrix, pas_ids, collist,
         collist: list of cell barcode strings for columns
         min_cells: minimum number of cells a PAS must appear in
         min_genes: minimum number of PAS a cell must have (default lowered for APA)
+        gene_ids: Optional array (aligned to ``pas_ids``) of gene assignments
+            from :func:`ema.annotate.annotate`.  When supplied, it is stored as
+            ``adata.var['gene_id']`` so downstream tools (``ema switch
+            length --isoform-agg per_gene``) can aggregate PAS within a gene
+            without re-reading the BED/GTF.  Passing ``None`` keeps the legacy
+            behaviour (no gene column).
 
     Returns:
         ad.AnnData: filtered AnnData object (obs=cells, var=PAS)
     """
     # Build AnnData: scanpy expects cells-by-features (cells x PAS)
     # Our matrix is PAS x cells, so transpose
+    var_dict = {'pas_id': pas_ids}
+    if gene_ids is not None:
+        if len(gene_ids) != len(pas_ids):
+            raise ValueError(
+                f"gene_ids length ({len(gene_ids)}) must match pas_ids "
+                f"({len(pas_ids)}) — they index the same matrix rows."
+            )
+        var_dict['gene_id'] = gene_ids
     adata = ad.AnnData(
         X=sparse_matrix.T.tocsr(),
         obs={'barcode': collist},
-        var={'pas_id': pas_ids}
+        var=var_dict,
     )
     adata.obs_names = collist
     adata.var_names = [str(pid) for pid in pas_ids]

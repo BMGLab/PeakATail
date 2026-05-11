@@ -351,31 +351,149 @@ def run_length(
             log.info("run_length: PDUI skipped (no strategy)")
             continue
 
-        # Build isoform map if GTF provided
-        pas_isoform_map = {}
-        if gtf and Path(gtf).exists():
+        # Build pas_isoform_map. Per_isoform needs the GTF (transcript-level
+        # UTRs); per_gene only needs the PAS->gene assignment which now lives
+        # directly on adata.var (written by ema.matrixfilter.preprocessing when
+        # gene_ids are forwarded from annotate).
+        pas_isoform_map: dict[int, list[tuple[str, str, int, int, int]]] = {}
+        if gtf and Path(gtf).exists() and isoform_agg == "per_isoform":
+            # Isoform-aware path requires both GTF and a PAS BED with strand info.
+            # The pasbed path is derived from the run dir (set by the new
+            # auto-routing helper) so the deprecated `emaout/pasbed.bed`
+            # global lookup is gone.
             from ema.annotate.gtf2isoform_utr import parse_isoform_utrs
             from ema.quantification.pas_to_isoform import map_pas_to_isoforms
-            isoform_utrs = parse_isoform_utrs(Path(gtf))
-            # Use emaout/pasbed.bed as default PAS BED (consistent with old cli)
-            pasbed_default = Path("emaout/pasbed.bed")
-            if pasbed_default.exists():
-                pas_isoform_map = map_pas_to_isoforms(pasbed_default, isoform_utrs)
-                log.info("run_length: isoform map: %d PAS mapped", len(pas_isoform_map))
-        else:
-            if isoform_agg == "per_isoform":
-                log.warning("run_length: --isoform-agg=per_isoform requires --gtf; falling back to per_gene")
-                isoform_agg = "per_gene"
+            # Cache the parsed isoform UTR map next to the source h5ad's run
+            # dir (or fall back to the user-level ~/.cache).  Without this the
+            # human GTF is re-parsed (~1 GB on disk, ~3-5 GB in memory) on
+            # every `ema switch length --isoform-agg per_isoform` invocation.
+            # Cap workers via the same ResourceManager n_jobs we already
+            # computed for this run so we don't spawn one-per-chromosome.
+            _gtf_cache = Path(h5ad_path).resolve().parent
+            for _ in range(4):
+                if (_gtf_cache / "gtf_cache").exists() or (_gtf_cache / "run_config.json").exists():
+                    _gtf_cache = _gtf_cache / "gtf_cache"
+                    break
+                _gtf_cache = _gtf_cache.parent
+            else:
+                _gtf_cache = Path.home() / ".cache" / "peakatail" / "gtf"
+            _gtf_cache.mkdir(parents=True, exist_ok=True)
+            isoform_utrs = parse_isoform_utrs(
+                Path(gtf),
+                cache_dir=_gtf_cache,
+                n_workers=min(n_jobs, 4),
+            )
+            # Find pasbed.bed: walk up from the h5ad path, then fall back to
+            # concatenating the per-dataset BEDs the pipeline already writes
+            # under <run>/peakcalling/.  The deprecated hardcoded
+            # `emaout/pasbed.bed` lookup is gone.
+            pasbed_candidates: list[Path] = []
+            h5ad_run_root = Path(h5ad_path).resolve().parent
+            search_root = h5ad_run_root
+            for _ in range(4):  # walk up at most 4 dirs to the run root
+                pasbed_candidates.append(search_root / "pasbed.bed")
+                search_root = search_root.parent
+            chosen_pasbed = next((p for p in pasbed_candidates if p.exists()), None)
 
+            if chosen_pasbed is None:
+                # Build pasbed.bed on the fly from peakcalling/*.{pos,neg}.bed.
+                peak_dir = h5ad_run_root
+                for _ in range(4):
+                    if (peak_dir / "peakcalling").is_dir():
+                        peak_dir = peak_dir / "peakcalling"
+                        break
+                    peak_dir = peak_dir.parent
+                if peak_dir.name == "peakcalling":
+                    beds = sorted(peak_dir.glob("*.pos.bed")) + sorted(peak_dir.glob("*.neg.bed"))
+                    if beds:
+                        combined = peak_dir.parent / "pasbed.bed"
+                        with open(combined, "w") as out:
+                            for b in beds:
+                                with open(b) as f:
+                                    for line in f:
+                                        if line.strip():
+                                            out.write(line)
+                        chosen_pasbed = combined
+                        log.info(
+                            "run_length: built pasbed.bed by concatenating "
+                            "%d peak BEDs -> %s",
+                            len(beds), combined,
+                        )
+            if chosen_pasbed is not None:
+                pas_isoform_map = map_pas_to_isoforms(chosen_pasbed, isoform_utrs)
+                log.info(
+                    "run_length: isoform map: %d PAS mapped from %s",
+                    len(pas_isoform_map), chosen_pasbed,
+                )
+            else:
+                log.warning(
+                    "run_length: --isoform-agg=per_isoform requires a pasbed; "
+                    "none found near %s. Falling back to per_gene.",
+                    Path(h5ad_path).resolve(),
+                )
+                isoform_agg = "per_gene"
+        elif isoform_agg == "per_isoform" and (not gtf or not Path(gtf).exists()):
+            log.warning(
+                "run_length: --isoform-agg=per_isoform requires --gtf; "
+                "falling back to per_gene"
+            )
+            isoform_agg = "per_gene"
+
+        # Per_gene path: synthesise a minimal pas_isoform_map from adata.var.
+        # Each PAS maps to a single (gene, "_gene_", rank=1) entry — enough
+        # for the strategy's per_gene aggregation, which collapses isoforms.
+        if isoform_agg == "per_gene" and not pas_isoform_map:
+            if "gene_id" in adata.var.columns:
+                gene_id_col = adata.var["gene_id"]
+                for pas_id_str, gene_id in gene_id_col.items():
+                    if not gene_id or (isinstance(gene_id, float) and pd.isna(gene_id)):
+                        continue
+                    try:
+                        pas_id_int = int(pas_id_str)
+                    except (TypeError, ValueError):
+                        continue
+                    pas_isoform_map[pas_id_int] = [
+                        (str(gene_id), "_gene_", 0, 1, 1)
+                    ]
+                log.info(
+                    "run_length: per_gene map built from adata.var['gene_id']: "
+                    "%d PAS mapped",
+                    len(pas_isoform_map),
+                )
+            else:
+                log.warning(
+                    "run_length: per_gene requested but adata.var has no "
+                    "'gene_id' column (older h5ad?). PDUI will be empty."
+                )
+
+        # Use the **threading** joblib backend for PDUI strategies.  Two
+        # reasons, both observed on the full-BAM regression run:
+        #   1. The default loky backend pickles a copy of ``pdui_df_full``
+        #      (a 1051 x 22419 dense DataFrame ~ 190 MB) into each worker.
+        #      With n_jobs=4 the parent peaked at ~13 GB RSS and crashed the
+        #      host; threads share memory so this stays at ~600 MB.
+        #   2. loky workers also reinitialise OpenBLAS thread pools and
+        #      deadlocked even with the BLAS env caps in ema/__init__.py.
+        # Inner pandas/numpy ops release the GIL, so threading still gets
+        # real parallelism for the gene-level loops.  threadpool_limits(1)
+        # belt-and-braces caps any BLAS calls inside the threads.
+        from contextlib import contextmanager
+        try:
+            from threadpoolctl import threadpool_limits as _threadpool_limits
+        except ImportError:
+            @contextmanager
+            def _threadpool_limits(limits=1):  # type: ignore[misc]
+                yield
         for method in pdui_methods:
             strat = get_pdui_strategy(method)
-            with parallel_backend("loky", n_jobs=n_jobs):
-                df = strat.compute(
-                    count_matrix=pdui_df_full,
-                    pas_isoform_map=pas_isoform_map,
-                    aggregation=isoform_agg,
-                    isoform_collapse=isoform_collapse,
-                )
+            with _threadpool_limits(limits=1):
+                with parallel_backend("threading", n_jobs=n_jobs):
+                    df = strat.compute(
+                        count_matrix=pdui_df_full,
+                        pas_isoform_map=pas_isoform_map,
+                        aggregation=isoform_agg,
+                        isoform_collapse=isoform_collapse,
+                    )
             out_path = out_dir / f"pdui_{method}.tsv"
             df.to_csv(out_path, sep="\t", index=False)
             log.info("run_length: PDUI (%s): %d rows -> %s", method, len(df), out_path)

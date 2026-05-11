@@ -188,6 +188,7 @@ def run_one_dataset_downstream(
         collist=collist,
         min_cells=filter_min_cells,
         min_genes=filter_min_genes,
+        gene_ids=result.gene_ids,
     )
     if progress_client is not None:
         progress_client.advance(1)  # tick 5/6: preprocess

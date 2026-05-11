@@ -655,6 +655,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             collist=collist,
             min_cells=filter_config.min_cells,
             min_genes=filter_config.min_genes,
+            gene_ids=result.gene_ids,
         )
 
         # Save preprocessing stats

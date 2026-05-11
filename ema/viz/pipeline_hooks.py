@@ -478,7 +478,18 @@ def render_switch_length_outputs(
                 "ema switch length: pdui_distribution (fallback) = %d file(s)", len(w),
             )
 
-        # --- length_shifts: ΔPDUI per (cluster pair × gene) ---
+        # --- length_shifts: ΔPDUI per (gene × cluster pair) ---
+        #
+        # Previous implementation materialised the full 4.3M-row pdui_df
+        # (one row per (gene, cell)) as a Python list, then computed 66
+        # cluster-pair differences using the SAME per-cell vector for every
+        # cluster (a bug: shifts would always be zero), spawning a 2+ GB
+        # in-memory DataFrame.  On the full BAM this OOM'd the host.
+        #
+        # The correct computation aggregates PDUI per (gene, cluster) using
+        # the cell→cluster mapping from last_adata.obs[cluster_key], then
+        # forms pair-wise differences on the small gene × cluster table
+        # (typically a few thousand × ~10 = <1 MB).
         if pdui_df is None or cluster_key not in last_adata.obs.columns:
             return
         clusters = sorted(
@@ -487,24 +498,43 @@ def render_switch_length_outputs(
         )
         gene_col = "gene_id" if "gene_id" in pdui_df.columns else pdui_df.columns[0]
         pdui_col = "pdui" if "pdui" in pdui_df.columns else None
-        if not pdui_col or len(pdui_df) == 0:
+        if not pdui_col or len(pdui_df) == 0 or "cell" not in pdui_df.columns:
             return
-        gene_ids = list(pdui_df[gene_col])
-        pdui_vals = pdui_df[pdui_col].values
-        cluster_pdui = {cl: pdui_vals for cl in clusters}  # gene-level identical per cluster
-        shifts_data: dict[str, list[float]] = {}
+
+        # Map each cell to its cluster (avoid copying pdui_df).
+        cell_to_cluster = last_adata.obs[cluster_key].astype(str).to_dict()
+        # Pre-filter to rows with non-NaN pdui — typically <10% of the long
+        # frame (8.7% in our regression run) — keeping the groupby cheap.
+        valid = pdui_df[pdui_df[pdui_col].notna()].copy()
+        if valid.empty:
+            log.info("ema switch length: length_shifts skipped (no non-NaN PDUI rows)")
+            return
+        valid["__cluster__"] = valid["cell"].map(cell_to_cluster)
+        valid = valid[valid["__cluster__"].notna()]
+
+        # mean PDUI per (gene, cluster) — small table: n_multi_pas_genes × n_clusters.
+        per_gene_cluster = (
+            valid.groupby([gene_col, "__cluster__"])[pdui_col].mean().unstack(fill_value=_np.nan)
+        )
+        # Ensure every cluster column exists (some may have no data).
+        for cl in clusters:
+            if cl not in per_gene_cluster.columns:
+                per_gene_cluster[cl] = _np.nan
+        per_gene_cluster = per_gene_cluster[list(clusters)]
+
+        shifts_data: dict[str, _pd.Series] = {}
         for c1, c2 in combinations(clusters, 2):
-            shifts_data[f"{c1}_vs_{c2}"] = list(cluster_pdui[c1] - cluster_pdui[c2])
+            shifts_data[f"{c1}_vs_{c2}"] = per_gene_cluster[c1] - per_gene_cluster[c2]
         if shifts_data:
-            shifts_df = _pd.DataFrame(shifts_data, index=gene_ids)
+            shifts_df = _pd.DataFrame(shifts_data, index=per_gene_cluster.index)
             w = render_all(
                 "length_shifts", shifts_df,
                 figs_dir / "length_shifts", engines=engines,
             )
             log.info(
                 "ema switch length: length_shifts=%d file(s) "
-                "(%d gene rows × %d cluster pairs)",
-                len(w), len(gene_ids), len(shifts_data),
+                "(%d genes × %d cluster pairs)",
+                len(w), len(shifts_df), len(shifts_data),
             )
     except Exception as exc:
         log.warning("ema switch length: viz rendering failed: %s", exc)
