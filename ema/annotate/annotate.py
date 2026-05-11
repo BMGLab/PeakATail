@@ -1,4 +1,5 @@
 from ema.config import directory_config, variable_config
+from ema.outputs import MATRIX_MARKET_HEADER
 import pandas as pd
 import numpy as np
 import scipy.sparse as sp
@@ -56,7 +57,7 @@ def annotate(sparse_matrix, pas_ids, collist, genes,
 
     # Save filtered sparse matrix
     mmwrite(target=annotated_matrix, a=sp.csc_matrix(filtered_sparse),
-            comment=variable_config.matrixmarketheader)
+            comment=MATRIX_MARKET_HEADER)
 
     # Filter PAS BED file to keep only annotated PAS
     pas_df = pd.read_csv(pasbed_dir, sep="\t", header=None)

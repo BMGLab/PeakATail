@@ -213,6 +213,35 @@ class RunConfig:
             description="BAM tag holding the cell barcode (default CB).",
         ),
     )
+    default_threshold: int = field(
+        default=5,
+        metadata=_spec(
+            cli_flag="--default-threshold", yaml_key="default_threshold",
+            legacy_dataclass_attr="variable_config.default_threshold",
+            description="Minimum read support per peak (peak-calling threshold).",
+        ),
+    )
+    merge_len: int = field(
+        default=100,
+        metadata=_spec(
+            cli_flag="--merge-len", yaml_key="merge_len",
+            legacy_dataclass_attr="variable_config.merge_len",
+            description="Maximum gap (bp) to merge adjacent peaks.",
+        ),
+    )
+    ignore_chro: str = field(
+        default="MT,mt",
+        metadata=_spec(
+            cli_flag="--ignore-chro", yaml_key="ignore_chro",
+            legacy_dataclass_attr="variable_config.ignore_chro",
+            click_type=click.STRING,
+            description=(
+                "Chromosomes excluded from peak-calling. "
+                "Comma-separated string for CLI (e.g. 'MT,mt,chrM'). "
+                "YAML accepts a list or a comma-separated string."
+            ),
+        ),
+    )
 
     # ─── concurrency / runtime ──────────────────────────────────────────
     threads: Optional[int] = field(
@@ -768,7 +797,11 @@ class RunConfig:
         legacy_to_field = legacy_alias_to_field_name(cls)
         for key, val in cfg.items():
             if key in yaml_to_field:
-                kwargs[yaml_to_field[key]] = val
+                field_name = yaml_to_field[key]
+                # ignore_chro: YAML may supply a list; normalise to comma str.
+                if field_name == "ignore_chro" and isinstance(val, list):
+                    val = ",".join(str(v) for v in val)
+                kwargs[field_name] = val
             elif key in legacy_to_field:
                 kwargs[legacy_to_field[key]] = val
             # else: silent skip (loader will have warned)
@@ -811,6 +844,10 @@ class RunConfig:
                 continue
             if spec.legacy_dataclass_attr:
                 holder, attr = spec.legacy_dataclass_attr.split(".")
+                # ignore_chro is stored as a comma-separated string in
+                # RunConfig but variable_config.ignore_chro must be a list.
+                if attr == "ignore_chro" and isinstance(value, str):
+                    value = [c.strip() for c in value.split(",") if c.strip()]
                 setattr(targets[holder], attr, value)
                 # min_pas_per_cell is read by preprocessing() as
                 # filter_config.min_genes; bridge that too.

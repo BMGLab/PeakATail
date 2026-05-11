@@ -324,8 +324,6 @@ class variable_config:
     merge_len = 100
     ignore_chro = ["MT", "mt"]
     barcode_tag = args.barcode_tag
-    time = 0
-    matrixmarketheader = f"%%MatrixMarket matrix coordinate integer general\n"
 
 @dataclass
 class filter_config:

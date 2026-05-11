@@ -28,6 +28,11 @@ from typing import Iterable
 
 log = logging.getLogger(__name__)
 
+# MatrixMarket header written by matrixfilter and annotate.  Lives here
+# (not in variable_config) because it is a fixed constant, not a user
+# tunable.
+MATRIX_MARKET_HEADER = "%%MatrixMarket matrix coordinate integer general\n"
+
 
 class OutputManager:
     """Manages the numbered ``0X_<stage>/`` layout + per-stage stats JSONs.

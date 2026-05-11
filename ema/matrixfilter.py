@@ -1,6 +1,7 @@
 from collections import defaultdict
 from ema.countmatrix.indexing import get_mapping
 from ema.config import filter_config, directory_config, variable_config
+from ema.outputs import MATRIX_MARKET_HEADER
 import numpy as np
 import scipy.io as sci
 import scipy.sparse as sp
@@ -142,7 +143,7 @@ def filter_cb(input_matrix_paths: list = None,
     last_corrected_index, corrected_index = 0, 0
 
     with open(sorted_corrected_sparse_path, "w") as sorted_corrected_sparse_list:
-        sorted_corrected_sparse_list.write(variable_config.matrixmarketheader)
+        sorted_corrected_sparse_list.write(MATRIX_MARKET_HEADER)
         sorted_corrected_sparse_list.write(f"{matrix_pas_header} {matrix_cb_header} {matrix_nzero_header}\n")
 
         for item in sorted_spars_matrix:
