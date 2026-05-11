@@ -18,7 +18,7 @@ from ema.annotate.annotate import annotate
 from ema.annotate.find_close import find_close
 from ema.annotate.gtf_cache import process_gtf_cached
 from ema.strategies import get_strategy
-from ema.output import OutputManager
+from ema.outputs import OutputManager
 
 try:
     from ema.datasets.manager import DatasetManager
@@ -579,17 +579,28 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "lambda_window": args.lambda_window,
     })
 
-    # Per-dataset canonical BED files (posbed / negbed / pasbed) — see
-    # ema/outputs.py for the file layout.  Used by switch_length per_isoform
-    # and any tool that wants the legacy combined BEDs.
-    from ema.outputs import write_per_dataset_beds
+    # Per-stage data snapshots — every step that mutates the data gets a
+    # canonical file on disk.  See ema/outputs.py for the layout.
+    from ema.outputs import write_per_dataset_beds, write_raw_peak_outputs
     output_dir = Path(directory_config.output_dir)
-    _ds_pos = {}
-    _ds_neg = {}
+    _ds_pos: dict[str, list[str]] = {}
+    _ds_neg: dict[str, list[str]] = {}
+    _ds_pos_mtx: dict[str, list[str]] = {}
+    _ds_neg_mtx: dict[str, list[str]] = {}
+    _ds_cb: dict[str, str] = {}
     for _ds_id, _bed in zip(all_dataset_ids_for_pos, all_pos_beds):
         _ds_pos.setdefault(_ds_id, []).append(_bed)
     for _ds_id, _bed in zip(all_dataset_ids_for_neg, all_neg_beds):
         _ds_neg.setdefault(_ds_id, []).append(_bed)
+    for _ds_id, _mtx in zip(all_dataset_ids_for_pos, all_pos_mtxs):
+        _ds_pos_mtx.setdefault(_ds_id, []).append(_mtx)
+    for _ds_id, _mtx in zip(all_dataset_ids_for_neg, all_neg_mtxs):
+        _ds_neg_mtx.setdefault(_ds_id, []).append(_mtx)
+    for _ds_id, _cb in zip(all_dataset_ids_for_pos, all_pos_cbs):
+        _ds_cb.setdefault(_ds_id, _cb)
+    # 1. RAW peak-calling snapshot (pre-filter): per_dataset/<ds>/raw/
+    write_raw_peak_outputs(output_dir, _ds_pos, _ds_neg, _ds_pos_mtx, _ds_neg_mtx, _ds_cb)
+    # 2. Combined post-merge BEDs:          per_dataset/<ds>/{posbed,negbed,pasbed}.bed
     write_per_dataset_beds(output_dir, _ds_pos, _ds_neg)
 
     # =========================================================================
@@ -604,10 +615,18 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
 
         filter_cb()
 
-        # Save CB filter stats — record what filter_cb actually used.
+        # Save CB filter stats + persist the kept barcode list for this dataset.
         output_mgr.save_stats("cb_filter", {
             "min_read": filter_config.min_read,
         })
+        from ema.outputs import write_filtered_cb
+        _filtered_cb_path = Path(directory_config.filtered_cb)
+        if _filtered_cb_path.exists():
+            write_filtered_cb(
+                output_dir, bam_list[0][0],
+                [b.strip() for b in _filtered_cb_path.read_text().splitlines() if b.strip()],
+                filter_config.min_read,
+            )
 
         # Wait for GTF processing to complete before find_close
         gtf_thread.join()
@@ -656,12 +675,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "cell_count": len(result.collist),
         })
 
-        # Persist canonical PAS->gene mapping + annotatedpas.bed for
-        # this dataset.  See ema/outputs.py for the file layout.
-        from ema.outputs import write_pas_gene_artifacts
+        # Persist canonical PAS->gene mapping + annotatedpas.bed +
+        # the annotated count matrix (post PAS-gene join, pre cell/PAS
+        # filter).  See ema/outputs.py for the file layout.
+        from ema.outputs import write_pas_gene_artifacts, write_annotated_matrix
         write_pas_gene_artifacts(
             output_dir, bam_list[0][0],
             result.pas_ids, result.gene_ids,
+        )
+        write_annotated_matrix(
+            output_dir, bam_list[0][0],
+            result.sparse_matrix, result.pas_ids, result.collist,
         )
 
         # Preprocess and cluster.
@@ -679,11 +703,16 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             gene_ids=result.gene_ids,
         )
 
-        # Save preprocessing stats
+        # Save preprocessing stats + persist the post-filter AnnData
+        # (cluster labels haven't been added yet — clusters.h5ad will
+        # supersede this once clustering() runs, but having the snapshot
+        # lets users inspect the filter step in isolation).
         output_mgr.save_stats("preprocessing", {
             "cells_after_filter": adata.n_obs,
             "pas_after_filter": adata.n_vars,
         })
+        from ema.outputs import write_preprocessed_h5ad
+        write_preprocessed_h5ad(output_dir, bam_list[0][0], adata)
 
         # Forward all CLI/YAML clustering hyperparameters into clustering().
         # Persist the clustered AnnData to a deterministic on-disk path so the

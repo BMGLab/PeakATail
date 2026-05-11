@@ -1,29 +1,88 @@
 """Pipeline output persistence.
 
-The pipeline body in ``main.py`` and the per-dataset worker in
-``downstream_runner.py`` both need to persist canonical step outputs:
+Single module for everything the pipeline writes to disk other than viz
+figures (which live in ``ema/viz/``).  Two concerns:
 
-  * per-dataset ``posbed.bed`` / ``negbed.bed`` / ``pasbed.bed`` (combined
-    positive, negative, and union PAS BEDs)
-  * per-dataset ``annotatedpas.bed`` (PAS BED with a trailing gene_id
-    column)
-  * per-dataset ``pas_gene.tsv`` (explicit ``pas_id\tgene_id`` mapping)
+  1. :class:`OutputManager` — owns the numbered ``0X_<stage>/`` directory
+     layout under the run root, plus the ``*_stats.json`` files each
+     stage emits.  Was previously in ``ema/output.py`` (singular); merged
+     here so callers have one place to look.
 
-These all live under ``<run>/per_dataset/<ds>/``.  Downstream tools
-(``ema switch length`` per_isoform, validators, custom scripts) discover
-them there next to the dataset's ``clusters.h5ad``.
+  2. ``write_*`` functions — persist actual data payloads (BEDs, count
+     matrices, h5ads, PAS-gene mappings) under ``<run>/per_dataset/<ds>/``
+     and ``<run>/per_dataset/<ds>/raw/`` so every pipeline step leaves
+     inspectable artifacts, not just a stats JSON.
 
-This module isolates the file-writing logic so the pipeline body stays
-focused on computation — see also ``ema/viz/pipeline_hooks.py`` for the
-analogous viz separation.
+The pipeline body in ``ema/main.py`` and the per-dataset worker in
+``ema/downstream_runner.py`` both delegate file IO to this module — see
+also ``ema/viz/pipeline_hooks.py`` for the analogous viz separation.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 log = logging.getLogger(__name__)
+
+
+class OutputManager:
+    """Manages the numbered ``0X_<stage>/`` layout + per-stage stats JSONs.
+
+    Stage names match the pipeline phases in ``ema/main.py``:
+
+        peak_calling      -> 01_peak_calling/
+        cb_filter         -> 02_cb_filter/
+        gtf_annotation    -> 03_gtf_annotation/
+        pas_gene          -> 04_pas_gene_assignment/
+        annotated         -> 05_annotated_matrix/
+        preprocessing     -> 06_preprocessing/
+        clustering        -> 07_clustering/
+        differential      -> 08_differential/
+        gtf_cache         -> gtf_cache/   (shared)
+
+    Use :meth:`path` to address a file within a stage directory and
+    :meth:`save_stats` to drop the canonical ``<stage>_stats.json``.
+    """
+
+    def __init__(self, base_dir: str = "emaout") -> None:
+        self.base_dir = base_dir
+        self.dirs = {
+            "peak_calling": os.path.join(base_dir, "01_peak_calling"),
+            "cb_filter": os.path.join(base_dir, "02_cb_filter"),
+            "gtf_annotation": os.path.join(base_dir, "03_gtf_annotation"),
+            "pas_gene": os.path.join(base_dir, "04_pas_gene_assignment"),
+            "annotated": os.path.join(base_dir, "05_annotated_matrix"),
+            "preprocessing": os.path.join(base_dir, "06_preprocessing"),
+            "clustering": os.path.join(base_dir, "07_clustering"),
+            "differential": os.path.join(base_dir, "08_differential"),
+            "gtf_cache": os.path.join(base_dir, "gtf_cache"),
+        }
+
+    def setup(self) -> None:
+        """Create all stage directories (idempotent)."""
+        for d in self.dirs.values():
+            os.makedirs(d, exist_ok=True)
+
+    def path(self, stage: str, filename: str) -> str:
+        """Resolve ``<run>/0X_<stage>/<filename>`` for a known stage."""
+        return os.path.join(self.dirs[stage], filename)
+
+    def save_stats(self, stage: str, stats: dict) -> None:
+        """Write the canonical ``<stage>_stats.json`` for a pipeline stage."""
+        path = self.path(stage, f"{stage}_stats.json")
+        with open(path, "w") as f:
+            json.dump(stats, f, indent=2)
+
+    def save_run_config(self, args_dict: dict) -> None:
+        """Persist the resolved run configuration at the run root."""
+        config = {"timestamp": datetime.now().isoformat(), **args_dict}
+        path = os.path.join(self.base_dir, "run_config.json")
+        with open(path, "w") as f:
+            json.dump(config, f, indent=2)
 
 
 def _concat_beds(srcs: Iterable[Path | str], dst: Path) -> None:

@@ -151,6 +151,17 @@ def run_one_dataset_downstream(
         filter_cb_file=str(filtered_cb_path),
         min_read=min_read,
     )
+
+    # Persist the kept barcode list for this dataset (canonical name +
+    # min_read header for traceability).  See ema/outputs.py.
+    from ema.outputs import write_filtered_cb
+    if filtered_cb_path.exists():
+        write_filtered_cb(
+            Path(per_dataset_dir).parent, ds_id,
+            [b.strip() for b in filtered_cb_path.read_text().splitlines() if b.strip()],
+            min_read,
+        )
+
     if progress_client is not None:
         progress_client.advance(1)  # tick 2/6: filter
 
@@ -176,12 +187,16 @@ def run_one_dataset_downstream(
         genes=genes,
     )
 
-    # Persist canonical PAS->gene mapping + annotatedpas.bed for this
-    # dataset.  See ema/outputs.py for the layout.
-    from ema.outputs import write_pas_gene_artifacts
+    # Persist canonical PAS->gene mapping + annotatedpas.bed + annotated
+    # count matrix for this dataset.  See ema/outputs.py for the layout.
+    from ema.outputs import write_pas_gene_artifacts, write_annotated_matrix
     write_pas_gene_artifacts(
         Path(per_dataset_dir).parent, ds_id,
         result.pas_ids, result.gene_ids,
+    )
+    write_annotated_matrix(
+        Path(per_dataset_dir).parent, ds_id,
+        result.sparse_matrix, result.pas_ids, result.collist,
     )
 
     if progress_client is not None:
@@ -199,6 +214,11 @@ def run_one_dataset_downstream(
         min_genes=filter_min_genes,
         gene_ids=result.gene_ids,
     )
+
+    # Persist the post-filter AnnData snapshot (pre-clustering).
+    from ema.outputs import write_preprocessed_h5ad
+    write_preprocessed_h5ad(Path(per_dataset_dir).parent, ds_id, adata)
+
     if progress_client is not None:
         progress_client.advance(1)  # tick 5/6: preprocess
 
