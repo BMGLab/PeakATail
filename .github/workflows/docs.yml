@@ -1,0 +1,51 @@
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-docs-${{ hashFiles('requirements-docs.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-docs-
+
+      - name: Install documentation dependencies
+        run: |
+          uv pip install -r requirements-docs.txt
+
+      - name: Build and deploy docs
+        run: |
+          uv run mkdocs gh-deploy --force --clean --remote-branch gh-pages
