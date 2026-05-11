@@ -44,13 +44,13 @@ jobs:
             ${{ runner.os }}-docs-
 
       - name: Install documentation dependencies
-        run: uv pip install -r requirements-docs.txt
+        run: uv pip install --system -r requirements-docs.txt
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
       - name: Build site
-        run: uv run mkdocs build --strict --clean
+        run: mkdocs build --strict --clean
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
