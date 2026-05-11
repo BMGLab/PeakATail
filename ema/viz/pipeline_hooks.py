@@ -400,6 +400,7 @@ def render_switch_diff_outputs(
     log2fc_thresh: float = 1.0,
     h5ad_paths: list[str] | None = None,
     cluster_key: str = "leiden",
+    pasbed_path: str | None = None,
 ) -> None:
     """Render figures specific to ``ema switch diff``.
 
@@ -418,6 +419,9 @@ def render_switch_diff_outputs(
             option).  Required for the auto-top-N gene_track block; if
             omitted or empty the block is skipped with a warning.
         cluster_key: AnnData obs column holding cluster labels.
+        pasbed_path: Optional explicit path to ``pasbed.bed``.  When
+            supplied and the file exists, it is preferred over the
+            walk-up heuristic used internally.
     """
     if not engines or not pair_results:
         return
@@ -503,6 +507,7 @@ def render_switch_diff_outputs(
                 cluster_key=cluster_key,
                 figs_dir=figs_dir,
                 engines=engines or [],
+                pasbed_path=pasbed_path,
             )
         except Exception as _gt_exc:
             log.warning(
@@ -529,6 +534,7 @@ def _render_diff_gene_tracks(
     cluster_key: str,
     figs_dir: Path,
     engines: list[str],
+    pasbed_path: str | None = None,
 ) -> None:
     """Rank the top-N genes by volcano score and render one gene_track per gene.
 
@@ -539,6 +545,8 @@ def _render_diff_gene_tracks(
         cluster_key: AnnData obs column with cluster labels.
         figs_dir: Figures output directory.
         engines: Rendering engine names.
+        pasbed_path: Optional explicit path to ``pasbed.bed``.  Preferred
+            over the walk-up heuristic when supplied and the file exists.
     """
     if not h5ad_paths:
         log.warning(
@@ -569,19 +577,22 @@ def _render_diff_gene_tracks(
         )
         return
 
-    # Walk up from h5ad dir to find pasbed.bed.
-    pasbed_path = _find_pasbed_near(Path(h5ad_paths[-1]))
-    if pasbed_path is None:
+    # Prefer explicit pasbed_path; fall back to walk-up heuristic.
+    resolved_pasbed: Path | None = None
+    if pasbed_path and Path(pasbed_path).exists():
+        resolved_pasbed = Path(pasbed_path)
+    else:
+        resolved_pasbed = _find_pasbed_near(Path(h5ad_paths[-1]))
+    if resolved_pasbed is None:
         log.warning(
             "ema switch diff: gene_track auto top-%d skipped — pasbed.bed not "
             "found near %s",
             _AUTO_TOP_N_GENES, Path(h5ad_paths[-1]).parent,
         )
         return
-
     import pandas as _pd
     pasbed_df = _pd.read_csv(
-        pasbed_path,
+        resolved_pasbed,
         sep="\t",
         header=None,
         names=["chrom", "start", "end", "pas_id", "score", "strand"],
@@ -917,52 +928,56 @@ def render_switch_length_outputs(
         # the cell→cluster mapping from last_adata.obs[cluster_key], then
         # forms pair-wise differences on the small gene × cluster table
         # (typically a few thousand × ~10 = <1 MB).
-        if pdui_df is None or cluster_key not in last_adata.obs.columns:
-            return
-        clusters = sorted(
-            last_adata.obs[cluster_key].unique(),
-            key=lambda x: int(x) if str(x).isdigit() else x,
+        can_length_shifts = (
+            pdui_df is not None
+            and cluster_key in last_adata.obs.columns
+            and "pdui" in pdui_df.columns
+            and "cell" in pdui_df.columns
+            and len(pdui_df) > 0
         )
-        gene_col = "gene_id" if "gene_id" in pdui_df.columns else pdui_df.columns[0]
-        pdui_col = "pdui" if "pdui" in pdui_df.columns else None
-        if not pdui_col or len(pdui_df) == 0 or "cell" not in pdui_df.columns:
-            return
-
-        # Map each cell to its cluster (avoid copying pdui_df).
-        cell_to_cluster = last_adata.obs[cluster_key].astype(str).to_dict()
-        # Pre-filter to rows with non-NaN pdui — typically <10% of the long
-        # frame (8.7% in our regression run) — keeping the groupby cheap.
-        valid = pdui_df[pdui_df[pdui_col].notna()].copy()
-        if valid.empty:
-            log.info("ema switch length: length_shifts skipped (no non-NaN PDUI rows)")
-            return
-        valid["__cluster__"] = valid["cell"].map(cell_to_cluster)
-        valid = valid[valid["__cluster__"].notna()]
-
-        # mean PDUI per (gene, cluster) — small table: n_multi_pas_genes × n_clusters.
-        per_gene_cluster = (
-            valid.groupby([gene_col, "__cluster__"])[pdui_col].mean().unstack(fill_value=_np.nan)
-        )
-        # Ensure every cluster column exists (some may have no data).
-        for cl in clusters:
-            if cl not in per_gene_cluster.columns:
-                per_gene_cluster[cl] = _np.nan
-        per_gene_cluster = per_gene_cluster[list(clusters)]
-
-        shifts_data: dict[str, _pd.Series] = {}
-        for c1, c2 in combinations(clusters, 2):
-            shifts_data[f"{c1}_vs_{c2}"] = per_gene_cluster[c1] - per_gene_cluster[c2]
-        if shifts_data:
-            shifts_df = _pd.DataFrame(shifts_data, index=per_gene_cluster.index)
-            w = render_all(
-                "length_shifts", shifts_df,
-                figs_dir / "length_shifts", engines=engines,
+        if can_length_shifts:
+            clusters = sorted(
+                last_adata.obs[cluster_key].unique(),
+                key=lambda x: int(x) if str(x).isdigit() else x,
             )
-            log.info(
-                "ema switch length: length_shifts=%d file(s) "
-                "(%d genes × %d cluster pairs)",
-                len(w), len(shifts_df), len(shifts_data),
-            )
+            gene_col = "gene_id" if "gene_id" in pdui_df.columns else pdui_df.columns[0]
+            pdui_col = "pdui"
+
+            # Map each cell to its cluster (avoid copying pdui_df).
+            cell_to_cluster = last_adata.obs[cluster_key].astype(str).to_dict()
+            # Pre-filter to rows with non-NaN pdui — typically <10% of the long
+            # frame (8.7% in our regression run) — keeping the groupby cheap.
+            valid = pdui_df[pdui_df[pdui_col].notna()].copy()
+            if valid.empty:
+                log.info("ema switch length: length_shifts skipped (no non-NaN PDUI rows)")
+            else:
+                valid["__cluster__"] = valid["cell"].map(cell_to_cluster)
+                valid = valid[valid["__cluster__"].notna()]
+
+                # mean PDUI per (gene, cluster) — small table: n_multi_pas_genes × n_clusters.
+                per_gene_cluster = (
+                    valid.groupby([gene_col, "__cluster__"])[pdui_col].mean().unstack(fill_value=_np.nan)
+                )
+                # Ensure every cluster column exists (some may have no data).
+                for cl in clusters:
+                    if cl not in per_gene_cluster.columns:
+                        per_gene_cluster[cl] = _np.nan
+                per_gene_cluster = per_gene_cluster[list(clusters)]
+
+                shifts_data: dict[str, _pd.Series] = {}
+                for c1, c2 in combinations(clusters, 2):
+                    shifts_data[f"{c1}_vs_{c2}"] = per_gene_cluster[c1] - per_gene_cluster[c2]
+                if shifts_data:
+                    shifts_df = _pd.DataFrame(shifts_data, index=per_gene_cluster.index)
+                    w = render_all(
+                        "length_shifts", shifts_df,
+                        figs_dir / "length_shifts", engines=engines,
+                    )
+                    log.info(
+                        "ema switch length: length_shifts=%d file(s) "
+                        "(%d genes × %d cluster pairs)",
+                        len(w), len(shifts_df), len(shifts_data),
+                    )
 
         # --- auto-top-N gene_track: rank genes by score variance across clusters ---
         try:

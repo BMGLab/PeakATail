@@ -192,6 +192,15 @@ def write_figures_index(figs_dir: Path, command: str | None = None) -> Path | No
                 tag_parts.append(f"n_obs={m['n_observations']}")
             if "n_clusters" in m:
                 tag_parts.append(f"clusters={m['n_clusters']}")
+            # gene_track-specific tags (gene_id + n_pas + n_clusters_rendered)
+            if "gene_id" in m:
+                tag_parts.append(f"gene={m['gene_id']}")
+            if "n_pas" in m:
+                tag_parts.append(f"n_pas={m['n_pas']}")
+            if "n_clusters_rendered" in m:
+                tag_parts.append(f"clusters_rendered={m['n_clusters_rendered']}")
+            if "n_isoforms" in m and m["n_isoforms"]:
+                tag_parts.append(f"isoforms={m['n_isoforms']}")
             tags = " · ".join(tag_parts) if tag_parts else "—"
             lines.append(f"- **{e['stem']}** ({len(e['files'])} files) — {tags}")
         lines.append("")
