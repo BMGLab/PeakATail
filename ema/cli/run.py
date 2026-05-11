@@ -19,7 +19,7 @@ from pathlib import Path
 
 import click
 
-from ema.cli.common import common_options, parse_log_overrides, resolve_output_dir
+from ema.cli.common import common_options, parse_log_overrides, resolve_output_dir, parse_plot_engines
 from ema.cli.config_schema import RunConfig, click_options_from_schema
 from ema.cli.defaults import DEFAULTS
 from ema.cli.yaml_loader import load_run_yaml, RunYamlError
@@ -183,12 +183,19 @@ def run(**kwargs) -> None:
                     "affect the output.", _msg,
                 )
 
+        # Resolve --plot-engine / --no-plots into an engine list for the pipeline.
+        _plot_engines = parse_plot_engines(
+            kwargs.get("plot_engine", "both"),
+            no_plots=kwargs.get("no_plots", False),
+        )
+
         from ema.progress import ProgressManager
         with ProgressManager(disable=kwargs["no_progress"]) as pm:
             # Hand off to the pipeline. All algorithm code is in ema.main.
             from ema.main import run as pipeline_run
             pipeline_run(
                 cfg=cfg, out_dir=out_dir, progress=pm,
+                plot_engines=_plot_engines,
                 **_pipeline_kwargs(kwargs, user_set=_user_set),
             )
     finally:
@@ -305,6 +312,9 @@ def _pipeline_kwargs(kwargs: dict, user_set: set[str] | None = None) -> dict:
         # behavior visible in one place.
         "ip_filter", "genome_fasta", "annot_filter", "ip_a_stretch",
         "benchmark", "validate_db",
+        # Plot flags are resolved into plot_engines before pipeline_run is called;
+        # the raw strings should not be forwarded into the legacy arg bridge.
+        "plot_engine", "plot_format", "no_plots",
     }
     out: dict = {}
     for k, v in kwargs.items():

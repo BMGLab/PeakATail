@@ -118,11 +118,12 @@ def run(
     # ------------------------------------------------------------------ #
     # Delegate to the pipeline body (progress wired inside)               #
     # ------------------------------------------------------------------ #
-    _run_pipeline_body(progress=progress)
+    _plot_engines: list[str] | None = kwargs.pop("plot_engines", None)
+    _run_pipeline_body(progress=progress, plot_engines=_plot_engines)
     return 0
 
 
-def _run_pipeline_body(progress=None) -> None:
+def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> None:
     """Execute the full pipeline using the current module-level config state.
 
     Args:
@@ -130,6 +131,9 @@ def _run_pipeline_body(progress=None) -> None:
             registered here and :class:`~ema.progress.ProgressClient` handles
             are passed into workers.  All wiring is no-op when *progress* is
             ``None``.
+        plot_engines: List of engine names to use for visualizations
+            (e.g. ``["matplotlib", "plotly"]``).  ``None`` uses the default
+            ``["matplotlib", "plotly"]``.  Empty list disables all plots.
     """
     # Helper: safely call add_stage even when progress is None
     def _add_stage(name: str, total=None) -> int | None:
@@ -546,6 +550,20 @@ def _run_pipeline_body(progress=None) -> None:
             "final_pas": adata.n_vars,
         })
 
+        # Tier 1 visualizations for single-sample path.
+        _ss_engines = plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
+        if _ss_engines:
+            try:
+                from ema.viz import render_all
+                _ss_figs_dir = output_dir / "figures"
+                _ss_ds_id = "default"
+                render_all("umap", (adata, _ss_ds_id),
+                           _ss_figs_dir / f"umap_{_ss_ds_id}", engines=_ss_engines)
+                render_all("cluster_sizes", (adata, _ss_ds_id),
+                           _ss_figs_dir / f"clusters_{_ss_ds_id}", engines=_ss_engines)
+            except Exception as _viz_exc:
+                log.warning("Tier 1 viz failed (single-sample): %s", _viz_exc)
+
         return  # done with single-sample path
 
     # =========================================================================
@@ -716,12 +734,16 @@ def _run_pipeline_body(progress=None) -> None:
         "cluster_random_seed": getattr(args, "random_seed", 42),
         "cluster_external_clusters": getattr(args, "external_clusters", None),
     }
+    # Resolve plot_engines: default to both engines when not specified.
+    _resolved_plot_engines: list[str] = (
+        plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
+    )
     worker_args: list[tuple] = []
     for _warg in _raw_worker_args:
         _ds_id_for_sub = _warg[0]
         _sub_stage = _add_subtask(_downstream_stage, _ds_id_for_sub, total=6)
         _sub_client = _client(_sub_stage)
-        worker_args.append(_warg + (_sub_client, _cluster_kwargs))
+        worker_args.append(_warg + (_sub_client, _cluster_kwargs, _resolved_plot_engines))
 
     # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
     n_datasets = len(worker_args)
@@ -740,12 +762,13 @@ def _run_pipeline_body(progress=None) -> None:
         for arg_tuple in worker_args:
             # arg_tuple has: ds_id, sub_indices, sub_cbs, unified_mtx,
             #   per_dataset_dir, genes_pkl, min_read, min_cells, min_genes,
-            #   log_queue, progress_client, cluster_kwargs  (12 elements)
-            *pos_args, lq, pc, ck = arg_tuple
+            #   log_queue, progress_client, cluster_kwargs, plot_engines  (13 elements)
+            *pos_args, lq, pc, ck, pe = arg_tuple
             run_one_dataset_downstream(
                 *pos_args,
                 log_queue=lq,
                 progress_client=pc,
+                plot_engines=pe,
                 **(ck or {}),
             )
             _advance(_downstream_stage)
