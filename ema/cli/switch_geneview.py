@@ -30,16 +30,6 @@ log = logging.getLogger(__name__)
     ),
 )
 @click.option(
-    "--length-tsv",
-    "length_tsv",
-    default=None,
-    type=click.Path(exists=True, dir_okay=False),
-    help=(
-        "PDUI / proportion / entropy TSV from `ema switch length`. "
-        "When present, overlays strategy scores on per-cluster bars."
-    ),
-)
-@click.option(
     "--pasbed",
     "pasbed",
     required=True,
@@ -160,7 +150,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         # Build gene list                                                       #
         # ------------------------------------------------------------------ #
         # Start with explicit gene IDs (normalised to uppercase stripped str).
-        explicit_genes: list[str] = [g.strip().upper() for g in kwargs["gene_id"] if g.strip()]
+        explicit_genes: list[str] = [g.strip() for g in kwargs["gene_id"] if g.strip()]
 
         auto_genes: list[str] = []
         if kwargs["diff_tsv"]:

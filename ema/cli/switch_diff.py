@@ -130,6 +130,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
             ),
             h5ad_paths=list(kwargs["h5ad"]),
             cluster_key=kwargs["cluster_key"],
+            pasbed_path=kwargs["pasbed"],
         )
     finally:
         teardown_logging()
