@@ -1,6 +1,8 @@
+import json
 import logging
 import threading
 import shutil
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -39,6 +41,84 @@ except ImportError:
 # extract_per_dataset_mtx is defined in downstream_runner to keep it
 # pickle-safe and importable without triggering ema.config initialisation.
 from ema.downstream_runner import extract_per_dataset_mtx  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Resource sampler (Tier 4 viz support)
+# ---------------------------------------------------------------------------
+
+
+class _ResourceSampler(threading.Thread):
+    """Background thread that periodically samples process memory and CPU usage.
+
+    Samples are appended as newline-delimited JSON records to *out_path*.
+    Each record has the schema::
+
+        {"elapsed_s": float, "rss_gb": float, "cpu_pct": float}
+
+    The thread is a daemon thread so it never blocks process exit.  Call
+    :meth:`stop` and then :meth:`join` to request a clean shutdown.
+
+    The sampler degrades gracefully when ``psutil`` is not installed: it
+    still runs (so callers need not check for its presence) but writes no
+    records and logs a one-time warning.
+
+    Args:
+        out_path: Path where the JSONL file is written.
+        interval_s: Sampling interval in seconds (default 5.0).
+    """
+
+    def __init__(self, out_path: Path, interval_s: float = 5.0) -> None:
+        super().__init__(name="resource-sampler", daemon=True)
+        self._out_path = Path(out_path)
+        self._interval_s = interval_s
+        self._stop_event = threading.Event()
+        self._t0 = time.monotonic()
+
+    def stop(self) -> None:
+        """Signal the sampler to stop at the next interval boundary."""
+        self._stop_event.set()
+
+    def join(self, timeout: float | None = None) -> None:
+        """Join the thread only if it was ever started."""
+        if self.is_alive() or self._started.is_set():  # type: ignore[attr-defined]
+            super().join(timeout=timeout)
+
+    def run(self) -> None:  # noqa: D102 — threading.Thread override
+        try:
+            import psutil  # type: ignore[import-untyped]
+        except ImportError:
+            log.warning(
+                "psutil not installed — resource_timeline sampling disabled. "
+                "Install it with: pip install psutil"
+            )
+            return
+
+        self._out_path.parent.mkdir(parents=True, exist_ok=True)
+        proc = psutil.Process()
+        # Prime the CPU measurement (first call always returns 0.0)
+        try:
+            proc.cpu_percent(interval=None)
+        except Exception:
+            pass
+
+        with open(self._out_path, "a") as fh:
+            while not self._stop_event.is_set():
+                try:
+                    rss_gb = proc.memory_info().rss / (1024 ** 3)
+                    cpu_pct = proc.cpu_percent(interval=None)
+                    elapsed = time.monotonic() - self._t0
+                    record = {
+                        "elapsed_s": round(elapsed, 3),
+                        "rss_gb": round(rss_gb, 4),
+                        "cpu_pct": round(cpu_pct, 2),
+                    }
+                    fh.write(json.dumps(record) + "\n")
+                    fh.flush()
+                except Exception as exc:
+                    log.debug("Resource sampler error: %s", exc)
+
+                self._stop_event.wait(timeout=self._interval_s)
 
 
 def run(
