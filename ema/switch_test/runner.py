@@ -241,11 +241,104 @@ def run_diff(
                     for c1, c2, df in pool.imap_unordered(worker_fn, pairs, chunksize=1):
                         pair_results[(c1, c2)] = df
 
+            # Build annotation lookup once per h5ad, shared across all pairs.
+            # gene_id from adata.var (index = pas_id as str).
+            _gene_id_map: pd.Series | None = None
+            if "gene_id" in adata.var.columns:
+                _gene_id_map = adata.var["gene_id"].copy()
+            else:
+                log.warning(
+                    "run_diff: adata.var has no 'gene_id' column; "
+                    "gene_id will be blank in differential TSVs."
+                )
+
+            # chrom/start/end/strand from pasbed.bed, if it exists next to the h5ad.
+            _pasbed_cols: pd.DataFrame | None = None
+            _pasbed_path = Path(h5ad_path).parent / "pasbed.bed"
+            if _pasbed_path.exists():
+                try:
+                    _bed = pd.read_csv(
+                        _pasbed_path,
+                        sep="\t",
+                        header=None,
+                        usecols=[0, 1, 2, 3, 5],
+                        names=["chrom", "start", "end", "pas_id", "strand"],
+                        dtype=str,
+                    )
+                    _bed["pas_id"] = _bed["pas_id"].astype(str)
+                    _pasbed_cols = _bed.set_index("pas_id")[["chrom", "start", "end", "strand"]]
+                    log.info(
+                        "run_diff: loaded pasbed for coordinate annotation: %s (%d rows)",
+                        _pasbed_path, len(_pasbed_cols),
+                    )
+                except Exception as _e:
+                    log.warning("run_diff: failed to parse pasbed.bed at %s: %s", _pasbed_path, _e)
+            else:
+                log.debug("run_diff: no pasbed.bed found at %s; coords will be absent", _pasbed_path)
+
+            def _augment_diff_df(
+                df_raw: pd.DataFrame,
+                c1_label: str,
+                c2_label: str,
+            ) -> pd.DataFrame:
+                """Left-join gene_id and coordinates onto a per-pair result DataFrame.
+
+                Augmented column order: pas_id, gene_id, chrom, start, end,
+                strand, cluster1, cluster2, <original stat columns>.
+                If a lookup is unavailable the corresponding columns are filled
+                with empty strings so the TSV structure stays consistent.
+                """
+                aug = df_raw.copy()
+                # Normalise index name so joins work regardless of whether the
+                # strategy set it or left it as a positional range index.
+                if aug.index.name != "pas_id":
+                    aug.index.name = "pas_id"
+                aug = aug.reset_index()  # pas_id becomes a regular column
+                aug["pas_id"] = aug["pas_id"].astype(str)
+
+                # --- gene_id join ---
+                if _gene_id_map is not None:
+                    gene_series = _gene_id_map.rename_axis("pas_id").reset_index()
+                    gene_series["pas_id"] = gene_series["pas_id"].astype(str)
+                    aug = aug.merge(gene_series, on="pas_id", how="left")
+                else:
+                    aug["gene_id"] = ""
+
+                # --- coordinate join ---
+                if _pasbed_cols is not None:
+                    coord_df = _pasbed_cols.rename_axis("pas_id").reset_index()
+                    aug = aug.merge(coord_df, on="pas_id", how="left")
+                    aug[["chrom", "start", "end", "strand"]] = (
+                        aug[["chrom", "start", "end", "strand"]].fillna("")
+                    )
+                else:
+                    aug["chrom"] = ""
+                    aug["start"] = ""
+                    aug["end"] = ""
+                    aug["strand"] = ""
+
+                # --- self-describing cluster columns ---
+                aug.insert(0, "cluster2", c2_label)
+                aug.insert(0, "cluster1", c1_label)
+
+                # Reorder: pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, <stats>
+                stat_cols = [
+                    c for c in aug.columns
+                    if c not in {"pas_id", "gene_id", "chrom", "start", "end",
+                                 "strand", "cluster1", "cluster2"}
+                ]
+                aug = aug[
+                    ["pas_id", "gene_id", "chrom", "start", "end", "strand",
+                     "cluster1", "cluster2"] + stat_cols
+                ]
+                return aug
+
             total_sig = 0
             for c1, c2 in pairs:
                 df = pair_results[(c1, c2)]
+                df_out = _augment_diff_df(df, c1, c2)
                 out_path = diff_dir / f"{strategy}_{c1}_vs_{c2}.tsv"
-                df.to_csv(out_path, sep="\t")
+                df_out.to_csv(out_path, sep="\t", index=False)
                 if "qvalue" in df.columns:
                     total_sig += (df["qvalue"] < fdr).sum()
                 all_pair_results[(c1, c2)] = df

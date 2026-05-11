@@ -302,7 +302,7 @@ class NbPairwiseStrategy(DiffAPAStrategy):
             )
 
         # --- parallel execution ---
-        raw_results = Parallel(n_jobs=n_jobs, backend="loky")(
+        raw_results = Parallel(n_jobs=actual_jobs, backend="loky")(
             delayed(_fit_pas_batch)(
                 batch, group_indicator, log_lib_size,
                 n_c1, n_c2, min_cells_per_group,

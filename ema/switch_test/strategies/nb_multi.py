@@ -299,7 +299,7 @@ class NbMultiStrategy(DiffAPAStrategy):
             batches.append([(pas_ids[i], dense[:, i]) for i in range(start, end)])
 
         # Parallel execution
-        raw_results = Parallel(n_jobs=n_jobs, backend="loky")(
+        raw_results = Parallel(n_jobs=actual_jobs, backend="loky")(
             delayed(_lrt_pas_batch)(
                 batch, X_full, X_null, log_lib_size, df_lrt,
                 n_cells, min_cells_per_group, cluster_indicator, K,
