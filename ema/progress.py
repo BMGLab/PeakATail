@@ -27,29 +27,40 @@ from rich.text import Text
 
 
 class ThickBarColumn(ProgressColumn):
-    """Bar column that uses full-block U+2588 / light-shade U+2591
-    for a chunkier visual than Rich's default U+2501 (heavy horizontal)."""
+    """Bar column with a medium-weight glyph.
 
-    def __init__(self, bar_width: int | None = None) -> None:
+    Filled: U+2586 LOWER THREE QUARTERS BLOCK (75 % cell height) — visibly
+    chunkier than Rich's default U+2501 (heavy horizontal, ~50 %) but not
+    as overwhelming as U+2588 FULL BLOCK.  Empty: U+2591 LIGHT SHADE.
+    """
+
+    FILLED_CHAR = "▆"
+    EMPTY_CHAR = "░"
+
+    def __init__(self, bar_width: int | None = None, reserve: int = 35) -> None:
         super().__init__()
         self.bar_width = bar_width
+        self.reserve = reserve  # cells left for the other columns
 
     def render(self, task) -> Text:
         # Auto-width to terminal if bar_width is None.
         if self.bar_width is None:
             try:
-                width = self._table.console.width - 50  # type: ignore[attr-defined]
+                width = self._table.console.width - self.reserve  # type: ignore[attr-defined]
             except Exception:
-                width = 40
+                width = 60
             width = max(20, width)
         else:
             width = self.bar_width
         total = task.total or 0
         if total <= 0:
-            return Text("░" * width, style="bar.back")
+            return Text(self.EMPTY_CHAR * width, style="bar.back")
         completed = min(task.completed, total)
         filled = int(width * completed / total)
-        return Text("█" * filled + "░" * (width - filled), style="bar.complete")
+        return Text(
+            self.FILLED_CHAR * filled + self.EMPTY_CHAR * (width - filled),
+            style="bar.complete",
+        )
 
 
 _TICK_ADVANCE = "advance"
