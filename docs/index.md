@@ -1,5 +1,9 @@
 # PeakATail
 
+<p align="center" markdown>
+  <img src="assets/peakatail_logo.png" alt="PeakATail — snake with poly(A) tail" width="320" />
+</p>
+
 PeakATail detects poly(A) sites (PAS) at single-cell resolution from any scRNA-seq BAM
 that carries cell-barcode (`CB`) and UMI (`UB`) tags — STARsolo, CellRanger, Alevin-fry,
 or any aligner that emits the standard 10x-style tag schema. It clusters cells by their
