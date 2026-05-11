@@ -70,7 +70,12 @@ def common_options(include_output: bool = True, output_default: str | None = Non
             opts.append(
                 click.option(
                     "--output", "-o", "output",
-                    type=click.Path(file_okay=False, resolve_path=True),
+                    # NOTE: resolve_path=False so plain names like ``-o emaout``
+                    # stay relative — resolve_output_dir() then prefixes them
+                    # with ``peakatail_runs/``.  With resolve_path=True the
+                    # resolver sees an absolute path and skips the prefix,
+                    # dumping outputs at the project root.
+                    type=click.Path(file_okay=False, resolve_path=False),
                     default=output_default if output_default is not None else DEFAULTS["output"],
                     help="Output directory (timestamp suffix added automatically).",
                 )
@@ -131,6 +136,72 @@ def parse_plot_engines(spec: str, no_plots: bool = False) -> list[str]:
 
 
 _DEFAULT_PARENT_DIR = "peakatail_runs"
+
+
+def detect_run_dir(input_paths: list[str | Path] | tuple) -> Path | None:
+    """Return the originating ``peakatail_runs/<run>/`` directory for inputs, if any.
+
+    A subcommand like ``ema switch diff -i RUN/per_dataset/sampleA/clusters.h5ad``
+    should write its outputs INSIDE ``RUN/`` so the run dir stays self-contained.
+    This helper walks each input path upward looking for a directory whose
+    parent is named ``peakatail_runs``.  All inputs must agree on the same run
+    dir; otherwise ``None`` is returned and the caller falls back to the global
+    ``peakatail_runs/<name>_<ts>/`` layout.
+
+    Args:
+        input_paths: Iterable of file paths the subcommand consumes (typically
+            ``-i h5ad`` arguments).
+
+    Returns:
+        The shared run directory as a :class:`Path`, or ``None`` if the inputs
+        don't all live in a recognisable run dir.
+    """
+    if not input_paths:
+        return None
+    run_dirs: set[Path] = set()
+    for p in input_paths:
+        path = Path(p).resolve()
+        for parent in path.parents:
+            if parent.parent.name == _DEFAULT_PARENT_DIR:
+                run_dirs.add(parent)
+                break
+        else:
+            return None  # this input is not under peakatail_runs/<run>/
+    if len(run_dirs) != 1:
+        return None  # mixed sources — can't pick a single home
+    return next(iter(run_dirs))
+
+
+def resolve_subcommand_output_dir(
+    base: str | Path,
+    *,
+    user_explicit: bool,
+    source_paths: list[str | Path] | tuple = (),
+    subdir: str | None = None,
+) -> Path:
+    """Resolve a switch/downstream subcommand's output dir.
+
+    When the user did NOT pass ``-o`` and all ``source_paths`` come from the
+    same ``peakatail_runs/<run>/`` directory, the output is routed INSIDE that
+    run dir as ``<run>/<subdir or base>_<ts>/``.  Otherwise it falls back to
+    :func:`resolve_output_dir` (a fresh ``peakatail_runs/<base>_<ts>/``).
+
+    Args:
+        base: User-supplied output name (CLI ``--output`` or its default).
+        user_explicit: ``True`` iff the user explicitly passed ``--output``.
+            Detect via ``ctx.get_parameter_source("output").name == "COMMANDLINE"``.
+        source_paths: Input files the subcommand consumes (``-i h5ad`` etc.).
+        subdir: Optional override for the leaf directory name.  Defaults to
+            ``base`` so e.g. ``base="switch_out"`` yields ``<run>/switch_out_<ts>/``.
+    """
+    if not user_explicit:
+        run_dir = detect_run_dir(list(source_paths))
+        if run_dir is not None:
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            leaf_name = subdir if subdir else Path(base).name
+            return run_dir / f"{leaf_name}_{ts}"
+    return resolve_output_dir(base)
 
 
 def resolve_output_dir(base: str | Path, parent: str | Path | None = None) -> Path:

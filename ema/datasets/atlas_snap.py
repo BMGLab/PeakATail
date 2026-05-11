@@ -141,7 +141,8 @@ def snap_beds_to_atlas(
     _IDX_ATLAS_STRAND = 11
     _MIN_EXPECTED_COLS = 13  # BED6 input + BED6 atlas + distance
 
-    mapping_rows: list[tuple[str, str, str]] = []
+    # mapping_rows: (dataset_id, old_pasnumber, atlas_pas_id, snap_distance_bp)
+    mapping_rows: list[tuple[str, str, str, int]] = []
     # atlas_pas_id -> (chrom, start, end, pas_id, score, strand)
     atlas_hits: dict[str, tuple[str, str, str, str, str, str]] = {}
 
@@ -174,7 +175,7 @@ def snap_beds_to_atlas(
             dataset_id, old_pasnumber = input_name.split("::", 1)
             atlas_pas_id = cols[_IDX_ATLAS_PAS_ID]
 
-            mapping_rows.append((dataset_id, old_pasnumber, atlas_pas_id))
+            mapping_rows.append((dataset_id, old_pasnumber, atlas_pas_id, dist))
 
             if atlas_pas_id not in atlas_hits:
                 atlas_hits[atlas_pas_id] = (
@@ -196,14 +197,16 @@ def snap_beds_to_atlas(
     for i, hit in enumerate(sorted_atlas_hits, start=1):
         atlas_str_to_int[hit[3]] = str(i)
 
-    # Step 6b: Write mapping TSV using integer new_pas_id
+    # Step 6b: Write mapping TSV using integer new_pas_id.
+    # 4th column 'snap_distance_bp' enables atlas_snap_diag histograms; existing
+    # readers split on tabs and only require >=3 columns so this is additive.
     with open(mapping_path, "w") as f:
-        f.write("dataset_id\told_pasnumber\tnew_pas_id\n")
-        for dataset_id, old_pasnumber, atlas_pas_id in mapping_rows:
+        f.write("dataset_id\told_pasnumber\tnew_pas_id\tsnap_distance_bp\n")
+        for dataset_id, old_pasnumber, atlas_pas_id, snap_dist in mapping_rows:
             new_int_id = atlas_str_to_int.get(atlas_pas_id)
             if new_int_id is None:
                 continue
-            f.write(f"{dataset_id}\t{old_pasnumber}\t{new_int_id}\n")
+            f.write(f"{dataset_id}\t{old_pasnumber}\t{new_int_id}\t{snap_dist}\n")
 
     # Step 6c: Sidecar lookup so atlas string IDs are preserved
     lookup_path = output_dir / "atlas_pas_id_lookup.tsv"

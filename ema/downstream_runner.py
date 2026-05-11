@@ -214,21 +214,9 @@ def run_one_dataset_downstream(
         progress_client.advance(1)  # tick 6/6: cluster
 
     # ------------------------------------------------------------------ #
-    # 6b. Tier 1 visualizations (UMAP + cluster sizes)                   #
-    # ------------------------------------------------------------------ #
-    _engines = plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
-    if _engines:
-        try:
-            from ema.viz import render_all
-            figs_dir = Path(per_dataset_dir) / ds_id / "figures"
-            render_all("umap", (adata, ds_id), figs_dir / f"umap_{ds_id}", engines=_engines)
-            render_all("cluster_sizes", (adata, ds_id), figs_dir / f"clusters_{ds_id}",
-                       engines=_engines)
-        except Exception as _viz_exc:
-            log.warning("Tier 1 viz failed for dataset %r: %s", ds_id, _viz_exc)
-
-    # ------------------------------------------------------------------ #
     # 7. Persist stats                                                    #
+    # All visualizations happen post-pipeline in render_run_outputs()     #
+    # (see ema/viz/pipeline_hooks.py) so workers stay focused on data.    #
     # ------------------------------------------------------------------ #
     stats: dict[str, Any] = {
         "dataset_id": ds_id,

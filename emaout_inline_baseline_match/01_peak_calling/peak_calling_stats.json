@@ -1,7 +1,0 @@
-{
-  "strategy": "original",
-  "dynamic_threshold": false,
-  "floor_threshold": 3,
-  "lambda_fold_change": 2.0,
-  "lambda_window": 5000
-}

@@ -1,7 +1,0 @@
-{
-  "gtf_path": "/home/user/PeakATail/data/Homo_sapiens.GRCh38.99.gtf",
-  "fingerprint": "1773837743338406704_1238091763",
-  "endbed": "gene_end.bed",
-  "features": "raw_feature.tsv",
-  "utr_lengths_tsv": "utr_lengths.tsv"
-}

@@ -213,8 +213,9 @@ def run(
             log.warning("resource sampler failed to start: %s", e)
             _sampler = None
 
+    _pipeline_result: dict | None = None
     try:
-        _run_pipeline_body(progress=progress, plot_engines=_plot_engines)
+        _pipeline_result = _run_pipeline_body(progress=progress, plot_engines=_plot_engines)
     finally:
         if _sampler is not None:
             try:
@@ -223,11 +224,30 @@ def run(
             except Exception as e:
                 log.warning("resource sampler clean shutdown failed: %s", e)
 
+    # All viz happens in a single post-pipeline orchestrator call (see
+    # ema/viz/pipeline_hooks.py). The pipeline body has written every
+    # artifact the orchestrator needs (h5ads, BEDs, atlas mapping, JSONL).
+    if _pipeline_result is not None:
+        from ema.viz.pipeline_hooks import render_run_outputs
+        render_run_outputs(
+            output_dir=Path(directory_config.output_dir),
+            engines=_plot_engines,
+            is_single_sample=_pipeline_result["is_single_sample"],
+            unique_ds_ids=_pipeline_result["unique_ds_ids"],
+            bed_paths=_pipeline_result["bed_paths"],
+            atlas_enabled=_pipeline_result["atlas_enabled"],
+            per_dataset_dir=_pipeline_result.get("per_dataset_dir"),
+            single_sample_h5ad=_pipeline_result.get("single_sample_h5ad"),
+        )
+
     return 0
 
 
-def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> None:
+def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> dict:
     """Execute the full pipeline using the current module-level config state.
+
+    Returns a metadata dict consumed by :func:`ema.viz.pipeline_hooks.render_run_outputs`
+    so all visualisation can happen post-pipeline from on-disk artifacts.
 
     Args:
         progress: Optional :class:`~ema.progress.ProgressManager`.  Bars are
@@ -427,8 +447,16 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
 
         # Dispatch all jobs through one global pool
         # Pass a progress client so run_all_jobs can advance the peak bar per tile.
+        # Pass a timings_path so per-tile wall-seconds get persisted for the
+        # tile_timing viz strategy (see Tier 4 viz block at end of run()).
         _peak_client = _client(_peak_stage)
-        grouped = run_all_jobs(jobs, n_workers=n_workers, progress_client=_peak_client)
+        _timings_path = Path(directory_config.output_dir) / "tile_timings.json"
+        grouped = run_all_jobs(
+            jobs,
+            n_workers=n_workers,
+            progress_client=_peak_client,
+            timings_path=_timings_path,
+        )
 
         # Merge per-(dataset_id, direction) group and reconstruct file paths
         _ds_bam_indices: dict[str, int] = {}
@@ -636,8 +664,11 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         })
 
         # Forward all CLI/YAML clustering hyperparameters into clustering().
-        # Without this, --cluster-method / --resolution / --n-pcs /
-        # --random-seed / --external-clusters were silently ignored.
+        # Persist the clustered AnnData to a deterministic on-disk path so the
+        # post-pipeline viz orchestrator can reload it (matches the multi-sample
+        # layout: per_dataset/<ds>/clusters.h5ad).
+        _ss_h5ad = output_dir / "per_dataset" / "default" / "clusters.h5ad"
+        _ss_h5ad.parent.mkdir(parents=True, exist_ok=True)
         clustering(
             adata=adata,
             method=getattr(args, "clustering_method", "leiden_tfidf"),
@@ -645,6 +676,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             n_pcs=getattr(args, "n_pcs", 40),
             random_seed=getattr(args, "random_seed", 42),
             external_clusters=getattr(args, "external_clusters", None),
+            output_h5ad=str(_ss_h5ad),
         )
 
         # Save clustering stats
@@ -653,21 +685,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "final_pas": adata.n_vars,
         })
 
-        # Tier 1 visualizations for single-sample path.
-        _ss_engines = plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
-        if _ss_engines:
-            try:
-                from ema.viz import render_all
-                _ss_figs_dir = output_dir / "figures"
-                _ss_ds_id = "default"
-                render_all("umap", (adata, _ss_ds_id),
-                           _ss_figs_dir / f"umap_{_ss_ds_id}", engines=_ss_engines)
-                render_all("cluster_sizes", (adata, _ss_ds_id),
-                           _ss_figs_dir / f"clusters_{_ss_ds_id}", engines=_ss_engines)
-            except Exception as _viz_exc:
-                log.warning("Tier 1 viz failed (single-sample): %s", _viz_exc)
-
-        return  # done with single-sample path
+        return {  # done with single-sample path; viz happens in run() wrapper
+            "is_single_sample": True,
+            "unique_ds_ids": ["default"],
+            "bed_paths": all_pos_beds + all_neg_beds,
+            "atlas_enabled": bool(directory_config.atlas),
+            "single_sample_h5ad": _ss_h5ad,
+            "per_dataset_dir": None,
+        }
 
     # =========================================================================
     # Multi-sample path (len(bam_list) > 1)
@@ -930,88 +955,16 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                     type(e).__name__, e,
                 )
 
-    # =========================================================================
-    # Tier 3 visualizations — multi-sample cross-dataset plots
-    # Runs after all per-dataset h5ads are written and cross-dataset matching
-    # is complete.  All errors are caught so viz failure never crashes the run.
-    # =========================================================================
-    _ms_engines: list[str] = (
-        plot_engines if plot_engines is not None else ["matplotlib", "plotly"]
-    )
-    if _ms_engines:
-        try:
-            from ema.viz import render_all
-            _top_figs = output_dir / "figures"
-
-            # --- pas_overlap: build per-dataset PAS ID sets from clusters.h5ad ---
-            _pas_sets: dict[str, set[str]] = {}
-            for _ds in unique_ds_ids:
-                _h5 = per_dataset_dir / _ds / "clusters.h5ad"
-                if _h5.exists():
-                    try:
-                        import anndata as ad
-                        _adata = ad.read_h5ad(_h5)
-                        _pas_sets[_ds] = set(_adata.var_names)
-                    except Exception as _h5_exc:
-                        log.warning(
-                            "pas_overlap: could not read %s: %s", _h5, _h5_exc
-                        )
-            if len(_pas_sets) >= 2:
-                render_all(
-                    "pas_overlap",
-                    _pas_sets,
-                    _top_figs / "pas_overlap",
-                    engines=_ms_engines,
-                )
-            else:
-                log.info(
-                    "pas_overlap skipped: need ≥2 datasets with h5ad, got %d",
-                    len(_pas_sets),
-                )
-
-            # --- atlas_snap_diag: only when --atlas was set ---
-            if directory_config.atlas:
-                _snap_mapping = output_dir / "unified" / "atlas_mapping.tsv"
-                _snap_stats: dict = {"snapped": 0, "unsnapped": 0, "snap_distances": []}
-                if _snap_mapping.exists():
-                    try:
-                        _distances: list[int] = []
-                        with open(_snap_mapping) as _f:
-                            next(_f, None)  # skip header
-                            for _line in _f:
-                                _parts = _line.strip().split("\t")
-                                if len(_parts) >= 3:
-                                    _snap_stats["snapped"] = _snap_stats["snapped"] + 1
-                        _snap_stats["snapped"] = int(_snap_stats["snapped"])
-                        # Count unsnapped: total called peaks minus snapped
-                        _all_called = sum(
-                            1 for _b in (
-                                output_dir / "peakcalling"
-                            ).glob("*.pos.bed") for _line in open(_b)
-                            if _line.strip()
-                        )
-                        _snap_stats["unsnapped"] = max(
-                            0, _all_called - _snap_stats["snapped"]
-                        )
-                    except Exception as _snap_exc:
-                        log.warning("atlas_snap_diag stats collection failed: %s", _snap_exc)
-                render_all(
-                    "atlas_snap_diag",
-                    _snap_stats,
-                    _top_figs / "atlas_snap",
-                    engines=_ms_engines,
-                )
-        except Exception as _tier3_exc:
-            log.warning("Tier 3 viz failed: %s", _tier3_exc)
-
-    # --- Run report: always attempt, even if viz failed above ---
-    try:
-        from ema.viz.run_report import generate_run_report
-        generate_run_report(output_dir, output_html=output_dir / "figures" / "run_report.html")
-    except Exception as _report_exc:
-        log.warning("run_report generation failed: %s", _report_exc)
-
-    return  # done with multi-sample path
+    # Run report is generated by the post-pipeline viz orchestrator so it
+    # indexes figures the orchestrator has already written.
+    return {  # multi-sample metadata for the post-pipeline viz orchestrator
+        "is_single_sample": False,
+        "unique_ds_ids": unique_ds_ids,
+        "bed_paths": all_pos_beds + all_neg_beds,
+        "atlas_enabled": bool(directory_config.atlas),
+        "per_dataset_dir": per_dataset_dir,
+        "single_sample_h5ad": None,
+    }
 
 
 def main() -> None:

@@ -5,7 +5,11 @@ import logging
 
 import click
 
-from ema.cli.common import common_options, parse_log_overrides, resolve_output_dir
+from ema.cli.common import (
+    common_options,
+    parse_log_overrides,
+    resolve_subcommand_output_dir,
+)
 from ema.cli.defaults import DEFAULTS
 
 log = logging.getLogger(__name__)
@@ -37,7 +41,8 @@ def _list_strategies_callback(ctx, param, value):
               help="Per-dataset clusters.h5ad files.")
 @click.option("--strategy", "-s", "strategy", type=str, default=DEFAULTS["match-method"])
 @click.option("--n-top-markers", "n_top_markers", type=int, default=DEFAULTS["n-top-markers"])
-def match(**kwargs) -> None:
+@click.pass_context
+def match(ctx: click.Context, **kwargs) -> None:
     """Cross-dataset cluster matching (marker_overlap / mnn / jaccard)."""
     valid = _list_match_strategies()
     if valid and kwargs["strategy"] not in valid:
@@ -45,7 +50,15 @@ def match(**kwargs) -> None:
             f"Invalid --strategy {kwargs['strategy']!r}. Available: {', '.join(valid)}",
         )
 
-    out_dir = resolve_output_dir(kwargs["output"])
+    user_explicit_output = (
+        ctx.get_parameter_source("output").name == "COMMANDLINE"
+    )
+    out_dir = resolve_subcommand_output_dir(
+        kwargs["output"],
+        user_explicit=user_explicit_output,
+        source_paths=list(kwargs["h5ad"]),
+        subdir="switch_match",
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     from ema.logging_config import setup_logging, teardown_logging
@@ -73,31 +86,15 @@ def match(**kwargs) -> None:
         df.to_csv(out_file, sep="\t")
         log.info("Wrote %s (%d rows)", out_file, len(df))
 
-        # Viz wire-in: render cluster_match_sankey + match_confidence figures
-        try:
-            from ema.cli.common import parse_plot_engines
-            from ema.viz import render_all
-            engines = parse_plot_engines(
+        from ema.cli.common import parse_plot_engines
+        from ema.viz.pipeline_hooks import render_switch_match_outputs
+        render_switch_match_outputs(
+            out_dir=out_dir,
+            df=df,
+            engines=parse_plot_engines(
                 kwargs.get("plot_engine", "both"),
                 kwargs.get("no_plots", False),
-            )
-            if engines and df is not None and not df.empty:
-                figs_dir = out_dir / "figures"
-                figs_dir.mkdir(parents=True, exist_ok=True)
-                render_all(
-                    plot_type="cluster_match_sankey",
-                    data=df,
-                    output_basepath=figs_dir / "cluster_match_sankey",
-                    engines=engines,
-                )
-                render_all(
-                    plot_type="match_confidence",
-                    data=df,
-                    output_basepath=figs_dir / "match_confidence",
-                    engines=engines,
-                )
-                log.info("ema switch match: viz figures written to %s", figs_dir)
-        except Exception as _viz_exc:
-            log.warning("ema switch match: viz rendering failed (non-fatal): %s", _viz_exc)
+            ),
+        )
     finally:
         teardown_logging()

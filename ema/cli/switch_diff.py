@@ -5,7 +5,11 @@ import logging
 
 import click
 
-from ema.cli.common import common_options, parse_log_overrides, resolve_output_dir
+from ema.cli.common import (
+    common_options,
+    parse_log_overrides,
+    resolve_subcommand_output_dir,
+)
 from ema.cli.defaults import DEFAULTS
 
 log = logging.getLogger(__name__)
@@ -48,7 +52,8 @@ def _list_strategies_callback(ctx, param, value):
               help="Differential APA strategy (run --list-strategies to see).")
 @click.option("--fdr", "fdr", type=float, default=DEFAULTS["fdr"])
 @click.option("--per-worker-mb", "per_worker_mb", type=int, default=DEFAULTS["per-worker-mb"])
-def diff(**kwargs) -> None:
+@click.pass_context
+def diff(ctx: click.Context, **kwargs) -> None:
     """Differential APA test (Fisher / NB regression) across cluster pairs."""
     valid = _list_diff_strategies()
     if valid and kwargs["strategy"] not in valid:
@@ -56,7 +61,18 @@ def diff(**kwargs) -> None:
             f"Invalid --strategy {kwargs['strategy']!r}. Available: {', '.join(valid)}",
         )
 
-    out_dir = resolve_output_dir(kwargs["output"])
+    # When --output is left at its default and the input h5ads come from a
+    # peakatail run dir, route output INSIDE that run dir so the run stays
+    # self-contained: peakatail_runs/<run>/switch_diff_<ts>/
+    user_explicit_output = (
+        ctx.get_parameter_source("output").name == "COMMANDLINE"
+    )
+    out_dir = resolve_subcommand_output_dir(
+        kwargs["output"],
+        user_explicit=user_explicit_output,
+        source_paths=list(kwargs["h5ad"]),
+        subdir="switch_diff",
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     from ema.logging_config import setup_logging, teardown_logging
@@ -88,49 +104,18 @@ def diff(**kwargs) -> None:
             per_worker_mb=kwargs["per_worker_mb"],
         )
 
-        # Viz wire-in: render volcano + diff_agreement figures
-        try:
-            from ema.cli.common import parse_plot_engines
-            from ema.viz import render_all
-            from pathlib import Path as _Path
-            engines = parse_plot_engines(
+        # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
+        # CLI command).  Failures are warned, never raised.
+        from ema.cli.common import parse_plot_engines
+        from ema.viz.pipeline_hooks import render_switch_diff_outputs
+        render_switch_diff_outputs(
+            out_dir=out_dir,
+            pair_results=pair_results,
+            fdr=kwargs["fdr"],
+            engines=parse_plot_engines(
                 kwargs.get("plot_engine", "both"),
                 kwargs.get("no_plots", False),
-            )
-            if engines and pair_results:
-                figs_dir = out_dir / "figures"
-                figs_dir.mkdir(parents=True, exist_ok=True)
-                # Volcano: one plot per pair (use first pair for the main figure)
-                for (c1, c2), df in pair_results.items():
-                    pair_stem = f"volcano_{c1}_vs_{c2}" if c2 else "volcano_omnibus"
-                    render_all(
-                        plot_type="volcano",
-                        data=df,
-                        output_basepath=figs_dir / pair_stem,
-                        engines=engines,
-                    )
-                # Diff agreement: build sig-PAS sets per pair and pass as dict
-                # (only meaningful when multiple pairs exist)
-                import pandas as _pd
-                sig_sets: dict[str, set[str]] = {}
-                for (c1, c2), df in pair_results.items():
-                    key = f"{c1}_vs_{c2}" if c2 else "omnibus"
-                    if "qvalue" in df.columns:
-                        sig = set(
-                            df.loc[df["qvalue"] < kwargs["fdr"], "pas_id"].astype(str)
-                            if "pas_id" in df.columns
-                            else df.index[df["qvalue"] < kwargs["fdr"]].astype(str)
-                        )
-                        sig_sets[key] = sig
-                if len(sig_sets) >= 2:
-                    render_all(
-                        plot_type="diff_agreement",
-                        data=sig_sets,
-                        output_basepath=figs_dir / "diff_agreement",
-                        engines=engines,
-                    )
-                log.info("ema switch diff: viz figures written to %s", figs_dir)
-        except Exception as _viz_exc:
-            log.warning("ema switch diff: viz rendering failed (non-fatal): %s", _viz_exc)
+            ),
+        )
     finally:
         teardown_logging()

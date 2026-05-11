@@ -12,6 +12,9 @@ peakatail_runs/
 *.tsv
 *.csv
 *.mtx
+*.bam
+*.bai
+*.h5ad
 **/.vscode
 Emaenv
 .venv/
