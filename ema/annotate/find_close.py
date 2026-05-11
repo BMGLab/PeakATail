@@ -36,11 +36,11 @@ def assign_tier(distance, utr_length, utr_multiplier=2.0, max_distance=5000):
     return INTERGENIC
 
 
-def find_close(posbed_dir=directory_config.posbed,
-               negbed_dir=directory_config.negbed,
-               genomebed_dir=directory_config.endbed,
-               annotatedbed_dir=directory_config.annotatedbed,
-               mergebed=directory_config.pasbed,
+def find_close(posbed_dir=None,
+               negbed_dir=None,
+               genomebed_dir=None,
+               annotatedbed_dir=None,
+               mergebed=None,
                utr_lengths=None,
                max_distance=5000,
                utr_multiplier=2.0,
@@ -70,6 +70,19 @@ def find_close(posbed_dir=directory_config.posbed,
     """
     if utr_lengths is None:
         utr_lengths = {}
+
+    # Resolve config-dependent defaults at call time (set_directory_config
+    # changes after import don't reach function-default values otherwise).
+    if posbed_dir is None:
+        posbed_dir = directory_config.posbed
+    if negbed_dir is None:
+        negbed_dir = directory_config.negbed
+    if genomebed_dir is None:
+        genomebed_dir = directory_config.endbed
+    if annotatedbed_dir is None:
+        annotatedbed_dir = directory_config.annotatedbed
+    if mergebed is None:
+        mergebed = directory_config.pasbed
 
     posbed = pybedtools.BedTool(posbed_dir)
     negbed = pybedtools.BedTool(negbed_dir)

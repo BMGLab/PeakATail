@@ -13,11 +13,11 @@ filtered_cb_list = []
 
 def filter_cb(input_matrix_paths: list = None,
               cb_list: list = None,
-              negativematrixpath=directory_config.negmatrixpath,
-              positivematrixpath=directory_config.posmatrixpath,
-              sorted_corrected_sparse_path=directory_config.filterd_matrix,
-              min_read=filter_config.min_read,
-              filter_cb_file=directory_config.filtered_cb):
+              negativematrixpath=None,
+              positivematrixpath=None,
+              sorted_corrected_sparse_path=None,
+              min_read=None,
+              filter_cb_file=None):
     """Filter cell barcodes by minimum read count and write a corrected sparse matrix.
 
     Reads one or more matrices, sums counts per barcode column index, keeps only
@@ -51,6 +51,20 @@ def filter_cb(input_matrix_paths: list = None,
     """
     global filtered_cb_list
     filtered_cb_list = []  # reset on each call to avoid cross-call accumulation
+
+    # Resolve config-dependent defaults at call time, not import time —
+    # otherwise the captured paths point at the pre-set_directory_config
+    # ``emaout/`` defaults and the filter reads the wrong files.
+    if negativematrixpath is None:
+        negativematrixpath = directory_config.negmatrixpath
+    if positivematrixpath is None:
+        positivematrixpath = directory_config.posmatrixpath
+    if sorted_corrected_sparse_path is None:
+        sorted_corrected_sparse_path = directory_config.filterd_matrix
+    if filter_cb_file is None:
+        filter_cb_file = directory_config.filtered_cb
+    if min_read is None:
+        min_read = filter_config.min_read
 
     # Determine the CB lookup list (indexed by column_index - 1)
     if cb_list is not None:
@@ -164,7 +178,7 @@ def filter_cb(input_matrix_paths: list = None,
             file.write(f"{item}\n")
 
 
-def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=None):
+def make_dataframe(matrixpath=None, collist=None):
     """Read filtered MatrixMarket file and return sparse matrix with PAS IDs preserved.
 
     Returns:
@@ -173,6 +187,8 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=None):
             - pas_ids: numpy array of original PAS row indices (1-based from MatrixMarket)
             - collist: list of cell barcode strings
     """
+    if matrixpath is None:
+        matrixpath = directory_config.filterd_matrix
     if collist is None:
         collist = filtered_cb_list
 
@@ -194,8 +210,8 @@ def make_dataframe(matrixpath=directory_config.filterd_matrix, collist=None):
 
 
 def preprocessing(sparse_matrix, pas_ids, collist,
-                  min_cells=filter_config.min_cells,
-                  min_genes=filter_config.min_genes,
+                  min_cells=None,
+                  min_genes=None,
                   gene_ids=None):
     """Filter sparse PAS-by-cell matrix and return AnnData.
 
@@ -215,6 +231,12 @@ def preprocessing(sparse_matrix, pas_ids, collist,
     Returns:
         ad.AnnData: filtered AnnData object (obs=cells, var=PAS)
     """
+    # Resolve config-dependent defaults at call time (see filter_cb above).
+    if min_cells is None:
+        min_cells = filter_config.min_cells
+    if min_genes is None:
+        min_genes = filter_config.min_genes
+
     # Build AnnData: scanpy expects cells-by-features (cells x PAS)
     # Our matrix is PAS x cells, so transpose
     var_dict = {'pas_id': pas_ids}
