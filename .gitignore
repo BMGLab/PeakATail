@@ -24,6 +24,8 @@ references/
 test_run/
 logs/
 reports/figures/*.png
+reports/figures/*.svg
+gtf_cache/
 reports/PeakATail_Technical_Report.pdf
 
 # Local-only project notes / specs / plans (not for upstream)
@@ -64,7 +66,15 @@ reports/convert_to_pdf.py
 reports/generate_figures_simple.py
 reports/generate_report.py
 reports/run_build_simple.sh
+reports/build_pdf.sh
+reports/subset_heavy_strategies.py
+reports/explainer_figures.py
 reports/baseline_apa_completeness/
+reports/subset_curated.h5ad
+reports/diff_compare/
+reports/length_compare/
+reports/subset_diff_compare/
+reports/subset_length_compare/
 
 # Root-level report build helpers (invoke scripts inside reports/)
 run_build.sh
