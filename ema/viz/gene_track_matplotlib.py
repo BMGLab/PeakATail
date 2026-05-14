@@ -254,40 +254,63 @@ class GeneTrackMatplotlib(VizStrategy):
             )
 
         # --- shared x-axis ---
-        # Format absolute genomic coordinates in human units (Mb / kb / bp)
-        # based on the gene span.  Without this matplotlib's auto-tick
-        # formatter renders e.g. ``9.7e+07`` for a chr-1 gene at ~97 Mb,
-        # which is hard to read and ambiguous (Mb? kb? bp?).
+        # Show distance from gene start in the unit that best fits the
+        # viewing window:
+        #   <  5 kb span   → bp        (tight zoom: a single peak / small gene)
+        #   5 kb – 1 Mb    → kb        (normal gene scale)
+        #   >= 1 Mb        → Mb        (very long genes; keeps ticks short)
+        # Anchoring the axis at gene_start (so it reads 0 → gene_length)
+        # avoids the cognitive trap of seeing absolute coordinates like
+        # ``155,276 kb`` and mistaking the view for a chromosome-scale
+        # window.  Absolute coordinates remain in the figure title for IGV
+        # / UCSC cross-reference.
         bottom_ax = axes[-1]
+        gene_anchor = x_lo
         if gene_span >= 1_000_000:
-            unit_label, unit_div = "Mb", 1_000_000
-            tick_fmt = matplotlib.ticker.FuncFormatter(  # type: ignore[attr-defined]
-                lambda x, _: f"{x / unit_div:,.2f}"
-            )
-        elif gene_span >= 1_000:
-            unit_label, unit_div = "kb", 1_000
-            tick_fmt = matplotlib.ticker.FuncFormatter(  # type: ignore[attr-defined]
-                lambda x, _: f"{x / unit_div:,.1f}"
-            )
+            unit_label, unit_div, fmt_str = "Mb", 1_000_000, "{val:,.2f}"
+        elif gene_span >= 5_000:
+            unit_label, unit_div, fmt_str = "kb", 1_000, "{val:,.1f}"
         else:
-            unit_label = "bp"
-            tick_fmt = matplotlib.ticker.FuncFormatter(  # type: ignore[attr-defined]
-                lambda x, _: f"{int(x):,}"
-            )
-        bottom_ax.xaxis.set_major_formatter(tick_fmt)
+            unit_label, unit_div, fmt_str = "bp", 1, "{val:,.0f}"
+
+        def _format_tick(x: float, _: int) -> str:
+            return fmt_str.format(val=(x - gene_anchor) / unit_div)
+
+        bottom_ax.xaxis.set_major_formatter(
+            matplotlib.ticker.FuncFormatter(_format_tick)  # type: ignore[attr-defined]
+        )
         bottom_ax.set_xlabel(
-            f"Genomic position on chr{panel.chrom} ({unit_label})",
+            f"Distance from gene start ({unit_label})  "
+            f"— anchor chr{panel.chrom}:{gene_anchor:,}",
             fontsize=9,
         )
         bottom_ax.tick_params(axis="x", labelsize=7)
 
         # --- figure title ---
+        # Make the gene-scope explicit:
+        #   1. lead with the gene symbol (e.g. "CLIC2") when available, so the
+        #      reader immediately sees this is a one-gene view, not a region
+        #      or chromosome view;
+        #   2. include the Ensembl ID in parens for unambiguous lookup;
+        #   3. show absolute genomic range AND gene length in a matching
+        #      unit so the axis below (0..gene_length) is anchored to a
+        #      concrete coordinate.
         n_pas = len(panel.pas_ids)
+        if gene_span >= 1_000_000:
+            length_str = f"{gene_span / 1_000_000:,.2f} Mb"
+        elif gene_span >= 1_000:
+            length_str = f"{gene_span / 1_000:,.1f} kb"
+        else:
+            length_str = f"{gene_span:,} bp"
+        if panel.gene_name:
+            gene_label = f"{panel.gene_name} ({panel.gene_id})"
+        else:
+            gene_label = panel.gene_id
         title = (
-            f"Gene {panel.gene_id} — "
-            f"{panel.chrom}:{panel.start}-{panel.end} "
-            f"({'−' if panel.strand == '-' else '+'} strand) — "
-            f"{n_pas} PAS"
+            f"Gene {gene_label} — "
+            f"chr{panel.chrom}:{panel.start:,}-{panel.end:,} "
+            f"({'−' if panel.strand == '-' else '+'} strand, "
+            f"{length_str}) — {n_pas} PAS"
         )
         fig.suptitle(title, fontsize=9, y=1.01)
 
@@ -321,10 +344,14 @@ class GeneTrackMatplotlib(VizStrategy):
                     "within-gene proportions."
                 ),
                 "gene_id": panel.gene_id,
+                "gene_name": panel.gene_name,
                 "chrom": panel.chrom,
                 "start": panel.start,
                 "end": panel.end,
                 "strand": panel.strand,
+                "view_start": int(x_lo),
+                "view_end": int(x_hi),
+                "view_unit": unit_label,
                 "n_pas": n_pas,
                 "n_clusters_rendered": n_clusters_rendered,
                 "n_isoforms": n_isoforms,
@@ -372,6 +399,14 @@ def _draw_gene_structure(
 ) -> None:
     """Draw exon bars and intron lines for each isoform.
 
+    The exon boxes are drawn at the GTF coordinates exactly, BUT clamped to
+    a minimum visible width of ~0.4% of the view span so that small exons
+    (commonly 80–200 bp on a 50–900 kb gene = 0.1–0.4% of axis width)
+    don't render as 1-pixel slivers and disappear visually.  The intron
+    backbone behind them is at true coordinates, so the visual lengthening
+    only widens the exon box around its true left edge and has no impact
+    on PAS positions or anything else.
+
     Args:
         ax: Matplotlib Axes to draw into.
         panel: GenePanel with isoforms field.
@@ -381,6 +416,9 @@ def _draw_gene_structure(
     exon_colour = "#4477aa"
     intron_colour = "#888888"
     exon_height = 0.6  # fraction of the row height
+
+    view_span = max(x_max - x_min, 1)
+    min_visible_exon_w = max(view_span * 0.004, 1)
 
     for row_idx, (tid, exons) in enumerate(panel.isoforms):
         y_centre = row_idx + 0.5
@@ -413,11 +451,13 @@ def _draw_gene_structure(
                 ),
             )
 
-        # Draw exon rectangles.
+        # Draw exon rectangles.  Visual width is clamped up to a minimum so
+        # tiny exons remain visible; actual coordinates are unaltered.
         for exon_start, exon_end in exons:
+            visual_width = max(exon_end - exon_start, min_visible_exon_w)
             rect = mpatches.FancyBboxPatch(
                 (exon_start, y_centre - exon_height / 2),
-                exon_end - exon_start,
+                visual_width,
                 exon_height,
                 boxstyle="square,pad=0",
                 facecolor=exon_colour,
@@ -474,12 +514,14 @@ def _annotate_pas_positions(
 
     for pas_id, left, width in zip(panel.pas_ids, pas_left_edges, pas_widths):
         # Shaded stripe spanning the PAS's actual genomic extent across
-        # every isoform row.  Alpha is intentionally low so the underlying
-        # exon/intron structure remains visible.
+        # every isoform row.  Low alpha so the underlying exon/intron
+        # structure stays visible (especially small 80–200 bp exons that
+        # the GTF parser correctly draws but which can otherwise get
+        # washed out under the PAS tint).
         ax.axvspan(
             left, left + width,
             ymin=0.0, ymax=1.0,
-            color=pas_colour, alpha=0.18, lw=0,
+            color=pas_colour, alpha=0.10, lw=0,
             zorder=4,
         )
         # Tick mark + pas_id label above the structure track.

@@ -223,7 +223,9 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         # ------------------------------------------------------------------ #
         from pathlib import Path
 
-        from ema.viz._gene_track_helpers import build_gene_panel, load_isoforms_for_gene
+        from ema.viz._gene_track_helpers import (
+            build_gene_panel, load_isoforms_for_gene, load_gene_name_from_gtf,
+        )
         from ema.viz import render_all
 
         figs_dir = out_dir / "figures"
@@ -238,8 +240,9 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                 _gene_client = None
 
             for gene_id in gene_list:
-                # Optionally load isoform structure.
+                # Optionally load isoform structure + human-readable name.
                 isoforms = None
+                gene_name = ""
                 if kwargs.get("gtf"):
                     try:
                         isoforms = load_isoforms_for_gene(Path(kwargs["gtf"]), gene_id)
@@ -250,6 +253,14 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                         log.warning(
                             "load_isoforms_for_gene failed for %s: %s", gene_id, exc
                         )
+                    try:
+                        gene_name = load_gene_name_from_gtf(
+                            Path(kwargs["gtf"]), gene_id
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "load_gene_name_from_gtf failed for %s: %s", gene_id, exc
+                        )
 
                 panel = build_gene_panel(
                     gene_id=gene_id,
@@ -257,6 +268,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                     pasbed=pasbed,
                     cluster_key=kwargs["cluster_key"],
                     isoforms=isoforms,
+                    gene_name=gene_name,
                 )
                 if panel is None:
                     log.warning(

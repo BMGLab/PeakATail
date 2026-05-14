@@ -68,6 +68,12 @@ class GenePanel:
     # 1%-of-gene-span placeholder.
     pas_starts: list[int] = field(default_factory=list)
     pas_ends: list[int] = field(default_factory=list)
+    # Human-readable gene symbol from the GTF (e.g. "CLIC2", "DPYD").
+    # When available it's used in figure titles in front of the Ensembl ID
+    # so the reader sees ``CLIC2 (ENSG00000155962) — chrX:...`` instead of
+    # the opaque Ensembl identifier alone.  Empty when no GTF supplied or
+    # the gene wasn't found.
+    gene_name: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +133,7 @@ def build_gene_panel(
     cluster_key: str = "leiden",
     gene_id_col: str = "gene_id",
     isoforms: list[tuple[str, list[tuple[int, int]]]] | None = None,
+    gene_name: str = "",
 ) -> GenePanel | None:
     """Build a :class:`GenePanel` for one gene.
 
@@ -205,6 +212,7 @@ def build_gene_panel(
 
     return GenePanel(
         gene_id=str(gene_id),
+        gene_name=str(gene_name),
         chrom=chrom,
         start=g_start,
         end=g_end,
@@ -225,6 +233,42 @@ def build_gene_panel(
 # ---------------------------------------------------------------------------
 # Isoform structure helpers
 # ---------------------------------------------------------------------------
+
+def load_gene_name_from_gtf(gtf_path: Path, gene_id: str) -> str:
+    """Return the ``gene_name`` attribute for *gene_id* from the GTF (or '').
+
+    Streams the GTF, stopping at the first matching ``gene`` feature.  Used
+    to populate :attr:`GenePanel.gene_name` so figure titles can show a
+    human-readable symbol next to the Ensembl ID.
+
+    Args:
+        gtf_path: Path to a GTF annotation file.
+        gene_id: Ensembl gene ID to look up.
+
+    Returns:
+        The gene_name attribute, or ``""`` if not found / file unreadable.
+    """
+    needle = f'gene_id "{gene_id}"'
+    try:
+        with open(gtf_path) as fh:
+            for line in fh:
+                if line.startswith("#") or not line.strip():
+                    continue
+                if needle not in line:
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 9:
+                    continue
+                # Match in any line that references this gene_id; gene_name
+                # is identical across all rows for one gene so any hit
+                # suffices.
+                name = _gtf_attr(parts[8], "gene_name")
+                if name:
+                    return name
+    except OSError as exc:
+        log.warning("load_gene_name_from_gtf: could not read %s: %s", gtf_path, exc)
+    return ""
+
 
 def load_isoforms_for_gene(
     gtf_path: Path,
