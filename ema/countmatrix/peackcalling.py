@@ -9,6 +9,7 @@ from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
 from ema.config import directory_config, variable_config
+from ema.strategies.utils import merge_close_or_low_prominence
 from typing import TYPE_CHECKING
 
 log = logging.getLogger(__name__)
@@ -45,6 +46,13 @@ def peak_calling(
                     region: "tuple[str, int, int] | None" = None,
                     # --- per-chromosome progress reporting ---
                     progress_client=None,
+                    # --- Post-detection PAS merger (strategy-agnostic) ---
+                    # -1 (default) auto-detects median read length per BAM.
+                    # 0 disables the distance tier.  5.0 is the default
+                    # prominence floor (matching lambda_gradient's per-summit
+                    # default).  0.0 disables the prominence tier.
+                    min_pas_spacing: int = -1,
+                    min_pas_prominence: float = 5.0,
                 ):
 
     """Stream a BAM file and call peaks using a sliding coverage window.
@@ -144,6 +152,8 @@ def peak_calling(
             tile_overlap=tile_overlap,
             n_workers=n_workers,
             default_sample_id=default_sample_id,
+            min_pas_spacing=min_pas_spacing,
+            min_pas_prominence=min_pas_prominence,
         )
     # --- End tile dispatch ------------------------------------------------
 
@@ -183,6 +193,8 @@ def peak_calling(
             bam_threads=bam_threads,
             batch_size=batch_size,
             default_sample_id=_default_sample_id,
+            min_pas_spacing=min_pas_spacing,
+            min_pas_prominence=min_pas_prominence,
         )
     # --- End pipeline dispatch --------------------------------------------
 
@@ -228,6 +240,23 @@ def peak_calling(
     # use caller-specified bam_threads in full-scan mode.
     _open_threads = 1 if region is not None else bam_threads
     bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=_open_threads)
+
+    # Resolve the auto-detect sentinel for the PAS merger distance tier:
+    # -1 means "infer median read length from this BAM, once, then cache".
+    # Cache lives in variable_config.dataset_read_lengths so every BAM is
+    # only inspected on its first peak_calling() invocation.
+    if min_pas_spacing < 0:
+        from ema.countmatrix.bam_utils import infer_median_read_length
+        _cache = variable_config.dataset_read_lengths
+        _key = str(bamfile_dir)
+        if _key not in _cache:
+            _cache[_key] = infer_median_read_length(_key)
+            log.info(
+                "Auto-detected median read length %d bp for %s "
+                "(min_pas_spacing distance tier)",
+                _cache[_key], bamfile_dir,
+            )
+        min_pas_spacing = _cache[_key]
     # Report total chromosomes to the progress bar (monolithic full-scan only).
     # `len(bamfile.references)` includes every reference in the BAM header —
     # for GRCh38 that's ~194 names with alts/decoys/HLA, most of which carry
@@ -277,6 +306,7 @@ def peak_calling(
             if signal:
 
                 pas_results = strategy.find_pas(peak)
+                pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
                 for pas_1, pas_2 in pas_results:
                     pasnumber = state.bump_pasnumber()
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
@@ -286,6 +316,7 @@ def peak_calling(
             elif len(peak.peak_list) != 0:
 
                 pas_results = strategy.find_pas(peak)
+                pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
                 for pas_1, pas_2 in pas_results:
                     pasnumber = state.bump_pasnumber()
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
@@ -353,6 +384,7 @@ def peak_calling(
                 #write pas
                 #make new instance of peak
                 pas_results = strategy.find_pas(peak)
+                pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
                 for pas_1, pas_2 in pas_results:
                     pasnumber = state.bump_pasnumber()
                     pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
@@ -370,6 +402,7 @@ def peak_calling(
     # Final flush for last chromosome — without this, the last peak is dropped
     if signal:
         pas_results = strategy.find_pas(peak)
+        pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
         for pas_1, pas_2 in pas_results:
             pasnumber = state.bump_pasnumber()
             pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
@@ -377,6 +410,7 @@ def peak_calling(
             matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
     elif len(peak.peak_list) != 0:
         pas_results = strategy.find_pas(peak)
+        pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
         for pas_1, pas_2 in pas_results:
             pasnumber = state.bump_pasnumber()
             pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
