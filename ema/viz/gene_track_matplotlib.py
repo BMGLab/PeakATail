@@ -106,11 +106,24 @@ class GeneTrackMatplotlib(VizStrategy):
         has_structure = bool(panel.isoforms)
         n_isoforms = len(panel.isoforms) if has_structure else 0
 
-        # Shared x range with 5% padding on each side.
-        gene_span = max(panel.end - panel.start, 1)
+        # Shared x range: include BOTH the PAS coords (pasbed-derived) and
+        # the GTF isoform structure span so a gene whose exons extend
+        # outside the detected-PAS window still renders in full.  Without
+        # this, ``panel.start``/``panel.end`` came from pasbed only and
+        # exons could fall off-screen on the left or right side.
+        x_lo, x_hi = panel.start, panel.end
+        if panel.isoforms:
+            for _, exons in panel.isoforms:
+                if not exons:
+                    continue
+                ex_lo = min(s for s, _ in exons)
+                ex_hi = max(e for _, e in exons)
+                x_lo = min(x_lo, ex_lo)
+                x_hi = max(x_hi, ex_hi)
+        gene_span = max(x_hi - x_lo, 1)
         pad = int(gene_span * 0.05) + 1
-        x_min = panel.start - pad
-        x_max = panel.end + pad
+        x_min = x_lo - pad
+        x_max = x_hi + pad
 
         # Minimum visible bar width = 0.5% of gene span (so 1-bp PAS don't
         # disappear when the gene span is large).  Actual PAS widths from
@@ -241,8 +254,31 @@ class GeneTrackMatplotlib(VizStrategy):
             )
 
         # --- shared x-axis ---
+        # Format absolute genomic coordinates in human units (Mb / kb / bp)
+        # based on the gene span.  Without this matplotlib's auto-tick
+        # formatter renders e.g. ``9.7e+07`` for a chr-1 gene at ~97 Mb,
+        # which is hard to read and ambiguous (Mb? kb? bp?).
         bottom_ax = axes[-1]
-        bottom_ax.set_xlabel("Genomic position (bp)", fontsize=9)
+        if gene_span >= 1_000_000:
+            unit_label, unit_div = "Mb", 1_000_000
+            tick_fmt = matplotlib.ticker.FuncFormatter(  # type: ignore[attr-defined]
+                lambda x, _: f"{x / unit_div:,.2f}"
+            )
+        elif gene_span >= 1_000:
+            unit_label, unit_div = "kb", 1_000
+            tick_fmt = matplotlib.ticker.FuncFormatter(  # type: ignore[attr-defined]
+                lambda x, _: f"{x / unit_div:,.1f}"
+            )
+        else:
+            unit_label = "bp"
+            tick_fmt = matplotlib.ticker.FuncFormatter(  # type: ignore[attr-defined]
+                lambda x, _: f"{int(x):,}"
+            )
+        bottom_ax.xaxis.set_major_formatter(tick_fmt)
+        bottom_ax.set_xlabel(
+            f"Genomic position on chr{panel.chrom} ({unit_label})",
+            fontsize=9,
+        )
         bottom_ax.tick_params(axis="x", labelsize=7)
 
         # --- figure title ---
