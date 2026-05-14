@@ -332,6 +332,21 @@ class variable_config:
     merge_len = 100
     ignore_chro = ["MT", "mt"]
     barcode_tag = args.barcode_tag
+    # Post-detection PAS-summit merger (strategy-agnostic; applied at the
+    # peak_calling caller layer after every strategy.find_pas() call).
+    # Tier 1: hard distance floor in bp.  -1 = auto-detect median read length
+    # per BAM; 0 disables the distance tier.
+    min_pas_spacing = -1
+    # Tier 2: static fallback valley threshold (coverage units) used by
+    # non-lambda strategies (original, sierra_iterative).  Lambda strategies
+    # ignore this and use compute_lambda(heights) instead.  Negative
+    # disables Tier 2 entirely.
+    min_pas_prominence = 5.0
+    # Cache populated once per BAM by peak_calling when min_pas_spacing == -1.
+    # Keyed by str(bam_path) -> int median read length.  Plain class-level
+    # dict (not a dataclass field) so it's accessible on the class itself,
+    # matching the access pattern variable_config.dataset_read_lengths.
+    dataset_read_lengths = {}
 
 @dataclass
 class filter_config:

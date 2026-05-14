@@ -153,6 +153,11 @@ class JobSpec:
     lambda_window: int = 5000
     bam_threads: int = 4
     default_sample_id: str = "default"
+    # Post-detection PAS merger (strategy-agnostic).  -1 for spacing triggers
+    # auto-detect inside the spawned peak_calling; resolve before building
+    # JobSpec for best efficiency (single header scan instead of N workers).
+    min_pas_spacing: int = -1
+    min_pas_prominence: float = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +305,8 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_lambda_window = args.lambda_window
         _args_bam_threads = args.bam_threads
         _args_default_sample_id = args.default_sample_id
+        _args_min_pas_spacing = args.min_pas_spacing
+        _args_min_pas_prominence = args.min_pas_prominence
     else:
         tile_id = args["tile_id"]
         dataset_id = args.get("dataset_id", "default")
@@ -319,6 +326,8 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_lambda_window = args["lambda_window"]
         _args_bam_threads = args["bam_threads"]
         _args_default_sample_id = args["default_sample_id"]
+        _args_min_pas_spacing = args.get("min_pas_spacing", -1)
+        _args_min_pas_prominence = args.get("min_pas_prominence", 5.0)
 
     # Per-worker isolation: reset all process-global mutable state
     reset_index()
@@ -354,6 +363,8 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             lambda_window=_args_lambda_window,
             bam_threads=_args_bam_threads,
             region=(chrom, fetch_start, fetch_end),
+            min_pas_spacing=_args_min_pas_spacing,
+            min_pas_prominence=_args_min_pas_prominence,
         )
 
         # ----------------------------------------------------------------
@@ -594,6 +605,8 @@ def build_job_specs(
     lambda_window: int = 5000,
     bam_threads: int = 4,
     per_bam_tile_sizes: dict[str, int] | None = None,
+    min_pas_spacing: int = -1,
+    min_pas_prominence: float = 5.0,
 ) -> list[JobSpec]:
     """Build a flat list of :class:`JobSpec` across all datasets × chroms × tiles × directions.
 
@@ -626,12 +639,19 @@ def build_job_specs(
     specs: list[JobSpec] = []
     job_id = 0
 
+    # Auto-detect resolution for ``min_pas_spacing < 0`` is performed lazily
+    # inside each spawned worker's :func:`peak_calling` call (which caches
+    # per-BAM in its own subprocess).  Doing it here would require opening
+    # every BAM at job-build time, which is wrong for callers that may build
+    # job specs before BAMs exist (e.g. unit tests with fake paths).
+
     for dataset_id, bam_path in bam_list:
         bam_tile_size = (
             per_bam_tile_sizes.get(str(bam_path), tile_size)
             if per_bam_tile_sizes
             else tile_size
         )
+        per_bam_spacing = min_pas_spacing
         chromosomes = get_chromosomes(str(bam_path))
         for chrom, length in chromosomes:
             tiles = split_chromosome_into_tiles(chrom, length, bam_tile_size, tile_overlap)
@@ -656,6 +676,8 @@ def build_job_specs(
                         lambda_window=lambda_window,
                         bam_threads=bam_threads,
                         default_sample_id=dataset_id,
+                        min_pas_spacing=per_bam_spacing,
+                        min_pas_prominence=min_pas_prominence,
                     ))
                     job_id += 1
 
@@ -789,6 +811,8 @@ def run_tiled(
     tile_overlap: int = 10_000,
     n_workers: int | None = None,
     default_sample_id: str = "default",
+    min_pas_spacing: int = -1,
+    min_pas_prominence: float = 5.0,
 ) -> None:
     """Run tile-parallel peak calling and merge results into final output files.
 
@@ -894,6 +918,8 @@ def run_tiled(
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
             bam_threads=bam_threads,
+            min_pas_spacing=min_pas_spacing,
+            min_pas_prominence=min_pas_prominence,
         )
         # Write CB list for consistency
         from ema.countmatrix.indexing import get_mapping
@@ -908,6 +934,17 @@ def run_tiled(
     # ----------------------------------------------------------------
     # Build worker arg dicts
     # ----------------------------------------------------------------
+    # Resolve auto-detect sentinel once for the whole pool before spawning
+    # workers — avoids N workers each scanning the BAM header for read length.
+    _resolved_spacing = min_pas_spacing
+    if _resolved_spacing < 0:
+        from ema.countmatrix.bam_utils import infer_median_read_length
+        _resolved_spacing = infer_median_read_length(bamfile_dir)
+        logger.info(
+            "run_tiled: auto-detected median read length %d bp for %s",
+            _resolved_spacing, bamfile_dir,
+        )
+
     worker_args: list[dict[str, Any]] = []
     for tile_id, (chrom, tile_start, tile_end, fetch_start, fetch_end) in enumerate(all_tiles):
         worker_args.append({
@@ -929,6 +966,8 @@ def run_tiled(
             "lambda_window": lambda_window,
             "bam_threads": bam_threads,
             "default_sample_id": default_sample_id,
+            "min_pas_spacing": _resolved_spacing,
+            "min_pas_prominence": min_pas_prominence,
         })
 
     # ----------------------------------------------------------------

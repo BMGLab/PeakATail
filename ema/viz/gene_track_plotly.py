@@ -356,6 +356,22 @@ class GeneTrackPlotly(VizStrategy):
         y_vals: list[float] = panel.reads_per_cell[ci, :].tolist()
         proportions_row = panel.proportions[ci, :]
 
+        # Per-bar widths from actual PAS spans so wide merged PAS show as
+        # wide bars.  Fall back to a small fixed width (0.5% of gene span,
+        # min 1 bp) when pas_starts/pas_ends aren't populated.
+        gene_span = max(panel.end - panel.start, 1)
+        min_w = max(int(gene_span * 0.005), 1)
+        if (
+            panel.pas_starts and panel.pas_ends
+            and len(panel.pas_starts) == n_pas
+        ):
+            bar_widths: list[int] = [
+                max(int(e - s), min_w)
+                for s, e in zip(panel.pas_starts, panel.pas_ends)
+            ]
+        else:
+            bar_widths = [min_w] * n_pas
+
         # Build custom_data columns aligned with each bar.
         custom_data: list[list[Any]] = []
         for j in range(n_pas):
@@ -381,6 +397,7 @@ class GeneTrackPlotly(VizStrategy):
             go.Bar(
                 x=x_vals,
                 y=y_vals,
+                width=bar_widths,
                 customdata=custom_data,
                 hovertemplate=(
                     "<b>PAS %{customdata[0]}</b><br>"

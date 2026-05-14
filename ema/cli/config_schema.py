@@ -336,7 +336,13 @@ class RunConfig:
 
     # ─── peak calling ────────────────────────────────────────────────────
     peak_strategy: str = field(
-        default="original",
+        # lambda_gradient is the recommended production strategy
+        # (40.6% precision @50bp on the benchmark; see technical report
+        # Sections 3 + 5).  `original` remains available as a baseline but
+        # is no longer the default — its lack of statistical filtering
+        # inflates PAS counts (~2x on the v9 BAM) and trips users who
+        # don't know to override.
+        default="lambda_gradient",
         metadata=_spec(
             cli_flag="--peak-strategy", yaml_key="peak_strategy",
             legacy_args_attr="strategy",
@@ -413,6 +419,36 @@ class RunConfig:
             cli_flag="--pas-gap", yaml_key="pas_gap",
             legacy_args_attr="pas_gap",
             description="Minimum gap between PAS within a peak (bp).",
+        ),
+    )
+    min_pas_spacing: int = field(
+        default=-1,
+        metadata=_spec(
+            cli_flag="--min-pas-spacing", yaml_key="min_pas_spacing",
+            legacy_dataclass_attr="variable_config.min_pas_spacing",
+            description=(
+                "Hard distance floor (bp) for the post-detection PAS merger. "
+                "Adjacent PAS within one peak whose gap is smaller than this "
+                "are merged unconditionally (Tier 1). "
+                "-1 (default) auto-detects median read length from each BAM. "
+                "0 disables the distance tier."
+            ),
+        ),
+    )
+    min_pas_prominence: float = field(
+        default=5.0,
+        metadata=_spec(
+            cli_flag="--min-pas-prominence", yaml_key="min_pas_prominence",
+            legacy_dataclass_attr="variable_config.min_pas_prominence",
+            click_type=click.FLOAT,
+            description=(
+                "Static valley-depth threshold for the Tier-2 post-detection "
+                "merger.  Used by NON-lambda strategies (original, "
+                "sierra_iterative).  Lambda strategies (lambda_poisson, "
+                "lambda_gradient) ignore this and use their own "
+                "compute_lambda(heights) as the threshold.  "
+                "Negative disables Tier 2 entirely.  Default 5.0."
+            ),
         ),
     )
 

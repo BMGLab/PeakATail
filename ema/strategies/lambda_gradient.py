@@ -290,6 +290,25 @@ class LambdaGradientStrategy(PeakFinderStrategy):
         """
         return reconstruct_cb_dict(peak.cb_positions, pas_1, pas_2)
 
+    def valley_threshold(self, peak, user_min_pas_prominence: float) -> float:
+        """Return ``compute_lambda(heights)`` — the strategy's own background.
+
+        Overrides the static default in :class:`PeakFinderStrategy` so the
+        post-detection merger uses the same dynamic background estimate this
+        strategy uses for the region significance gate and per-PAS Poisson
+        tests.  The user-supplied ``min_pas_prominence`` is ignored for
+        lambda-based strategies — the valley test becomes "is the dip at or
+        below the local lambda?".
+        """
+        if not peak.peak_list:
+            return float(user_min_pas_prominence)
+        heights = [h for _, h in peak.peak_list]
+        return float(compute_lambda(
+            heights,
+            method=self.lambda_method,
+            floor_fraction=self.floor_fraction,
+        ))
+
     def get_params(self) -> dict:
         """Return the current parameter set for logging and benchmarking.
 

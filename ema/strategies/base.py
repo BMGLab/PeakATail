@@ -44,3 +44,27 @@ class PeakFinderStrategy(ABC):
     def get_params(self) -> dict:
         """Return current strategy parameters for logging/benchmarking."""
         pass
+
+    def valley_threshold(self, peak, user_min_pas_prominence: float) -> float:
+        """Return the valley height below which two adjacent PAS should be merged.
+
+        Used by the post-detection PAS merger (Tier 2) to decide whether the
+        dip between two emitted summits is "background" — if the valley is
+        below this threshold the pair is merged.
+
+        Default implementation returns ``user_min_pas_prominence`` unchanged
+        — a static threshold supplied by the user.  Lambda-based strategies
+        (``lambda_poisson``, ``lambda_gradient``) override this to return
+        their own ``compute_lambda(heights)`` so the merger uses the same
+        dynamic background estimate the strategy itself uses for peak
+        significance.
+
+        Args:
+            peak: ``Peak`` instance providing ``peak_list``.
+            user_min_pas_prominence: Static fallback supplied from CLI/YAML.
+                Returned as-is by this base implementation.
+
+        Returns:
+            Valley height threshold in coverage units.
+        """
+        return float(user_min_pas_prominence)

@@ -67,7 +67,14 @@ reports/generate_figures_simple.py
 reports/generate_report.py
 reports/run_build_simple.sh
 reports/build_pdf.sh
+reports/build_latex.sh
 reports/subset_heavy_strategies.py
+# LaTeX source and build artefacts
+reports/PeakATail_Technical_Report.tex
+reports/*.aux
+reports/*.log
+reports/*.toc
+reports/*.out
 reports/explainer_figures.py
 reports/baseline_apa_completeness/
 reports/subset_curated.h5ad
@@ -79,6 +86,14 @@ reports/subset_length_compare/
 # Root-level report build helpers (invoke scripts inside reports/)
 run_build.sh
 run_generate_figures.sh
+
+# Performance report (local-only artefacts, same pattern as Technical Report)
+reports/PeakATail_Performance_Report.tex
+reports/PeakATail_Performance_Report.pdf
+reports/PeakATail_Performance_Report.md
+reports/perf_figures.py
+reports/build_perf.sh
+reports/figures/perf/
 
 # PR scratch (paste into GitHub — not for upstream)
 PR_DESCRIPTION.md

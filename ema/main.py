@@ -333,6 +333,13 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         lambda_fold_change=args.lambda_fold_change,
         lambda_window=args.lambda_window,
         bam_threads=getattr(args, 'bam_threads', 4),
+        # Post-detection PAS merger (strategy-agnostic).
+        # -1 spacing triggers auto-detect (median read length per BAM) inside
+        # peak_calling / run_tiled / run_pipeline.  Prominence is the static
+        # fallback used by non-lambda strategies; lambda strategies override
+        # to compute_lambda(heights).
+        min_pas_spacing=variable_config.min_pas_spacing,
+        min_pas_prominence=variable_config.min_pas_prominence,
     )
 
     # Start GTF pre-processing in a background thread (with caching).
@@ -459,6 +466,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             lambda_window=peak_kwargs.get("lambda_window", 5000),
             bam_threads=peak_kwargs.get("bam_threads", 4),
             per_bam_tile_sizes=per_bam_tile_sizes if _tile_size_is_auto else None,
+            min_pas_spacing=variable_config.min_pas_spacing,
+            min_pas_prominence=variable_config.min_pas_prominence,
         )
 
         log.info(

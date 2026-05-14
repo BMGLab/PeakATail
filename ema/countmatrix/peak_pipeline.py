@@ -71,6 +71,8 @@ def _flush_peak(
     strategy,
     bedfile,
     matrix,
+    min_pas_spacing: int = 0,
+    min_pas_prominence: float = 0.0,
 ) -> None:
     """Emit all PAS for *peak* to BED and MTX files.
 
@@ -90,8 +92,12 @@ def _flush_peak(
     """
     from ema.countmatrix.peak import Peak
     from ema.countmatrix.paswrite import pas_write, matrix_write
+    from ema.strategies.utils import merge_close_or_low_prominence
 
     pas_results = strategy.find_pas(peak)
+    pas_results = merge_close_or_low_prominence(
+        pas_results, peak, strategy, min_pas_spacing, min_pas_prominence,
+    )
     for pas_1, pas_2 in pas_results:
         Peak.pasnumber += 1
         pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
@@ -312,6 +318,8 @@ def writer_loop(
     bedfilepath: str,
     matrixpath: str,
     strategy_name: str,
+    min_pas_spacing: int = 0,
+    min_pas_prominence: float = 0.0,
 ) -> None:
     """Writer stage: consume peaks, run strategy, write BED and MTX.
 
@@ -328,6 +336,7 @@ def writer_loop(
     from ema.countmatrix.peak import Peak
     from ema.countmatrix.paswrite import pas_write, matrix_write
     from ema.strategies import get_strategy
+    from ema.strategies.utils import merge_close_or_low_prominence
 
     # Instantiate strategy locally (strategy objects may not be picklable)
     strategy = get_strategy(strategy_name)
@@ -349,6 +358,9 @@ def writer_loop(
                 continue
 
             pas_results = strategy.find_pas(peak)
+            pas_results = merge_close_or_low_prominence(
+                pas_results, peak, strategy, min_pas_spacing, min_pas_prominence,
+            )
             for pas_1, pas_2 in pas_results:
                 Peak.pasnumber += 1
                 pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
@@ -384,6 +396,8 @@ def run_pipeline(
     batch_size: int = 10000,
     default_sample_id: str = "default",
     progress_client=None,
+    min_pas_spacing: int = -1,
+    min_pas_prominence: float = 5.0,
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
 
@@ -425,6 +439,13 @@ def run_pipeline(
     Raises:
         RuntimeError: If any subprocess exits with a non-zero exit code.
     """
+    # Resolve auto-detect sentinel up front so the spawned writer subprocess
+    # receives a concrete value (subprocesses can't read variable_config's
+    # cache the spawned process has its own copy).
+    if min_pas_spacing < 0:
+        from ema.countmatrix.bam_utils import infer_median_read_length
+        min_pas_spacing = infer_median_read_length(bamfile_dir)
+
     ctx = mp.get_context("spawn")
 
     # Two bounded queues for backpressure
@@ -473,6 +494,8 @@ def run_pipeline(
             bedfilepath,
             matrixpath,
             strategy_name,
+            min_pas_spacing,
+            min_pas_prominence,
         ),
         daemon=True,
     )

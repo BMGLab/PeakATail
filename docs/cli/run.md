@@ -95,7 +95,7 @@ Options:
   --tile-size INTEGER             Tile size in bp (auto if unset).
   --tile-overlap INTEGER          Tile overlap in bp.  [default: 10000]
   --peak-strategy TEXT            Peak-calling strategy (run --list-strategies
-                                  to see).  [default: original]
+                                  to see).  [default: lambda_gradient]
   --lambda-window INTEGER         Background lambda estimation window (bp).
                                   [default: 5000]
   --lambda-method TEXT            Lambda estimator (median / mean / ...).
@@ -113,6 +113,20 @@ Options:
                                   threshold).  [default: 3]
   --pas-gap INTEGER               Minimum gap between PAS within a peak (bp).
                                   [default: 100]
+  --min-pas-spacing INTEGER       Tier-1 (distance) of the post-detection PAS
+                                  merger.  Adjacent PAS within one peak whose
+                                  gap is below this value are merged uncon-
+                                  ditionally.  -1 (default) auto-detects the
+                                  median read length per BAM; 0 disables the
+                                  distance tier.  [default: -1]
+  --min-pas-prominence FLOAT      Tier-2 (valley) static fallback for the
+                                  post-detection PAS merger.  Lambda strategies
+                                  (lambda_poisson, lambda_gradient) ignore
+                                  this and use their own compute_lambda(...).
+                                  Non-lambda strategies (original,
+                                  sierra_iterative) use this value as the
+                                  valley-depth threshold.  Negative disables
+                                  Tier 2.  [default: 5.0]
   --ip-filter                     Enable internal-priming filter (currently
                                   no-op).
   --genome-fasta PATH             Genome FASTA for --ip-filter (currently no-
@@ -212,7 +226,7 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--peak-strategy` | TEXT | `original` | Algorithm used to call PAS peaks. Run `ema run --list-strategies` to see registered names. The `lambda_gradient` strategy has the highest precision in benchmark runs. |
+| `--peak-strategy` | TEXT | `lambda_gradient` | Algorithm used to call PAS peaks. Run `ema run --list-strategies` to see registered names. `lambda_gradient` is the recommended production strategy (highest precision in benchmark runs); pass `--peak-strategy original` for the unfiltered baseline. |
 | `--lambda-window` | INT | 5000 | Window size in bp used to estimate local background signal lambda. Increase for sparse data where the default window may include too few reads. |
 | `--lambda-method` | TEXT | `median` | Estimator for lambda within the window. `median` is robust to outliers; `mean` may be inflated by nearby peaks. |
 | `--lambda-fold-change` | FLOAT | 2.0 | A region must exceed `lambda * fold_change` to be called as a peak. Raise to 3.0–4.0 to reduce false positives in noisy data. |
@@ -222,6 +236,8 @@ Options:
 | `--dynamic-threshold` | FLAG | off | Use a per-window dynamic peak height threshold rather than a fixed cutoff. Useful for samples with highly variable library depth across chromosomes. |
 | `--floor-threshold` | INT | 3 | When `--dynamic-threshold` is on, this is the minimum peak height. Prevents the dynamic threshold from falling so low that noise is called. |
 | `--pas-gap` | INT | 100 | Minimum bp gap between two PAS within the same peak. Increase to merge closely-spaced PAS that likely represent the same site. |
+| `--min-pas-spacing` | INT | `-1` | Tier-1 (distance) of the post-detection PAS merger. Adjacent PAS within one peak whose gap < this value are merged unconditionally. `-1` auto-detects the median read length per BAM (e.g. ~98 bp for 10x v2, ~150 bp for v3). `0` disables Tier 1. See [Post-Detection PAS Merger](../strategies/pas-merger.md). |
+| `--min-pas-prominence` | FLOAT | `5.0` | Tier-2 (valley depth) of the post-detection PAS merger. Lambda strategies (`lambda_poisson`, `lambda_gradient`) **ignore** this value and use their own `compute_lambda(heights)` instead — fully dynamic. Non-lambda strategies (`original`, `sierra_iterative`) treat this as a static coverage-depth threshold. Negative disables Tier 2. |
 
 ### Filters
 
