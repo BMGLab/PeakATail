@@ -112,8 +112,22 @@ class GeneTrackMatplotlib(VizStrategy):
         x_min = panel.start - pad
         x_max = panel.end + pad
 
-        # Bar width = 1% of gene span (minimum 1 bp).
-        bar_w = max(int(gene_span * 0.01), 1)
+        # Minimum visible bar width = 0.5% of gene span (so 1-bp PAS don't
+        # disappear when the gene span is large).  Actual PAS widths from
+        # ``pas_starts``/``pas_ends`` are used otherwise so a 200-bp merged
+        # PAS visibly differs from a 50-bp singleton.
+        min_visible_w = max(int(gene_span * 0.005), 1)
+        # Per-PAS widths, with sensible fallbacks if the helper didn't
+        # populate pas_starts/pas_ends (legacy panels).
+        if panel.pas_starts and panel.pas_ends and len(panel.pas_starts) == len(panel.pas_positions):
+            pas_widths = [
+                max(int(e - s), min_visible_w)
+                for s, e in zip(panel.pas_starts, panel.pas_ends)
+            ]
+            pas_left_edges = list(panel.pas_starts)
+        else:
+            pas_widths = [min_visible_w] * len(panel.pas_positions)
+            pas_left_edges = [int(p) - min_visible_w // 2 for p in panel.pas_positions]
 
         # Subplot heights in order: [gene_structure (optional), cluster0, cluster1, ...]
         subplot_heights: list[float] = []
@@ -142,6 +156,9 @@ class GeneTrackMatplotlib(VizStrategy):
             ax_struct = axes[ax_idx]
             ax_idx += 1
             _draw_gene_structure(ax_struct, panel, x_min, x_max, n_isoforms)
+            _annotate_pas_positions(
+                ax_struct, panel, pas_left_edges, pas_widths, n_isoforms,
+            )
 
         # --- 2. per-cluster coverage rows ---
         # Cap the reads_per_cell y-axis at 95th-pctile × 1.1 across all rendered
@@ -165,8 +182,14 @@ class GeneTrackMatplotlib(VizStrategy):
             rpc_row = panel.reads_per_cell[ci]          # shape: (n_pas,)
             prop_row = panel.proportions[ci]             # shape: (n_pas,)
 
-            for j, (pos, rpc, prop) in enumerate(
-                zip(panel.pas_positions, rpc_row, prop_row)
+            for j, (pos, left_edge, width, rpc, prop) in enumerate(
+                zip(
+                    panel.pas_positions,
+                    pas_left_edges,
+                    pas_widths,
+                    rpc_row,
+                    prop_row,
+                )
             ):
                 # colour by within-gene proportion (NaN → grey)
                 if np.isfinite(prop):
@@ -175,16 +198,19 @@ class GeneTrackMatplotlib(VizStrategy):
                     colour = "#aaaaaa"
 
                 bar_height = float(rpc) if np.isfinite(rpc) and rpc > 0 else 0.0
+                # Draw bar at the PAS's actual genomic span (left edge +
+                # width) so wide merged PAS show as wide bars.
                 ax.bar(
-                    pos,
+                    left_edge,
                     bar_height,
-                    width=bar_w,
+                    width=width,
+                    align="edge",
                     color=colour,
                     linewidth=0,
                     zorder=2,
                 )
 
-                # Proportion annotation on top of bar (skip NaN).
+                # Proportion annotation centred above the bar (skip NaN).
                 if np.isfinite(prop) and bar_height > 0:
                     pct_str = f"{prop * 100:.0f}%"
                     ax.annotate(
@@ -383,3 +409,49 @@ def _draw_gene_structure(
     ax.spines["left"].set_visible(False)
     ax.set_ylabel("Isoforms", fontsize=7, labelpad=4)
     ax.tick_params(axis="x", bottom=False)
+
+
+def _annotate_pas_positions(
+    ax: "plt.Axes",  # type: ignore[name-defined]
+    panel: Any,
+    pas_left_edges: list[int],
+    pas_widths: list[int],
+    n_isoforms: int,
+) -> None:
+    """Overlay each PAS region as a coloured stripe + pas_id tick on the structure axis.
+
+    Makes the actual genomic position (and width, post-merger) of every PAS
+    visible against the isoform structure --- the user can immediately see
+    which exon / 3'UTR each PAS sits in, and whether two PAS shown side-by-
+    side in the coverage rows are genuinely close on the genome or just
+    appear close because the rendered bars are clipped to a small axis.
+
+    Args:
+        ax: The gene-structure subplot axes.
+        panel: GenePanel with ``pas_ids`` aligned to ``pas_left_edges``.
+        pas_left_edges: Genomic left-edge of each PAS region.
+        pas_widths: Width (bp) of each PAS region.
+        n_isoforms: Isoform row count (used to size annotations).
+    """
+    pas_colour = "#C44E52"     # warm red — high-contrast against blue exons
+    label_y = n_isoforms + 0.05
+
+    for pas_id, left, width in zip(panel.pas_ids, pas_left_edges, pas_widths):
+        # Shaded stripe spanning the PAS's actual genomic extent across
+        # every isoform row.  Alpha is intentionally low so the underlying
+        # exon/intron structure remains visible.
+        ax.axvspan(
+            left, left + width,
+            ymin=0.0, ymax=1.0,
+            color=pas_colour, alpha=0.18, lw=0,
+            zorder=4,
+        )
+        # Tick mark + pas_id label above the structure track.
+        centre = left + width / 2.0
+        ax.text(
+            centre, label_y,
+            f"{pas_id}",
+            ha="center", va="bottom",
+            fontsize=5, color=pas_colour,
+            rotation=0, clip_on=False,
+        )

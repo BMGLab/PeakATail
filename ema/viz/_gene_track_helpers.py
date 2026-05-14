@@ -61,6 +61,13 @@ class GenePanel:
     reads_per_cell: np.ndarray
     proportions: np.ndarray
     isoforms: list[tuple[str, list[tuple[int, int]]]] = field(default_factory=list)
+    # Actual genomic span of each PAS region (BED half-open).  Same length
+    # and order as ``pas_ids`` / ``pas_positions``.  When the merger widens
+    # a PAS, ``pas_ends - pas_starts`` reflects that.  The rendering layer
+    # uses these to draw bars at their real width rather than a fixed
+    # 1%-of-gene-span placeholder.
+    pas_starts: list[int] = field(default_factory=list)
+    pas_ends: list[int] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +166,9 @@ def build_gene_panel(
         return None
     # Re-derive pas_ids in coord-order so positions align with coverage cols.
     pas_ids = [int(p) for p in coords.index.tolist()]
-    pas_positions = [
-        int(((row["start"] + row["end"]) // 2)) for _, row in coords.iterrows()
-    ]
+    pas_starts = [int(row["start"]) for _, row in coords.iterrows()]
+    pas_ends = [int(row["end"]) for _, row in coords.iterrows()]
+    pas_positions = [(s + e) // 2 for s, e in zip(pas_starts, pas_ends)]
     chrom = str(coords["chrom"].iloc[0])
     strand = str(coords["strand"].iloc[0]) if "strand" in coords.columns else "+"
     g_start = int(coords["start"].min())
@@ -204,6 +211,8 @@ def build_gene_panel(
         strand=strand,
         pas_ids=pas_ids,
         pas_positions=pas_positions,
+        pas_starts=pas_starts,
+        pas_ends=pas_ends,
         clusters=clusters,
         n_cells_per_cluster=n_cells.tolist(),
         reads=reads,
