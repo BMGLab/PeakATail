@@ -316,6 +316,58 @@ def run_one_dataset_downstream(
         json.dump(stage_stats, fh, indent=2)
     log.info("%s per-dataset stage funnel -> %s", prefix, stage_stats_path)
 
+    # ------------------------------------------------------------------ #
+    # 8. E3 provenance: record PAS/cell drops at the per-dataset drop     #
+    #    sites (pas_gene, preprocess, cb_filter) and self-check the       #
+    #    integrity invariant  surviving PAS == n_vars(clusters.h5ad).     #
+    #    Each worker owns its OWN per-dataset ledger dir (no cross-process #
+    #    sharing); atlas-snap drops live in the run-level ledger.         #
+    # ------------------------------------------------------------------ #
+    try:
+        from ema.provenance import (
+            ProvenanceLedger,
+            check_survivor_invariant,
+            record_cell_drops,
+            record_pas_drops,
+        )
+
+        final_pas = [str(v) for v in adata.var_names]
+        input_pas = [str(p) for p in pas_ids]
+        annotated_pas = [str(p) for p in result.pas_ids]
+        gene_of = {str(p): str(g) for p, g in zip(result.pas_ids, result.gene_ids)}
+
+        led = ProvenanceLedger(cluster_h5ad.parent)
+        surviving_pas = record_pas_drops(
+            led,
+            input_pas_ids=input_pas,
+            annotated_pas_ids=annotated_pas,
+            final_pas_ids=final_pas,
+            dataset_id=ds_id,
+            gene_of=gene_of,
+        )
+        record_cell_drops(
+            led,
+            input_cbs=[str(c) for c in sub_cbs],
+            kept_cbs=[str(c) for c in _kept_cbs],
+            final_cbs=[str(c) for c in adata.obs_names],
+            dataset_id=ds_id,
+        )
+        led.flush()
+        # Self-check: surviving PAS must equal the clustered matrix var count.
+        # raise_on_fail=False → log a warning rather than kill a cohort worker;
+        # a violation means the drop accounting missed a site (bug), not bad data.
+        if not check_survivor_invariant(surviving_pas, int(adata.n_vars), raise_on_fail=False):
+            log.warning(
+                "%s provenance invariant OFF: surviving PAS=%d != n_vars=%d "
+                "(pas_ledger accounting incomplete)",
+                prefix, surviving_pas, int(adata.n_vars),
+            )
+        else:
+            log.info("%s provenance invariant OK: %d surviving PAS == n_vars",
+                     prefix, surviving_pas)
+    except Exception:  # provenance is auxiliary — never fail the run over it
+        log.warning("%s provenance ledger step failed (non-fatal)", prefix, exc_info=True)
+
     log.info("%s done — %d cells, %d PAS -> %s", prefix, adata.n_obs, adata.n_vars, cluster_h5ad)
     return stats
 

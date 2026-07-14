@@ -48,6 +48,8 @@ __all__ = [
     "InvariantError",
     "surviving_count_from_tsv",
     "check_survivor_invariant",
+    "record_pas_drops",
+    "record_cell_drops",
 ]
 
 
@@ -270,6 +272,114 @@ class ProvenanceLedger:
 
     # alias
     write = flush
+
+
+def record_pas_drops(
+    ledger: "ProvenanceLedger",
+    *,
+    input_pas_ids,
+    annotated_pas_ids,
+    final_pas_ids,
+    dataset_id: str = "",
+    gene_of=None,
+    reasons=None,
+) -> int:
+    """Record one dataset's PAS provenance across the two per-dataset drop sites.
+
+    The per-dataset downstream chain drops PAS at exactly two points after the
+    unified/atlas stage:
+
+        input  --annotate(pas_gene)-->  annotated  --preprocess(min_cells)-->  final
+
+    where ``input``  = PAS entering annotate (post cb-filter matrix build),
+          ``annotated`` = PAS that got a gene (annotate keeps only the
+                          gene-intersection), and
+          ``final`` = PAS surviving preprocessing = ``clusters.h5ad`` var_names.
+
+    Records a drop row for every PAS lost at pas_gene (input − annotated) and at
+    preprocess (annotated − final), and a surviving row (``dropped_at == ""``,
+    ``last_stage="clustering"``) for every final PAS. Returns the surviving
+    count, which by construction equals ``len(final_pas_ids)`` — the invariant
+    ``surviving == n_vars(clusters.h5ad)``.
+
+    ``gene_of`` optionally maps a surviving pas_id → gene_id; ``reasons`` may
+    override the default drop reasons ``{"pas_gene": ..., "preprocess": ...}``.
+    """
+    gene_of = gene_of or {}
+    default_reasons = {
+        "pas_gene": "no gene within max_distance (annotate)",
+        "preprocess": "below min_cells (preprocessing)",
+    }
+    if reasons:
+        default_reasons.update(reasons)
+
+    annotated = set(annotated_pas_ids)
+    final = set(final_pas_ids)
+    for p in input_pas_ids:
+        if p not in annotated:
+            ledger.record_drop(
+                "pas", dropped_at="pas_gene", drop_reason=default_reasons["pas_gene"],
+                orig_pas_key=p, last_stage="annotate",
+            )
+    for p in annotated_pas_ids:
+        if p not in final:
+            ledger.record_drop(
+                "pas", dropped_at="preprocess", drop_reason=default_reasons["preprocess"],
+                orig_pas_key=p, last_stage="preprocess",
+            )
+    for p in final_pas_ids:
+        ledger.record_pas(
+            orig_pas_key=p, gene_id=gene_of.get(p), last_stage="clustering",
+            dropped_at="", drop_reason="",
+        )
+    return ledger.count_surviving("pas")
+
+
+def record_cell_drops(
+    ledger: "ProvenanceLedger",
+    *,
+    input_cbs,
+    kept_cbs,
+    final_cbs=None,
+    dataset_id: str = "",
+    reasons=None,
+) -> int:
+    """Record one dataset's cell provenance across cb-filter (+ preprocess).
+
+        input  --cb_filter(min_read)-->  kept  --preprocess(min_genes)-->  final
+
+    Drops at cb_filter (input − kept) and, if ``final_cbs`` is given, at
+    preprocess (kept − final). Surviving rows are ``final_cbs`` (or ``kept_cbs``
+    when ``final_cbs`` is None). Returns the surviving cell count.
+    """
+    default_reasons = {
+        "cb_filter": "below min_read (cb-filter)",
+        "preprocess": "below min_genes (preprocessing)",
+    }
+    if reasons:
+        default_reasons.update(reasons)
+
+    kept = set(kept_cbs)
+    for cb in input_cbs:
+        if cb not in kept:
+            ledger.record_drop(
+                "cell", dropped_at="cb_filter", drop_reason=default_reasons["cb_filter"],
+                barcode=cb, dataset_id=dataset_id,
+            )
+    survivors = kept_cbs
+    if final_cbs is not None:
+        final = set(final_cbs)
+        for cb in kept_cbs:
+            if cb not in final:
+                ledger.record_drop(
+                    "cell", dropped_at="preprocess",
+                    drop_reason=default_reasons["preprocess"],
+                    barcode=cb, dataset_id=dataset_id,
+                )
+        survivors = final_cbs
+    for cb in survivors:
+        ledger.record_cell(barcode=cb, dataset_id=dataset_id, dropped_at="", drop_reason="")
+    return ledger.count_surviving("cell")
 
 
 def surviving_count_from_tsv(path: str | Path, kind: str = "pas") -> int:
