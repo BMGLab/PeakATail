@@ -9,6 +9,7 @@ def snap_beds_to_atlas(
     output_dir: str | Path,
     distance: int = 50,
     strands: list[str] | None = None,
+    ledger=None,
 ) -> tuple[Path, Path]:
     """Snap called PAS coordinates to a reference atlas via bedtools closest.
 
@@ -183,27 +184,57 @@ def snap_beds_to_atlas(
             # Distance is always the LAST column regardless of atlas width
             _IDX_DISTANCE = len(cols) - 1
 
+            # E3: identity of THIS input PAS (available regardless of hit/miss).
+            input_name = cols[_IDX_INPUT_NAME]
+            dataset_id, in_strand, old_pasnumber = _decode_pas_key(input_name)
+            in_chrom = cols[0]
+            in_start, in_end = cols[1], cols[2]
+
+            def _record_drop(reason: str, snap_dist=None) -> None:
+                if ledger is None:
+                    return
+                ledger.record_pas(
+                    orig_pas_key=input_name,
+                    chrom=in_chrom, start=in_start, end=in_end, strand=in_strand,
+                    snap_distance_bp=snap_dist,
+                    last_stage="atlas_snap",
+                    dropped_at="atlas_snap",
+                    drop_reason=reason,
+                )
+
             atlas_chrom = cols[_IDX_ATLAS_CHROM]
             # bedtools reports "." for atlas chrom when no feature found
             if atlas_chrom == ".":
+                _record_drop("no atlas feature on contig/strand")
                 continue
 
             try:
                 dist = int(cols[_IDX_DISTANCE])
             except ValueError:
+                _record_drop("unparseable closest distance")
                 continue
 
             # -1 means no feature found; filter by max distance
-            if dist < 0 or dist > distance:
+            if dist < 0:
+                _record_drop("no atlas feature within range (-1)")
+                continue
+            if dist > distance:
+                _record_drop(f"summit distance {dist}bp > atlas_distance {distance}bp", dist)
                 continue
 
-            input_name = cols[_IDX_INPUT_NAME]
-            dataset_id, in_strand, old_pasnumber = _decode_pas_key(input_name)
             atlas_pas_id = cols[_IDX_ATLAS_PAS_ID]
 
             mapping_rows.append(
                 (dataset_id, in_strand, old_pasnumber, atlas_pas_id, dist)
             )
+            # E3: surviving PAS (dropped_at="") with its snap distance.
+            if ledger is not None:
+                ledger.record_pas(
+                    orig_pas_key=input_name,
+                    chrom=in_chrom, start=in_start, end=in_end, strand=in_strand,
+                    snap_distance_bp=dist,
+                    last_stage="atlas_snap",
+                )
 
             if atlas_pas_id not in atlas_hits:
                 atlas_hits[atlas_pas_id] = (

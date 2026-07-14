@@ -863,9 +863,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "Atlas snap" if directory_config.atlas else "PAS merge",
         total=None,  # indeterminate spinner — we don't know peak count yet
     )
+    # E3: provenance ledger for the biggest silent drop site (atlas snap).
+    _prov_ledger = None
     if directory_config.atlas:
         if snap_beds_to_atlas is None:
             raise RuntimeError("ema.datasets.atlas_snap is not available")
+        try:
+            from ema.provenance import ProvenanceLedger
+            _prov_ledger = ProvenanceLedger(output_dir)
+        except Exception as _e:  # provenance must never break a run
+            log.warning("provenance ledger init failed: %s", _e)
+            _prov_ledger = None
         unified_bed, mapping_path = snap_beds_to_atlas(
             all_beds,
             all_ds_ids,
@@ -873,7 +881,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             output_dir=unified_dir,
             distance=directory_config.atlas_distance,
             strands=all_strands,
+            ledger=_prov_ledger,
         )
+        if _prov_ledger is not None:
+            try:
+                _prov_ledger.flush()
+                log.info(
+                    "provenance: atlas-snap pas_ledger written (%d surviving PAS)",
+                    _prov_ledger.count_surviving("pas"),
+                )
+            except Exception as _e:
+                log.warning("provenance ledger flush failed: %s", _e)
     else:
         unified_bed, mapping_path = merge_pas_beds(
             all_beds,
