@@ -59,8 +59,38 @@ def test_register_artifact_and_datasets(tmp_path: Path) -> None:
     assert reg["schema_name"] == "counts"
     assert reg["schema_version"] == "0.1.0"
     assert reg["entity_counts"] == {"n_pas": 5}
+    # per-artifact content hash (staleness detection) — sha256 of the file bytes.
+    import hashlib
+    expect = "sha256:" + hashlib.sha256(art.read_bytes()).hexdigest()
+    assert reg["content_hash"] == expect
     assert data["datasets"] == [{"dataset_id": "dsA", "bam_paths": ["a.bam"], "label": None}]
     assert data["stratum_to_label"]["CD8_trunc"].startswith("CD8 T cells")
+
+
+def test_content_hash_changes_when_artifact_changes(tmp_path: Path) -> None:
+    """A changed artifact yields a different content_hash even if the manifest
+    shape is identical — the staleness signal the hub indexer needs."""
+    def _hash_for(text: str) -> str:
+        mgr = OutputManager(base_dir=str(tmp_path))
+        art = tmp_path / "provenance" / "pas_ledger.tsv"
+        art.parent.mkdir(parents=True, exist_ok=True)
+        art.write_text(text)
+        mgr.register_artifact(str(art), stage="provenance", fmt="tsv",
+                              schema_name="PasLedgerRow")
+        return mgr._artifacts[0]["content_hash"]
+
+    h1 = _hash_for("orig_pas_key\na\n")
+    h2 = _hash_for("orig_pas_key\na\nb\n")
+    assert h1 and h2 and h1 != h2
+
+
+def test_auto_discovered_artifacts_carry_content_hash(tmp_path: Path) -> None:
+    mgr = OutputManager(base_dir=str(tmp_path))
+    (tmp_path / "provenance").mkdir()
+    (tmp_path / "provenance" / "pas_ledger.tsv").write_text("orig_pas_key\n1\n")
+    data = json.loads(Path(mgr.write_manifest({})).read_text())
+    led = next(a for a in data["artifacts"] if a["path"] == "provenance/pas_ledger.tsv")
+    assert led["content_hash"].startswith("sha256:")
 
 
 def test_auto_discovers_standard_artifacts(tmp_path: Path) -> None:

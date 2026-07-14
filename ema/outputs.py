@@ -102,6 +102,31 @@ class OutputManager:
     # ------------------------------------------------------------------ #
     # E2: run_manifest.json — the contract artifact the hub indexes.     #
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _content_hash(abs_path) -> str | None:
+        """sha256 of an artifact file as ``"sha256:<hex>"`` (None if unreadable).
+
+        Lets any manifest consumer detect a stale index when a REFERENCED
+        artifact (ledger/parquet/h5ad) changes but the manifest bytes don't —
+        hashing only the manifest sha256 misses that. Streamed so large h5ads
+        don't blow memory. The contract Artifact model doesn't yet field this,
+        so it rides as an extra key (ignored on validate); consuming it needs a
+        contract bump (flagged for hub-team in HANDOFF.md).
+        """
+        import hashlib
+
+        try:
+            p = Path(abs_path)
+            if not p.is_file():
+                return None
+            h = hashlib.sha256()
+            with p.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            return f"sha256:{h.hexdigest()}"
+        except OSError:
+            return None
+
     def register_artifact(
         self,
         path: str,
@@ -115,7 +140,8 @@ class OutputManager:
         """Register one produced artifact for the run manifest (E2).
 
         Fields conform to peakatail_contract.models.Artifact:
-        ``path, stage, format, schema_name, schema_version, entity_counts``.
+        ``path, stage, format, schema_name, schema_version, entity_counts``
+        (plus an extra ``content_hash`` the contract ignores on validate).
         ``path`` is stored relative to the run root when possible so the
         manifest is relocatable.
         """
@@ -131,6 +157,7 @@ class OutputManager:
                 "schema_name": schema_name,
                 "schema_version": schema_version,
                 "entity_counts": entity_counts or {},
+                "content_hash": self._content_hash(path),
             }
         )
 
@@ -161,6 +188,7 @@ class OutputManager:
                 "path": rel, "stage": stage, "format": fmt,
                 "schema_name": schema_name, "schema_version": "0.1.0",
                 "entity_counts": {},
+                "content_hash": self._content_hash(base / rel),
             })
 
         for rel, stage, fmt, schema_name in patterns:
