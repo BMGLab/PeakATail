@@ -520,6 +520,20 @@ def run_diff(
                 len(pairs), total_sig, fdr, diff_dir,
             )
 
+            # E5: emit the normalized findings_long table (FindingRow contract),
+            # keyed by pas_uid + canonical_cluster with an explicit direction.
+            try:
+                from ema.switch_test.long_output import findings_long, write_long_table
+                _arm = f"switch_diff:{strategy}"
+                _long = findings_long(
+                    {(c1, c2): all_pair_results[(c1, c2)] for c1, c2 in pairs},
+                    strategy=strategy, arm=_arm, fdr=fdr,
+                )
+                _written = write_long_table(_long, str(diff_dir / "switch_diff_long"))
+                log.info("run_diff: findings_long (%d rows) -> %s", len(_long), _written)
+            except Exception as _e:
+                log.warning("run_diff: findings_long emit failed: %s", _e)
+
     log.info("run_diff: done.")
     return all_pair_results
 
