@@ -156,14 +156,23 @@ def parse_atlas_mapping(mapping_path: Path) -> tuple[int, list[int]]:
     if not mapping_path.exists():
         return snapped, distances
     with open(mapping_path) as fh:
-        next(fh, None)
+        header = fh.readline().rstrip("\n").split("\t")
+        col = {name: i for i, name in enumerate(header)}
+        # Header-aware: the snap_distance_bp column moved when the strand column
+        # (B1) was added; locate it by name and fall back to the legacy index 3.
+        i_dist = col.get("snap_distance_bp", 3)
+        i_new = col.get("new_pas_id")
         for line in fh:
-            parts = line.strip().split("\t")
-            if len(parts) >= 3:
+            parts = line.rstrip("\n").split("\t")
+            # A snapped row is one that carries a new_pas_id (or, legacy, >=3 cols).
+            if i_new is not None:
+                if len(parts) > i_new and parts[i_new] != "":
+                    snapped += 1
+            elif len(parts) >= 3:
                 snapped += 1
-            if len(parts) >= 4:
+            if len(parts) > i_dist:
                 try:
-                    distances.append(int(parts[3]))
+                    distances.append(int(parts[i_dist]))
                 except ValueError:
                     pass
     return snapped, distances

@@ -4,11 +4,40 @@ import scipy.sparse as sp
 import numpy as np
 
 
+def _encode_pas_key(dataset_id: str, strand: str | None, pasnumber: str) -> str:
+    """Encode a per-input PAS identity into a single BED col-4 token.
+
+    B1: the same ``pasnumber`` is minted from 1 independently on each strand
+    within a dataset, so ``(dataset_id, pasnumber)`` collides across strands and
+    counts get routed to the wrong unified PAS row. Including the strand makes
+    the key ``(dataset_id, strand, pasnumber)``. When ``strand`` is None the
+    legacy 2-part encoding is used (backward compatible).
+    """
+    if strand:
+        return f"{dataset_id}::{strand}::{pasnumber}"
+    return f"{dataset_id}::{pasnumber}"
+
+
+def _decode_pas_key(token: str) -> tuple[str, str, str]:
+    """Inverse of :func:`_encode_pas_key` → ``(dataset_id, strand, pasnumber)``.
+
+    ``strand`` is ``""`` for the legacy 2-part encoding. ``dataset_id`` may
+    itself contain ``::`` (we split from the right).
+    """
+    parts = token.rsplit("::", 2)
+    if len(parts) == 3:
+        return parts[0], parts[1], parts[2]
+    if len(parts) == 2:
+        return parts[0], "", parts[1]
+    return token, "", ""
+
+
 def merge_pas_beds(
     bed_paths: list[str | Path],
     dataset_ids: list[str],
     output_dir: str | Path,
     gap: int = 100,
+    strands: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Merge per-dataset PAS BED files into a unified strand-aware coordinate set.
 
@@ -17,10 +46,16 @@ def merge_pas_beds(
         dataset_ids: parallel list — dataset_ids[i] owns bed_paths[i]
         output_dir: where to write outputs
         gap: bedtools merge -d distance (default 100bp)
+        strands: optional parallel list — strands[i] ("+"/"-") is the strand of
+            bed_paths[i]. When supplied, the count-routing key becomes
+            ``(dataset_id, strand, pasnumber)`` (bug B1 fix); when a dataset
+            contributes a separate pos and neg BED under the *same* dataset_id,
+            this prevents pos/neg PAS #N from colliding.
 
     Outputs:
         merged_bed: chrom\\tstart\\tend\\tnew_pas_id\\tscore\\tstrand
-        mapping_path: TSV with header "dataset_id\\told_pasnumber\\tnew_pas_id"
+        mapping_path: TSV with header
+            "dataset_id\\tstrand\\told_pasnumber\\tnew_pas_id"
             One row per ORIGINAL pasnumber (so multiple original pasnumbers
             can map to the same new_pas_id when bedtools merge groups them).
 
@@ -35,9 +70,16 @@ def merge_pas_beds(
     merged_path = output_dir / "multi_sample_merged.bed"
     mapping_path = output_dir / "multi_sample_pas_mapping.tsv"
 
-    # Step 1: Concatenate all BED files, encoding dataset_id::pasnumber in col 4.
+    # Step 1: Concatenate all BED files, encoding dataset_id[::strand]::pasnumber
+    # in col 4 (B1: strand included when provided to avoid cross-strand key
+    # collisions in count routing).
+    if strands is not None and len(strands) != len(bed_paths):
+        raise ValueError(
+            f"strands length ({len(strands)}) must match bed_paths ({len(bed_paths)})"
+        )
     with open(cat_path, "w") as out:
-        for bed_path, dataset_id in zip(bed_paths, dataset_ids):
+        for i, (bed_path, dataset_id) in enumerate(zip(bed_paths, dataset_ids)):
+            strand_hint = strands[i] if strands is not None else None
             with open(bed_path) as f:
                 for line in f:
                     line = line.rstrip("\n")
@@ -46,8 +88,13 @@ def merge_pas_beds(
                     parts = line.split("\t")
                     if len(parts) < 4:
                         continue
-                    # parts[3] is the original pasnumber (integer string)
-                    parts[3] = f"{dataset_id}::{parts[3]}"
+                    # parts[3] is the original pasnumber (integer string).
+                    # Prefer the row's own strand column (parts[5]) when present,
+                    # falling back to the per-file strand hint.
+                    row_strand = parts[5] if len(parts) >= 6 else strand_hint
+                    if strands is None:
+                        row_strand = None
+                    parts[3] = _encode_pas_key(dataset_id, row_strand, parts[3])
                     out.write("\t".join(parts) + "\n")
 
     # Step 2: Sort by chrom then start position.
@@ -79,7 +126,8 @@ def merge_pas_beds(
     # bedtools collect produces a comma-separated list in col 4, e.g.:
     #   "ds1::123,ds1::456,ds2::789"
     merged_lines: list[str] = []
-    mapping_rows: list[tuple[str, str, str]] = []  # (dataset_id, old_pasnumber, new_pas_id)
+    # (dataset_id, strand, old_pasnumber, new_pas_id)
+    mapping_rows: list[tuple[str, str, str, str]] = []
     new_id = 1
 
     with open(bedtools_out) as f:
@@ -106,8 +154,10 @@ def merge_pas_beds(
                 entry = entry.strip()
                 if "::" not in entry:
                     continue
-                dataset_id, old_pasnumber = entry.split("::", 1)
-                mapping_rows.append((dataset_id, old_pasnumber, new_pas_id))
+                dataset_id, entry_strand, old_pasnumber = _decode_pas_key(entry)
+                mapping_rows.append(
+                    (dataset_id, entry_strand, old_pasnumber, new_pas_id)
+                )
 
             merged_lines.append(
                 f"{chrom}\t{start}\t{end}\t{new_pas_id}\t{score}\t{strand}"
@@ -119,11 +169,11 @@ def merge_pas_beds(
         if merged_lines:
             f.write("\n")
 
-    # Step 6: Write mapping TSV.
+    # Step 6: Write mapping TSV (with strand column — B1).
     with open(mapping_path, "w") as f:
-        f.write("dataset_id\told_pasnumber\tnew_pas_id\n")
-        for dataset_id, old_pasnumber, new_pas_id in mapping_rows:
-            f.write(f"{dataset_id}\t{old_pasnumber}\t{new_pas_id}\n")
+        f.write("dataset_id\tstrand\told_pasnumber\tnew_pas_id\n")
+        for dataset_id, strand, old_pasnumber, new_pas_id in mapping_rows:
+            f.write(f"{dataset_id}\t{strand}\t{old_pasnumber}\t{new_pas_id}\n")
 
     # Clean up temp files.
     cat_path.unlink(missing_ok=True)
@@ -140,6 +190,7 @@ def concat_matrices(
     mapping_path: str | Path,
     output_mtx: str | Path,
     output_cb: str | Path,
+    strands: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Concatenate per-dataset MTX files into a single matrix with unified PAS rows.
 
@@ -166,24 +217,46 @@ def concat_matrices(
     output_mtx = Path(output_mtx)
     output_cb = Path(output_cb)
 
-    # Step 1: Load mapping. Key: (dataset_id, int(old_pasnumber)) -> new_pas_id.
-    mapping: dict[tuple[str, int], str] = {}
+    # Step 1: Load mapping. Key: (dataset_id, strand, int(old_pasnumber)) ->
+    # new_pas_id (B1: strand disambiguates pos/neg PAS #N within a dataset).
+    # Header-aware so both the merge mapping (has a ``strand`` column) and the
+    # atlas mapping are parsed correctly. ``strand`` is only used for keying when
+    # the caller passes ``strands`` (parallel to mtx_paths); otherwise it is
+    # collapsed to "" on both sides for backward-compatible last-wins behaviour.
+    if strands is not None and len(strands) != len(mtx_paths):
+        raise ValueError(
+            f"strands length ({len(strands)}) must match mtx_paths ({len(mtx_paths)})"
+        )
+    strand_mode = strands is not None
+    mapping: dict[tuple[str, str, int], str] = {}
     with open(mapping_path) as f:
-        next(f)  # skip header: dataset_id\told_pasnumber\tnew_pas_id
+        header = f.readline().rstrip("\n").split("\t")
+        col = {name: i for i, name in enumerate(header)}
+        i_ds = col.get("dataset_id", 0)
+        i_strand = col.get("strand")  # None if absent (atlas legacy layout)
+        i_old = col.get("old_pasnumber", 1 if i_strand is None else 2)
+        i_new = col.get("new_pas_id", 2 if i_strand is None else 3)
+        _need = max(x for x in (i_ds, i_old, i_new, i_strand) if x is not None)
         for line in f:
             line = line.rstrip("\n")
             if not line:
                 continue
             parts = line.split("\t")
-            if len(parts) < 3:
+            if len(parts) <= _need:
                 continue
-            ds_id, old_pas_str, new_pas_id = parts[0], parts[1], parts[2]
+            ds_id = parts[i_ds]
+            strand_val = (
+                parts[i_strand]
+                if (strand_mode and i_strand is not None and i_strand < len(parts))
+                else ""
+            )
+            old_pas_str, new_pas_id = parts[i_old], parts[i_new]
             try:
                 old_pas_int = int(old_pas_str)
             except ValueError:
                 # Non-integer pasnumber — store as-is with sentinel
                 old_pas_int = hash(old_pas_str)
-            mapping[(ds_id, old_pas_int)] = new_pas_id
+            mapping[(ds_id, strand_val, old_pas_int)] = new_pas_id
 
     # Step 2: Collect all unique new_pas_ids and sort them.
     # Primary sort: numeric suffix of "PAS_N"; fall back to lexicographic for
@@ -201,9 +274,12 @@ def concat_matrices(
     merged_cbs: list[str] = []
     col_offset = 0
 
-    for mtx_path, dataset_id, cb_path in zip(mtx_paths, dataset_ids, cb_paths):
+    for _mtx_i, (mtx_path, dataset_id, cb_path) in enumerate(
+        zip(mtx_paths, dataset_ids, cb_paths)
+    ):
         mtx_path = Path(mtx_path)
         cb_path = Path(cb_path)
+        strand_val = strands[_mtx_i] if strand_mode else ""
 
         # Read CB list: column N in MTX = line N in cb.tsv (0-based).
         cb_list = [line.strip() for line in open(cb_path) if line.strip()]
@@ -234,7 +310,7 @@ def concat_matrices(
                 except ValueError:
                     continue
 
-                new_pas_id = mapping.get((dataset_id, r))
+                new_pas_id = mapping.get((dataset_id, strand_val, r))
                 if new_pas_id is None:
                     # This PAS didn't survive the merge (filtered out) — skip.
                     continue

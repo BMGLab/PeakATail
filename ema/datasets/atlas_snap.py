@@ -8,6 +8,7 @@ def snap_beds_to_atlas(
     atlas_bed: str | Path,
     output_dir: str | Path,
     distance: int = 50,
+    strands: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Snap called PAS coordinates to a reference atlas via bedtools closest.
 
@@ -67,8 +68,15 @@ def snap_beds_to_atlas(
     # bedtools. Everything downstream — sort, closest, distance filtering,
     # mapping, and the atlas coordinates written to the outputs — is
     # unchanged; only the distance measurement now reflects the summit.
+    # B1: include the row strand in the encoded col-4 key so pos/neg PAS #N
+    # within one dataset don't collide during count routing (see pas_merge).
+    from ema.datasets.pas_merge import _encode_pas_key
+    if strands is not None and len(strands) != len(bed_paths):
+        raise ValueError(
+            f"strands length ({len(strands)}) must match bed_paths ({len(bed_paths)})"
+        )
     with open(input_bed, "w") as out:
-        for bed_path, dataset_id in zip(bed_paths, dataset_ids):
+        for _i, (bed_path, dataset_id) in enumerate(zip(bed_paths, dataset_ids)):
             bed_path = Path(bed_path)
             with open(bed_path) as f:
                 for line in f:
@@ -87,7 +95,8 @@ def snap_beds_to_atlas(
                         continue  # unparseable coordinates; skip this row
                     # 3' summit: "+" -> last base (end-1); "-" -> first base (start)
                     summit = end_i - 1 if strand == "+" else start_i
-                    encoded_name = f"{dataset_id}::{pasnumber}"
+                    key_strand = strand if strands is not None else None
+                    encoded_name = _encode_pas_key(dataset_id, key_strand, pasnumber)
                     out.write(
                         f"{chrom}\t{summit}\t{summit + 1}\t{encoded_name}\t{score}\t{strand}\n"
                     )
@@ -157,8 +166,9 @@ def snap_beds_to_atlas(
     _IDX_ATLAS_STRAND = 11
     _MIN_EXPECTED_COLS = 13  # BED6 input + BED6 atlas + distance
 
-    # mapping_rows: (dataset_id, old_pasnumber, atlas_pas_id, snap_distance_bp)
-    mapping_rows: list[tuple[str, str, str, int]] = []
+    from ema.datasets.pas_merge import _decode_pas_key
+    # mapping_rows: (dataset_id, strand, old_pasnumber, atlas_pas_id, snap_distance_bp)
+    mapping_rows: list[tuple[str, str, str, str, int]] = []
     # atlas_pas_id -> (chrom, start, end, pas_id, score, strand)
     atlas_hits: dict[str, tuple[str, str, str, str, str, str]] = {}
 
@@ -188,10 +198,12 @@ def snap_beds_to_atlas(
                 continue
 
             input_name = cols[_IDX_INPUT_NAME]
-            dataset_id, old_pasnumber = input_name.split("::", 1)
+            dataset_id, in_strand, old_pasnumber = _decode_pas_key(input_name)
             atlas_pas_id = cols[_IDX_ATLAS_PAS_ID]
 
-            mapping_rows.append((dataset_id, old_pasnumber, atlas_pas_id, dist))
+            mapping_rows.append(
+                (dataset_id, in_strand, old_pasnumber, atlas_pas_id, dist)
+            )
 
             if atlas_pas_id not in atlas_hits:
                 atlas_hits[atlas_pas_id] = (
@@ -214,15 +226,18 @@ def snap_beds_to_atlas(
         atlas_str_to_int[hit[3]] = str(i)
 
     # Step 6b: Write mapping TSV using integer new_pas_id.
-    # 4th column 'snap_distance_bp' enables atlas_snap_diag histograms; existing
-    # readers split on tabs and only require >=3 columns so this is additive.
+    # Columns: dataset_id, strand, old_pasnumber, new_pas_id, snap_distance_bp.
+    # B1: the strand column disambiguates pos/neg PAS #N. Readers are header-aware
+    # (concat_matrices, parse_atlas_mapping) so this reordering is safe.
     with open(mapping_path, "w") as f:
-        f.write("dataset_id\told_pasnumber\tnew_pas_id\tsnap_distance_bp\n")
-        for dataset_id, old_pasnumber, atlas_pas_id, snap_dist in mapping_rows:
+        f.write("dataset_id\tstrand\told_pasnumber\tnew_pas_id\tsnap_distance_bp\n")
+        for dataset_id, in_strand, old_pasnumber, atlas_pas_id, snap_dist in mapping_rows:
             new_int_id = atlas_str_to_int.get(atlas_pas_id)
             if new_int_id is None:
                 continue
-            f.write(f"{dataset_id}\t{old_pasnumber}\t{new_int_id}\t{snap_dist}\n")
+            f.write(
+                f"{dataset_id}\t{in_strand}\t{old_pasnumber}\t{new_int_id}\t{snap_dist}\n"
+            )
 
     # Step 6c: Sidecar lookup so atlas string IDs are preserved
     lookup_path = output_dir / "atlas_pas_id_lookup.tsv"

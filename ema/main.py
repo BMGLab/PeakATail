@@ -842,6 +842,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     all_mtxs = all_pos_mtxs + all_neg_mtxs
     all_cbs = all_pos_cbs + all_neg_cbs
     all_ds_ids = all_dataset_ids_for_pos + all_dataset_ids_for_neg
+    # B1: the SAME dataset_id appears once per strand in all_ds_ids; carry an
+    # explicit strand per entry so the merge/atlas count-routing key becomes
+    # (dataset_id, strand, pasnumber) and pos/neg PAS #N cannot collide.
+    all_strands = (
+        ["+"] * len(all_dataset_ids_for_pos) + ["-"] * len(all_dataset_ids_for_neg)
+    )
 
     # Dispatch atlas vs. coordinate-merge based on config
     _atlas_stage = _add_stage(
@@ -857,6 +863,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             atlas_bed=directory_config.atlas,
             output_dir=unified_dir,
             distance=directory_config.atlas_distance,
+            strands=all_strands,
         )
     else:
         unified_bed, mapping_path = merge_pas_beds(
@@ -864,6 +871,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             all_ds_ids,
             output_dir=unified_dir,
             gap=getattr(args, "pas_gap", 100),
+            strands=all_strands,
         )
     # Mark atlas/merge stage complete
     _advance(_atlas_stage)
@@ -877,6 +885,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         mapping_path=mapping_path,
         output_mtx=unified_mtx,
         output_cb=unified_cb,
+        strands=all_strands,
     )
 
     log.info(

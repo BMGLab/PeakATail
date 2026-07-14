@@ -117,14 +117,27 @@ def test_wide_peak_correctly_dropped_when_only_summit_is_far(tmp_path: Path) -> 
 
 
 def _read_mapping(mapping_path: Path) -> list[tuple[str, str, str, int]]:
+    """Header-aware read → (dataset_id, old_pasnumber, new_pas_id, distance).
+
+    The mapping gained a ``strand`` column (bug B1), so column positions are
+    resolved by header name rather than fixed index.
+    """
     rows: list[tuple[str, str, str, int]] = []
     with open(mapping_path) as f:
         header = f.readline().rstrip("\n").split("\t")
-        assert header == ["dataset_id", "old_pasnumber", "new_pas_id", "snap_distance_bp"]
+        col = {name: i for i, name in enumerate(header)}
+        assert {"dataset_id", "old_pasnumber", "new_pas_id", "snap_distance_bp"} <= set(header)
         for line in f:
             line = line.rstrip("\n")
             if not line:
                 continue
-            dataset_id, old_pasnumber, new_pas_id, dist = line.split("\t")
-            rows.append((dataset_id, old_pasnumber, new_pas_id, int(dist)))
+            parts = line.split("\t")
+            rows.append(
+                (
+                    parts[col["dataset_id"]],
+                    parts[col["old_pasnumber"]],
+                    parts[col["new_pas_id"]],
+                    int(parts[col["snap_distance_bp"]]),
+                )
+            )
     return rows
