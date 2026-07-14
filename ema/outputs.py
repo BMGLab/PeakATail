@@ -83,11 +83,88 @@ class OutputManager:
             json.dump(stats, f, indent=2)
 
     def save_run_config(self, args_dict: dict) -> None:
-        """Persist the resolved run configuration at the run root."""
+        """Persist the resolved run configuration at the run root.
+
+        ``args_dict`` should be the *resolved* configuration — see
+        :func:`build_resolved_run_config`, which reconciles the argparse
+        namespace with the resolved ``directory_config`` / ``variable_config`` /
+        ``filter_config`` singletons the pipeline body actually reads. Passing a
+        bare ``vars(args)`` here reintroduces bug B0 (records argparse defaults;
+        e.g. ``atlas`` shows ``null`` on runs that snapped).
+        """
         config = {"timestamp": datetime.now().isoformat(), **args_dict}
         path = os.path.join(self.base_dir, "run_config.json")
         with open(path, "w") as f:
-            json.dump(config, f, indent=2)
+            json.dump(config, f, indent=2, default=str)
+
+
+def build_resolved_run_config() -> dict:
+    """Assemble the fully-resolved run configuration actually in effect.
+
+    Bug B0: ``run_config.json`` used to serialize ``vars(args)`` — the argparse
+    namespace — which holds *defaults* for everything supplied via YAML or
+    ``set_directory_config`` (atlas path, gtf, datasets, atlas_distance, …). So
+    a run that snapped to an atlas recorded ``atlas: null``, making the config
+    non-reproducible and misleading the data controller.
+
+    This reads the resolved module-level config singletons that the pipeline
+    body reads from, so the persisted config matches what actually ran. Values
+    are grouped by their source and JSON-safe (Paths → str via the caller's
+    ``default=str``). Robust to missing attributes.
+    """
+    from ema.config import (
+        directory_config as _dc,
+        variable_config as _vc,
+        filter_config as _fc,
+        args as _args,
+    )
+
+    def _get(obj, name, default=None):
+        try:
+            return getattr(obj, name, default)
+        except Exception:  # lazy proxies may raise on unset attrs
+            return default
+
+    resolved: dict = {}
+
+    # --- directories / inputs (set via set_directory_config, NOT on args) ---
+    resolved["directories"] = {
+        "output_dir": str(_get(_dc, "output_dir", "")),
+        "bam_dir": _get(_dc, "bam_dir"),
+        "gtf_dir": _get(_dc, "gtf_dir"),
+        "atlas": _get(_dc, "atlas"),
+        "atlas_distance": _get(_dc, "atlas_distance"),
+        "datasets": _get(_dc, "datasets", []),
+        "filenames": _get(_dc, "filenames", {}),
+    }
+
+    # --- resolved scalar knobs the pipeline body actually reads ---
+    resolved["variables"] = {
+        k: _get(_vc, k)
+        for k in (
+            "seqlen", "cb_len", "barcode_tag", "default_threshold",
+            "merge_len", "min_pas_spacing", "min_pas_prominence",
+        )
+    }
+    resolved["filters"] = {
+        k: _get(_fc, k)
+        for k in ("min_read", "min_cells", "min_genes", "min_pas_per_cell")
+    }
+
+    # --- remaining argparse fields (strategy, thresholds, tiles, …) ---
+    # Kept for completeness, but under a namespaced key so the resolved
+    # directory/variable/filter values above are unambiguous. Filter out
+    # private/callable entries.
+    try:
+        ns = vars(_args._get()) if hasattr(_args, "_get") else vars(_args)
+    except Exception:
+        ns = {}
+    resolved["args"] = {
+        k: v for k, v in ns.items()
+        if not k.startswith("_") and not callable(v)
+    }
+
+    return resolved
 
 
 def _concat_beds(srcs: Iterable[Path | str], dst: Path) -> None:

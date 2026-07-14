@@ -303,8 +303,11 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     output_mgr = OutputManager(base_dir=directory_config.output_dir)
     output_mgr.setup()
 
-    # Save run configuration
-    output_mgr.save_run_config(vars(args))
+    # Save run configuration (B0: serialize the RESOLVED config actually in
+    # effect — directory_config/variable_config/filter_config — not the raw
+    # argparse defaults, which record atlas=null on runs that snapped).
+    from ema.outputs import build_resolved_run_config
+    output_mgr.save_run_config(build_resolved_run_config())
 
     # Forward strategy-tunable hyperparameters that the user supplied via
     # CLI / YAML.  Only pass kwargs the strategy actually accepts (introspect
