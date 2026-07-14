@@ -1060,6 +1060,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         n_datasets, n_workers,
     )
 
+    _all_stats: list = []  # E3: collect per-dataset stats (carry n_vars for reconcile)
     if n_workers <= 1 or n_datasets == 1:
         # Inline path: no spawn overhead, backward-compatible.
         for arg_tuple in worker_args:
@@ -1067,13 +1068,15 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             #   per_dataset_dir, genes_pkl, min_read, min_cells, min_genes,
             #   log_queue, progress_client, cluster_kwargs, plot_engines  (13 elements)
             *pos_args, lq, pc, ck, pe = arg_tuple
-            run_one_dataset_downstream(
+            _st = run_one_dataset_downstream(
                 *pos_args,
                 log_queue=lq,
                 progress_client=pc,
                 plot_engines=pe,
                 **(ck or {}),
             )
+            if isinstance(_st, dict):
+                _all_stats.append(_st)
             _advance(_downstream_stage)
     else:
         ctx = multiprocessing.get_context("spawn")
@@ -1081,7 +1084,45 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             for _stats in pool.imap_unordered(
                 downstream_worker_star, worker_args, chunksize=1
             ):
+                if isinstance(_stats, dict):
+                    _all_stats.append(_stats)
                 _advance(_downstream_stage)  # one dataset complete
+
+    # E3 sidecar-then-reconcile: after the pool joins, the parent reconciles the
+    # per-dataset ledger sidecars each worker wrote (no shared mutable state) and
+    # self-checks the per-dataset invariant surviving PAS == n_vars(clusters.h5ad).
+    # The run-level atlas-snap ledger is a DIFFERENT question and stays separate.
+    try:
+        from ema.provenance import reconcile_dataset_ledgers
+        _recon_inputs = []
+        for _st in _all_stats:
+            _ds = _st.get("dataset_id")
+            if _ds is None:
+                continue
+            _sidecar = directory_config.clusters_h5ad_for(_ds).parent / "provenance"
+            _recon_inputs.append((_ds, _sidecar, int(_st.get("final_pas", 0))))
+        if _recon_inputs:
+            _cohort_dir = output_dir / "provenance" / "by_dataset"
+            _recon = reconcile_dataset_ledgers(_recon_inputs, cohort_dir=_cohort_dir)
+            import json as _json
+            (output_dir / "provenance").mkdir(parents=True, exist_ok=True)
+            (output_dir / "provenance" / "reconcile_summary.json").write_text(
+                _json.dumps(_recon, indent=2)
+            )
+            _bad = [d["ds_id"] for d in _recon["datasets"] if not d["invariant_ok"]]
+            if _bad:
+                log.warning(
+                    "provenance reconcile: invariant OFF for %d/%d dataset(s): %s "
+                    "(pas_ledger accounting incomplete)",
+                    len(_bad), _recon["n_datasets"], _bad,
+                )
+            else:
+                log.info(
+                    "provenance reconcile: invariant OK for all %d dataset(s) "
+                    "(surviving PAS == n_vars)", _recon["n_datasets"],
+                )
+    except Exception as _e:  # provenance is auxiliary — never fail the run
+        log.warning("provenance reconcile step failed (non-fatal): %s", _e)
 
     # NOTE: PDUI and differential APA are NOT run here — they belong to the
     # separate `ema_switch` command. That command lets the user select which

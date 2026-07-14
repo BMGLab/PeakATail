@@ -50,6 +50,8 @@ __all__ = [
     "check_survivor_invariant",
     "record_pas_drops",
     "record_cell_drops",
+    "concat_ledger_tsvs",
+    "reconcile_dataset_ledgers",
 ]
 
 
@@ -380,6 +382,100 @@ def record_cell_drops(
     for cb in survivors:
         ledger.record_cell(barcode=cb, dataset_id=dataset_id, dropped_at="", drop_reason="")
     return ledger.count_surviving("cell")
+
+
+def concat_ledger_tsvs(paths, out_path: str | Path, kind: str = "pas") -> int:
+    """Concatenate several same-schema ledger TSVs into one (header written once).
+
+    Missing/empty inputs are skipped. Returns the number of DATA rows written.
+    Used by the parent to stitch per-dataset worker sidecars into a cohort
+    ledger after the multiprocessing pool joins (sidecar-then-reconcile — no
+    shared mutable state across workers).
+    """
+    if kind not in _KIND_COLUMNS:
+        raise ValueError(f"concat_ledger_tsvs: unknown kind {kind!r}")
+    columns = _KIND_COLUMNS[kind]
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    n_rows = 0
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter="\t", lineterminator="\n")
+    writer.writerow(columns)
+    for p in paths:
+        p = Path(p)
+        if not p.exists():
+            continue
+        with p.open(newline="") as fh:
+            reader = csv.reader(fh, delimiter="\t")
+            try:
+                next(reader)  # skip that file's header
+            except StopIteration:
+                continue
+            for row in reader:
+                if row:
+                    writer.writerow(row)
+                    n_rows += 1
+    out_path.write_text(buf.getvalue())
+    return n_rows
+
+
+def reconcile_dataset_ledgers(datasets, *, cohort_dir=None) -> dict:
+    """Reconcile per-dataset worker ledger sidecars after the pool joins.
+
+    Each per-dataset worker writes its own ``<sidecar>/pas_ledger.tsv`` +
+    ``cell_ledger.tsv`` (survivor rows = that dataset's final PAS/cells). This
+    parent-side step (a) checks the integrity invariant ``surviving PAS ==
+    n_vars(clusters.h5ad)`` for EACH dataset, and (b) optionally concatenates
+    the per-dataset sidecars into a cohort ledger under ``cohort_dir``.
+
+    IMPORTANT — two-level model: the per-dataset invariant is checked on the
+    per-dataset sidecar, NOT on a flat cohort total. A PAS may survive atlas
+    snapping (run-level ledger) yet be dropped per-dataset at pas_gene/preprocess,
+    so the run-level atlas ledger and the per-dataset ledgers answer different
+    questions and are kept SEPARATE (the atlas ledger is not merged in here).
+
+    Args:
+        datasets: iterable of ``(ds_id, sidecar_provenance_dir, n_vars)`` where
+            ``sidecar_provenance_dir`` contains ``pas_ledger.tsv`` /
+            ``cell_ledger.tsv`` and ``n_vars`` is that dataset's
+            ``clusters.h5ad`` var count.
+        cohort_dir: if given, write concatenated ``pas_ledger.tsv`` +
+            ``cell_ledger.tsv`` (per-dataset-scoped survivors) here. Named
+            ``cohort_*`` is the CALLER's choice via this dir — this function
+            never touches the run-level atlas ledger.
+
+    Returns:
+        ``{"datasets": [{ds_id, surviving_pas, n_vars, invariant_ok}...],
+           "all_ok": bool, "n_datasets": int}``.
+    """
+    datasets = list(datasets)
+    results = []
+    pas_paths, cell_paths = [], []
+    for ds_id, sidecar_dir, n_vars in datasets:
+        sidecar = Path(sidecar_dir)
+        pas_tsv = sidecar / _KIND_FILENAMES["pas"]
+        cell_tsv = sidecar / _KIND_FILENAMES["cell"]
+        pas_paths.append(pas_tsv)
+        cell_paths.append(cell_tsv)
+        surviving = surviving_count_from_tsv(pas_tsv, kind="pas") if pas_tsv.exists() else 0
+        ok = check_survivor_invariant(surviving, int(n_vars), raise_on_fail=False)
+        results.append({
+            "ds_id": ds_id,
+            "surviving_pas": surviving,
+            "n_vars": int(n_vars),
+            "invariant_ok": bool(ok),
+        })
+
+    if cohort_dir is not None:
+        cohort_dir = Path(cohort_dir)
+        concat_ledger_tsvs(pas_paths, cohort_dir / _KIND_FILENAMES["pas"], kind="pas")
+        concat_ledger_tsvs(cell_paths, cohort_dir / _KIND_FILENAMES["cell"], kind="cell")
+
+    return {
+        "datasets": results,
+        "all_ok": all(r["invariant_ok"] for r in results),
+        "n_datasets": len(results),
+    }
 
 
 def surviving_count_from_tsv(path: str | Path, kind: str = "pas") -> int:
