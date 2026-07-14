@@ -45,12 +45,14 @@ from ema.cli import run as _run  # noqa: E402,F401
 from ema.cli import switch as _switch  # noqa: E402,F401
 from ema.cli import merge as _merge  # noqa: E402,F401
 from ema.cli import parse_gtf as _parse_gtf  # noqa: E402,F401
+from ema.cli import collapse as _collapse  # noqa: E402,F401
 from ema.cli import wizard as _wizard_mod  # noqa: E402,F401
 
 main.add_command(_run.run)
 main.add_command(_switch.switch)
 main.add_command(_merge.merge)
 main.add_command(_parse_gtf.parse_gtf)
+main.add_command(_collapse.collapse)
 main.add_command(_wizard_mod.wizard)
 
 
