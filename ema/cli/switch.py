@@ -1,6 +1,7 @@
 """`ema switch` — group for per-cluster differential APA analyses."""
 import click
 
+from ema.cli.switch_combine import combine
 from ema.cli.switch_diff import diff
 from ema.cli.switch_geneview import geneview
 from ema.cli.switch_length import length
@@ -14,6 +15,7 @@ def switch() -> None:
     pass
 
 
+switch.add_command(combine)
 switch.add_command(diff)
 switch.add_command(geneview)
 switch.add_command(length)
