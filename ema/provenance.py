@@ -45,7 +45,14 @@ __all__ = [
     "PAS_LEDGER_COLUMNS",
     "CELL_LEDGER_COLUMNS",
     "ProvenanceLedger",
+    "InvariantError",
+    "surviving_count_from_tsv",
+    "check_survivor_invariant",
 ]
+
+
+class InvariantError(AssertionError):
+    """Raised when a provenance survivor-count invariant is violated."""
 
 #: Frozen column order for pas_ledger.tsv. This is a cross-repo contract --
 #: do not reorder, rename, or remove columns without a corresponding
@@ -263,3 +270,75 @@ class ProvenanceLedger:
 
     # alias
     write = flush
+
+
+def surviving_count_from_tsv(path: str | Path, kind: str = "pas") -> int:
+    """Count survivors (``dropped_at == ""``) in an on-disk ledger TSV.
+
+    Reads only the ``dropped_at`` column, so it works for both the pas and
+    cell ledgers without loading pandas. A survivor is a data row whose
+    ``dropped_at`` field is empty.
+
+    Args:
+        path: path to a ``pas_ledger.tsv`` / ``cell_ledger.tsv``.
+        kind: ``"pas"`` or ``"cell"`` (selects the expected header).
+
+    Raises:
+        ValueError: if ``kind`` is unknown or the header lacks ``dropped_at``.
+    """
+    if kind not in _KIND_COLUMNS:
+        raise ValueError(f"surviving_count_from_tsv: unknown kind {kind!r}")
+    p = Path(path)
+    with p.open(newline="") as fh:
+        reader = csv.reader(fh, delimiter="\t")
+        try:
+            header = next(reader)
+        except StopIteration:
+            return 0
+        if "dropped_at" not in header:
+            raise ValueError(
+                f"ledger at {p} has no 'dropped_at' column; header={header!r}"
+            )
+        idx = header.index("dropped_at")
+        return sum(1 for row in reader if len(row) > idx and row[idx] == "")
+
+
+def check_survivor_invariant(
+    surviving: int,
+    n_vars: int,
+    *,
+    label: str = "pas_ledger survivors == n_vars(clusters.h5ad)",
+    raise_on_fail: bool = True,
+) -> bool:
+    """Assert the provenance integrity invariant.
+
+    The contract invariant is::
+
+        rows(pas_ledger where dropped_at == "") == n_vars(clusters.h5ad)
+
+    i.e. every PAS that survives all drop sites is exactly a variable in the
+    final clustered AnnData, and vice versa. This function compares the two
+    counts. It is the single reusable check used by both the engine (post-run
+    self-test) and the hub (contract validation) so the two never drift.
+
+    Args:
+        surviving: number of surviving PAS ledger rows (``dropped_at == ""``).
+        n_vars: ``clusters.h5ad`` ``n_vars`` (number of PAS in the final matrix).
+        label: description used in the error message.
+        raise_on_fail: if True (default) raise :class:`InvariantError` on
+            mismatch; if False return ``False`` instead.
+
+    Returns:
+        ``True`` when ``surviving == n_vars``.
+
+    Raises:
+        InvariantError: when the counts differ and ``raise_on_fail`` is True.
+    """
+    ok = int(surviving) == int(n_vars)
+    if not ok and raise_on_fail:
+        raise InvariantError(
+            f"provenance invariant violated ({label}): "
+            f"surviving={surviving} != n_vars={n_vars} "
+            f"(delta={int(surviving) - int(n_vars)})"
+        )
+    return ok
