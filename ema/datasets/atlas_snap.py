@@ -247,10 +247,19 @@ def snap_beds_to_atlas(
             f.write(f"{int_id}\t{atlas_id}\n")
 
     # Step 7: Write snapped BED — col 4 is the integer ID (matches MTX rows)
+    from ema.datasets.pas_merge import pas_uid_of
     with open(snapped_bed_path, "w") as f:
         for chrom, start, end, pas_id, score, strand in sorted_atlas_hits:
             int_id = atlas_str_to_int[pas_id]
             f.write(f"{chrom}\t{start}\t{end}\t{int_id}\t{score}\t{strand}\n")
+
+    # Step 7b (E1): content-addressed stable id sidecar (new_pas_id -> pas_uid).
+    uid_path = output_dir / "pas_uid.tsv"
+    with open(uid_path, "w") as f:
+        f.write("new_pas_id\tpas_uid\n")
+        for chrom, start, end, pas_id, score, strand in sorted_atlas_hits:
+            int_id = atlas_str_to_int[pas_id]
+            f.write(f"{int_id}\t{pas_uid_of(chrom, start, end, strand)}\n")
 
     # Step 8: Clean up temp files
     for tmp in (input_bed, sorted_input, sorted_atlas, closest_raw):

@@ -32,6 +32,23 @@ def _decode_pas_key(token: str) -> tuple[str, str, str]:
     return token, "", ""
 
 
+def pas_uid_of(chrom: str, start, end, strand: str) -> str:
+    """Content-addressed stable PAS id (E1): ``chrom:pos:strand``.
+
+    ``pos`` is the strand-aware 3' end of the interval — the polyadenylation
+    site itself: the last base (``end-1``) on ``+`` and the first base
+    (``start``) on ``-``. This is stable across runs and re-minting of the
+    run-local integer ``new_pas_id``, so cross-run joins can key on it.
+    Falls back to ``chrom:end:strand`` if coordinates aren't integers.
+    """
+    try:
+        s, e = int(start), int(end)
+    except (TypeError, ValueError):
+        return f"{chrom}:{end}:{strand}"
+    pos = e - 1 if strand == "+" else s
+    return f"{chrom}:{pos}:{strand}"
+
+
 def merge_pas_beds(
     bed_paths: list[str | Path],
     dataset_ids: list[str],
@@ -128,6 +145,8 @@ def merge_pas_beds(
     merged_lines: list[str] = []
     # (dataset_id, strand, old_pasnumber, new_pas_id)
     mapping_rows: list[tuple[str, str, str, str]] = []
+    # E1: (new_pas_id, pas_uid) content-addressed stable id sidecar.
+    uid_rows: list[tuple[str, str]] = []
     new_id = 1
 
     with open(bedtools_out) as f:
@@ -162,6 +181,7 @@ def merge_pas_beds(
             merged_lines.append(
                 f"{chrom}\t{start}\t{end}\t{new_pas_id}\t{score}\t{strand}"
             )
+            uid_rows.append((new_pas_id, pas_uid_of(chrom, start, end, strand)))
 
     # Step 5: Write final merged BED.
     with open(merged_path, "w") as f:
@@ -174,6 +194,13 @@ def merge_pas_beds(
         f.write("dataset_id\tstrand\told_pasnumber\tnew_pas_id\n")
         for dataset_id, strand, old_pasnumber, new_pas_id in mapping_rows:
             f.write(f"{dataset_id}\t{strand}\t{old_pasnumber}\t{new_pas_id}\n")
+
+    # Step 6b (E1): content-addressed stable id sidecar.
+    uid_path = output_dir / "pas_uid.tsv"
+    with open(uid_path, "w") as f:
+        f.write("new_pas_id\tpas_uid\n")
+        for new_pas_id, pas_uid in uid_rows:
+            f.write(f"{new_pas_id}\t{pas_uid}\n")
 
     # Clean up temp files.
     cat_path.unlink(missing_ok=True)
