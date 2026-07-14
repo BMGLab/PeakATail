@@ -666,14 +666,33 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         output_mgr.save_stats("cb_filter", {
             "min_read": filter_config.min_read,
         })
+        # B3: ALWAYS write the per-dataset filtered_cb.tsv. The old
+        # ``if _filtered_cb_path.exists()`` guard silently skipped the write, so
+        # real runs left 02_cb_filter/ with only the stats JSON — making the
+        # min_read survivor set unrecoverable and the documented samtools -D
+        # workflow impossible. Prefer the authoritative in-memory list that
+        # filter_cb() just populated; fall back to the on-disk run-root file.
         from ema.outputs import write_filtered_cb
+        import ema.matrixfilter as _mf
         _filtered_cb_path = Path(directory_config.filtered_cb)
-        if _filtered_cb_path.exists():
-            write_filtered_cb(
-                output_dir, bam_list[0][0],
-                [b.strip() for b in _filtered_cb_path.read_text().splitlines() if b.strip()],
-                filter_config.min_read,
+        if _mf.filtered_cb_list:
+            _kept_cbs = list(_mf.filtered_cb_list)
+        elif _filtered_cb_path.exists():
+            _kept_cbs = [
+                b.strip()
+                for b in _filtered_cb_path.read_text().splitlines()
+                if b.strip()
+            ]
+        else:
+            _kept_cbs = []
+            log.warning(
+                "cb_filter produced no filtered barcode list for %r; writing an "
+                "empty filtered_cb.tsv (header only) for traceability.",
+                bam_list[0][0],
             )
+        write_filtered_cb(
+            output_dir, bam_list[0][0], _kept_cbs, filter_config.min_read,
+        )
 
         # Wait for GTF processing to complete before find_close
         _gtf_stage = _add_stage("GTF annotation", total=1)

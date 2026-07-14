@@ -169,13 +169,23 @@ def run_one_dataset_downstream(
 
     # Persist the kept barcode list for this dataset (canonical name +
     # min_read header for traceability).  See ema/outputs.py.
+    # B3: ALWAYS write it — never gate on .exists(), which silently left
+    # 02_cb_filter/<ds>/ with only the stats JSON.
     from ema.outputs import write_filtered_cb
     if filtered_cb_path.exists():
-        write_filtered_cb(
-            Path(output_dir), ds_id,
-            [b.strip() for b in filtered_cb_path.read_text().splitlines() if b.strip()],
-            min_read,
+        _kept_cbs = [
+            b.strip()
+            for b in filtered_cb_path.read_text().splitlines()
+            if b.strip()
+        ]
+    else:
+        _kept_cbs = []
+        log.warning(
+            "%s cb_filter produced no filtered_cb.tsv at %s; writing an empty "
+            "per-dataset filtered_cb.tsv (header only) for traceability.",
+            prefix, filtered_cb_path,
         )
+    write_filtered_cb(Path(output_dir), ds_id, _kept_cbs, min_read)
 
     if progress_client is not None:
         progress_client.advance(1)  # tick 2/6: filter
