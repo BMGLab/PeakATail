@@ -155,6 +155,82 @@ def _as_int(x):
     return int(f) if f is not None else None
 
 
+# LengthRow column order (peakatail_contract.models.LengthRow).
+LENGTH_LONG_COLUMNS = [
+    "strategy", "gene_id", "transcript_id", "cell_uid", "canonical_cluster",
+    "value", "pas_uid", "rank", "direction",
+]
+
+
+def cell_uid(dataset_id: str, barcode: str) -> str:
+    """Mint cell_uid as peakatail_contract.ids.cell_uid (``dataset_id:barcode``).
+
+    If ``barcode`` already looks namespaced (contains the separator), it is
+    returned unchanged so we never double-namespace.
+    """
+    b = str(barcode)
+    if _SEP in b:
+        return b
+    return f"{_sanitize(dataset_id)}{_SEP}{b}"
+
+
+def length_long(
+    df: pd.DataFrame,
+    *,
+    strategy: str,
+    value_col: str,
+    dataset_id: str = "",
+    canonical_map: dict | None = None,
+    cell_col: str = "cell",
+    cluster_col: str = "cluster",
+    gene_col: str = "gene_id",
+    transcript_col: str | None = "transcript_id",
+    pas_col: str | None = None,
+    rank_col: str | None = None,
+    pas_uid_map: dict | None = None,
+) -> pd.DataFrame:
+    """Reshape a `switch length` output into a LengthRow-conformant long table.
+
+    ``strategy`` in {classic, proportion, shannon}; ``value_col`` is the native
+    value column (pdui / proportion / entropy). ``pas_col``/``rank_col`` are only
+    passed for the per-PAS ``proportion`` strategy; ``pas_uid_map`` maps a pas_id
+    to its content-addressed pas_uid (from ``unified/pas_uid.tsv`` / the ledger).
+    The ``_gene_`` isoform sentinel is normalized to ``None`` (contract: "no
+    specific isoform" is an explicit null, not a fabricated transcript).
+
+    NOTE: not auto-wired into run_length yet — the per-strategy column names and
+    cell→dataset namespacing need confirmation against real length outputs. This
+    is the tested LengthRow producer for hub-team; wiring is flagged as follow-up.
+    """
+    rows: list[dict] = []
+    for r in df.to_dict("records"):
+        transcript = None
+        if transcript_col and transcript_col in r:
+            t = r.get(transcript_col)
+            if t not in (None, "", "_gene_", "nan"):
+                transcript = str(t)
+        pas_id = str(r.get(pas_col)) if (pas_col and pas_col in r) else None
+        puid = None
+        if pas_id is not None and pas_uid_map:
+            puid = pas_uid_map.get(pas_id)
+        rank = _as_int(r.get(rank_col)) if (rank_col and rank_col in r) else None
+        rows.append({
+            "strategy": strategy,
+            "gene_id": str(r.get(gene_col, "") or ""),
+            "transcript_id": transcript,
+            "cell_uid": cell_uid(dataset_id, r.get(cell_col, "")),
+            "canonical_cluster": _canon(r.get(cluster_col, ""), canonical_map),
+            "value": _finite(r.get(value_col)),
+            "pas_uid": puid,
+            "rank": rank,
+            # Direction only for proportion (per-PAS) rows; left None otherwise
+            # (contract: classic/shannon are gene-level trends without a per-row
+            # direction). Polarity itself is a follow-up (needs isoform rank).
+            "direction": None,
+        })
+    return pd.DataFrame(rows, columns=LENGTH_LONG_COLUMNS)
+
+
 def write_long_table(df: pd.DataFrame, base_path: str) -> str:
     """Write ``df`` as parquet (contract format); fall back to TSV if no parquet
     engine is installed. Returns the actual path written.

@@ -91,3 +91,45 @@ def test_write_long_table_falls_back_to_tsv_without_parquet(tmp_path: Path) -> N
     if written.endswith(".tsv"):
         back = pd.read_csv(written, sep="\t")
         assert list(back.columns) == FINDING_LONG_COLUMNS
+
+
+# --- E5 length_long (LengthRow) ---
+from ema.switch_test.long_output import LENGTH_LONG_COLUMNS, cell_uid, length_long
+
+
+def test_cell_uid_namespacing() -> None:
+    assert cell_uid("dsA", "AAAA") == "dsA:AAAA"
+    # already namespaced -> unchanged
+    assert cell_uid("dsA", "dsB:CCCC") == "dsB:CCCC"
+
+
+def test_length_long_proportion_with_pas_uid_and_rank() -> None:
+    df = pd.DataFrame({
+        "gene_id": ["ENSG1", "ENSG1"],
+        "transcript_id": ["ENST1", "_gene_"],
+        "pas_id": ["1", "2"],
+        "rank": [0, 1],
+        "cell": ["AAAA", "CCCC"],
+        "proportion": [0.7, 0.3],
+        "cluster": ["A", "A"],
+    })
+    out = length_long(
+        df, strategy="proportion", value_col="proportion", dataset_id="dsA",
+        pas_col="pas_id", rank_col="rank", pas_uid_map={"1": "chr1:9:+", "2": "chr1:50:+"},
+    )
+    assert list(out.columns) == LENGTH_LONG_COLUMNS
+    assert list(out["cell_uid"]) == ["dsA:AAAA", "dsA:CCCC"]
+    assert list(out["value"]) == [0.7, 0.3]
+    assert list(out["pas_uid"]) == ["chr1:9:+", "chr1:50:+"]
+    assert list(out["rank"]) == [0, 1]
+    # '_gene_' sentinel normalized to None
+    assert out["transcript_id"].tolist() == ["ENST1", None]
+
+
+def test_length_long_shannon_gene_level() -> None:
+    df = pd.DataFrame({"gene_id": ["ENSG1"], "cell": ["AAAA"], "entropy": [1.2], "cluster": ["B"]})
+    out = length_long(df, strategy="shannon", value_col="entropy", dataset_id="dsA")
+    assert out.iloc[0]["value"] == 1.2
+    assert out.iloc[0]["pas_uid"] is None
+    assert out.iloc[0]["direction"] is None
+    assert out.iloc[0]["canonical_cluster"] == "B"
