@@ -169,6 +169,26 @@ def parse_atlas_mapping(mapping_path: Path) -> tuple[int, list[int]]:
     return snapped, distances
 
 
+def count_called_pas(peakcalling_dir: Path) -> int:
+    """Count all called PAS across BOTH strands under ``peakcalling_dir``.
+
+    The atlas snap-rate denominator is the number of called PAS on both the
+    positive (``*.pos.bed``) and negative (``*.neg.bed``) strands. Counting a
+    single strand understates the denominator and inflates the reported snap
+    rate (bug D1). Returns 0 if the directory is unreadable.
+    """
+    try:
+        return sum(
+            1
+            for pattern in ("*.pos.bed", "*.neg.bed")
+            for b in Path(peakcalling_dir).glob(pattern)
+            for line in open(b)
+            if line.strip()
+        )
+    except OSError:
+        return 0
+
+
 # ===========================================================================
 # `ema run` — the main pipeline (single- or multi-sample)
 # ===========================================================================
@@ -330,18 +350,27 @@ def _render_atlas_snap_diag(
 ) -> None:
     try:
         snapped, distances = parse_atlas_mapping(output_dir / "unified" / "atlas_mapping.tsv")
-        try:
-            all_called = sum(
-                1
-                for b in (output_dir / "peakcalling").glob("*.pos.bed")
-                for line in open(b)
-                if line.strip()
+        # D1 fix: the snap-rate denominator must count ALL called PAS on BOTH
+        # strands. The old glob only read ``*.pos.bed`` (positive strand), which
+        # understated ``all_called`` — and the subsequent ``max(0, ...)`` clamp
+        # then hid the resulting ``snapped > all_called`` inconsistency, pinning
+        # the reported snap rate near 100%. Glob both strands and drop the clamp.
+        all_called = count_called_pas(output_dir / "peakcalling")
+        # Invariant: every snapped PAS is a called PAS, so snapped <= all_called.
+        # If this fails the denominator is incomplete (missing BED files) — surface
+        # it loudly rather than silently clamping unsnapped to 0.
+        unsnapped = all_called - snapped
+        if unsnapped < 0:
+            log.warning(
+                "atlas_snap_diag: snapped=%d exceeds all_called=%d — snap-rate "
+                "denominator is incomplete (missing peakcalling BEDs?); reporting "
+                "unsnapped=0 but the rate is unreliable.",
+                snapped, all_called,
             )
-        except OSError:
-            all_called = 0
+            unsnapped = 0
         stats = {
             "snapped": snapped,
-            "unsnapped": max(0, all_called - snapped),
+            "unsnapped": unsnapped,
             "snap_distances": distances,
         }
         w = render_all("atlas_snap_diag", stats, top_figs / "atlas_snap", engines=engines)
