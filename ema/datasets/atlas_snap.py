@@ -57,6 +57,16 @@ def snap_beds_to_atlas(
 
     # Step 1: Build concatenated input BED with encoded names
     # col 4 = {dataset_id}::{pasnumber}
+    #
+    # D2 fix: `bedtools closest -s -d` below measures distance between the
+    # FULL peak interval and the atlas. A wider peak is mechanically closer to
+    # some atlas entry, so the reported distance scores peak WIDTH, not PAS
+    # accuracy (see scripts/bench_summit_vs_atlas.py). The polyadenylation
+    # site is the peak's 3' end, so we collapse each peak to a 1bp summit
+    # interval (end-1 on "+", start on "-") here, before it ever reaches
+    # bedtools. Everything downstream — sort, closest, distance filtering,
+    # mapping, and the atlas coordinates written to the outputs — is
+    # unchanged; only the distance measurement now reflects the summit.
     with open(input_bed, "w") as out:
         for bed_path, dataset_id in zip(bed_paths, dataset_ids):
             bed_path = Path(bed_path)
@@ -71,9 +81,15 @@ def snap_beds_to_atlas(
                     chrom, start, end, pasnumber, score, strand = (
                         parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
                     )
+                    try:
+                        start_i, end_i = int(start), int(end)
+                    except ValueError:
+                        continue  # unparseable coordinates; skip this row
+                    # 3' summit: "+" -> last base (end-1); "-" -> first base (start)
+                    summit = end_i - 1 if strand == "+" else start_i
                     encoded_name = f"{dataset_id}::{pasnumber}"
                     out.write(
-                        f"{chrom}\t{start}\t{end}\t{encoded_name}\t{score}\t{strand}\n"
+                        f"{chrom}\t{summit}\t{summit + 1}\t{encoded_name}\t{score}\t{strand}\n"
                     )
 
     # Step 2: Sort input BED and atlas BED
