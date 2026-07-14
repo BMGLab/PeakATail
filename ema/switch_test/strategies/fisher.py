@@ -68,6 +68,7 @@ class FisherStrategy(DiffAPAStrategy):
         min_cells_per_group: int = 10,
         pas_gene_map: dict[str, str] | None = None,
         n_jobs: int = -1,  # Fisher is fast; n_jobs is accepted but unused.
+        count_mode: str = "cells",
     ) -> pd.DataFrame:
         """Run Fisher exact test for differential PAS usage.
 
@@ -150,36 +151,59 @@ class FisherStrategy(DiffAPAStrategy):
                     continue
                 pas_by_gene.setdefault(str(g), []).append(p)
 
+        # D4: by default the 2x2 table counts CELLS, not reads. Read counts
+        # within a cell are correlated, so a read-based table pseudoreplicates
+        # (significance scales with sequencing depth: Spearman(cells, %sig)=+0.68
+        # on real data). ``count_mode="cells"`` (default) builds the table from
+        # per-cell detection among gene-expressing cells — each cell counted once.
+        # ``count_mode="reads"`` restores the legacy (pseudoreplicated) behaviour.
+        # NOTE: this changes reported significance; magnitude effect needs the
+        # no-atlas re-run to characterise (flagged).
+        if count_mode not in ("cells", "reads"):
+            raise ValueError(f"count_mode must be 'cells' or 'reads', got {count_mode!r}")
+
         results: list[dict] = []
         for gene_id, pas_in_gene in pas_by_gene.items():
             if len(pas_in_gene) < 2:
                 continue  # need >=2 PAS in the gene to compare within-gene
+
+            # Reads columns are always reported (for reference), but the TABLE +
+            # proportions use the chosen count_mode.
             gene_reads_c1 = int(sum(int(agg1[p]) for p in pas_in_gene))
             gene_reads_c2 = int(sum(int(agg2[p]) for p in pas_in_gene))
-            if gene_reads_c1 + gene_reads_c2 == 0:
+            if count_mode == "cells":
+                gene_total_c1 = int((cm1[pas_in_gene] > 0).any(axis=1).sum())
+                gene_total_c2 = int((cm2[pas_in_gene] > 0).any(axis=1).sum())
+            else:
+                gene_total_c1, gene_total_c2 = gene_reads_c1, gene_reads_c2
+            if gene_total_c1 + gene_total_c2 == 0:
                 continue
 
             for p in pas_in_gene:
                 reads_p_c1 = int(agg1[p])
                 reads_p_c2 = int(agg2[p])
-                # Skip PAS with zero reads in BOTH clusters of the gene
-                # (uninformative).
-                if reads_p_c1 + reads_p_c2 == 0:
+                if count_mode == "cells":
+                    count_p_c1 = int(expr1[p])
+                    count_p_c2 = int(expr2[p])
+                else:
+                    count_p_c1, count_p_c2 = reads_p_c1, reads_p_c2
+                # Skip PAS uninformative in BOTH clusters of the gene.
+                if count_p_c1 + count_p_c2 == 0:
                     continue
-                other_c1 = gene_reads_c1 - reads_p_c1
-                other_c2 = gene_reads_c2 - reads_p_c2
-                table = np.array([[reads_p_c1, reads_p_c2],
+                other_c1 = gene_total_c1 - count_p_c1
+                other_c2 = gene_total_c2 - count_p_c2
+                table = np.array([[count_p_c1, count_p_c2],
                                   [other_c1,   other_c2]])
                 odds_ratio, pvalue = fisher_exact(table, alternative="two-sided")
 
-                # Within-gene proportions (always sum to 1 across a gene's PAS).
-                prop1 = reads_p_c1 / gene_reads_c1 if gene_reads_c1 > 0 else 0.0
-                prop2 = reads_p_c2 / gene_reads_c2 if gene_reads_c2 > 0 else 0.0
+                # Within-gene proportions in the chosen unit (cells or reads).
+                prop1 = count_p_c1 / gene_total_c1 if gene_total_c1 > 0 else 0.0
+                prop2 = count_p_c2 / gene_total_c2 if gene_total_c2 > 0 else 0.0
                 delta_prop = prop1 - prop2
 
-                # log2fc of within-gene proportion.  eps prevents log(0) while
-                # keeping the value finite when one cluster has no reads at p.
-                eps = 1.0 / max(gene_reads_c1 + 1, gene_reads_c2 + 1)
+                # log2fc of the within-gene proportion.  eps prevents log(0)
+                # while keeping the value finite when one cluster is empty.
+                eps = 1.0 / max(gene_total_c1 + 1, gene_total_c2 + 1)
                 log2fc = float(np.log2((prop2 + eps) / (prop1 + eps)))
 
                 results.append({
