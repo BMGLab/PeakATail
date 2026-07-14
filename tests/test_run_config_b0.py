@@ -10,17 +10,26 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ema.config import set_directory_config
 from ema.outputs import OutputManager, build_resolved_run_config
+
+# NOTE: ema.config is imported at FUNCTION scope in each test, not at module
+# level. Another test in the suite (test_resource_manager) pops
+# sys.modules["ema.config"] in teardown, so a module-level binding would go
+# stale: the next `from ema.config import directory_config` inside
+# build_resolved_run_config re-imports a FRESH module with a different singleton.
+# Importing inside the test guarantees set + read hit the same current module.
+# The production path never swaps the module, so this only affects test isolation.
 
 
 def test_resolved_config_captures_atlas_and_inputs(tmp_path: Path) -> None:
+    import ema.config as cfg
+
     atlas = tmp_path / "atlas.bed"
     atlas.write_text("chr1\t100\t101\tA1\t0\t+\n")
     gtf = tmp_path / "genes.gtf"
     gtf.write_text("# gtf\n")
 
-    set_directory_config(
+    cfg.set_directory_config(
         output_dir=tmp_path / "run",
         atlas=str(atlas),
         atlas_distance=42,
@@ -41,10 +50,12 @@ def test_resolved_config_captures_atlas_and_inputs(tmp_path: Path) -> None:
 
 
 def test_save_run_config_writes_json_with_resolved_atlas(tmp_path: Path) -> None:
+    import ema.config as cfg
+
     atlas = tmp_path / "atlas.bed"
     atlas.write_text("chr1\t100\t101\tA1\t0\t+\n")
     out = tmp_path / "run2"
-    set_directory_config(output_dir=out, atlas=str(atlas), atlas_distance=7)
+    cfg.set_directory_config(output_dir=out, atlas=str(atlas), atlas_distance=7)
     out.mkdir(parents=True, exist_ok=True)
 
     mgr = OutputManager(base_dir=str(out))
