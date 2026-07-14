@@ -108,11 +108,14 @@ class OutputManager:
         *,
         stage: str,
         fmt: str,
-        schema: str | None = None,
-        n_rows: int | None = None,
+        schema_name: str,
+        schema_version: str = "0.1.0",
+        entity_counts: dict | None = None,
     ) -> None:
         """Register one produced artifact for the run manifest (E2).
 
+        Fields conform to peakatail_contract.models.Artifact:
+        ``path, stage, format, schema_name, schema_version, entity_counts``.
         ``path`` is stored relative to the run root when possible so the
         manifest is relocatable.
         """
@@ -125,8 +128,9 @@ class OutputManager:
                 "path": rel,
                 "stage": stage,
                 "format": fmt,
-                "schema": schema,
-                "n_rows": n_rows,
+                "schema_name": schema_name,
+                "schema_version": schema_version,
+                "entity_counts": entity_counts or {},
             }
         )
 
@@ -134,68 +138,113 @@ class OutputManager:
         """Best-effort scan of the run root for standard artifacts (E2).
 
         Complements explicit ``register_artifact`` calls so the manifest is
-        useful even where registration isn't threaded through. Patterns map to
-        (stage, format, schema@version).
+        useful even where registration isn't threaded through. Emits
+        contract-conformant Artifact dicts (format is a Format enum value).
         """
+        # (rel_path, stage, format, schema_name)
         patterns = [
-            ("unified/pas_uid.tsv", "ids", "tsv", "pas_uid@1"),
-            ("unified/atlas_mapping.tsv", "atlas_snap", "tsv", "atlas_mapping@2"),
-            ("unified/multi_sample_pas_mapping.tsv", "pas_merge", "tsv", "pas_mapping@2"),
-            ("provenance/pas_ledger.tsv", "provenance", "tsv", "pas_ledger@1"),
-            ("provenance/cell_ledger.tsv", "provenance", "tsv", "cell_ledger@1"),
-            ("run_config.json", "run", "json", "run_config@1"),
+            ("unified/pas_uid.tsv", "unified", "tsv", "pas_uid"),
+            ("unified/atlas_mapping.tsv", "atlas_snap", "tsv", "atlas_mapping"),
+            ("unified/multi_sample_pas_mapping.tsv", "pas_merge", "tsv", "pas_mapping"),
+            ("provenance/pas_ledger.tsv", "provenance", "tsv", "PasLedgerRow"),
+            ("provenance/cell_ledger.tsv", "provenance", "tsv", "CellLedgerRow"),
+            ("run_config.json", "run", "json", "run_config"),
         ]
         found: list[dict] = []
         base = Path(self.base_dir)
         seen = {a["path"] for a in self._artifacts}
-        for rel, stage, fmt, schema in patterns:
-            if (base / rel).exists() and rel not in seen:
-                found.append(
-                    {"path": rel, "stage": stage, "format": fmt,
-                     "schema": schema, "n_rows": None}
-                )
+
+        def _emit(rel, stage, fmt, schema_name):
+            if rel in seen:
+                return
+            found.append({
+                "path": rel, "stage": stage, "format": fmt,
+                "schema_name": schema_name, "schema_version": "0.1.0",
+                "entity_counts": {},
+            })
+
+        for rel, stage, fmt, schema_name in patterns:
+            if (base / rel).exists():
+                _emit(rel, stage, fmt, schema_name)
         # Per-dataset clustering h5ads + stage stats.
         clustering = base / "07_clustering"
         if clustering.exists():
             for h5ad in sorted(clustering.glob("*/clusters.h5ad")):
-                found.append({
-                    "path": os.path.relpath(h5ad, self.base_dir),
-                    "stage": "clustering", "format": "h5ad",
-                    "schema": "clusters@1", "n_rows": None,
-                })
+                _emit(os.path.relpath(h5ad, self.base_dir),
+                      "clustering", "h5ad", "clusters.h5ad")
             for ss in sorted(clustering.glob("*/stage_stats.json")):
-                found.append({
-                    "path": os.path.relpath(ss, self.base_dir),
-                    "stage": "qc", "format": "json",
-                    "schema": "stage_stats@1", "n_rows": None,
-                })
+                _emit(os.path.relpath(ss, self.base_dir),
+                      "qc", "json", "stage_stats")
         return found
+
+    @staticmethod
+    def _datasets_from_config(resolved_config: dict) -> list[dict]:
+        """Build contract DatasetRef dicts from the resolved config (E2).
+
+        Defensive against the several dataset dict shapes the config may use
+        ({id/dataset_id/name}, {bams/bam_paths}).
+        """
+        raw = (resolved_config.get("directories", {}) or {}).get("datasets", []) or []
+        out: list[dict] = []
+        for ds in raw:
+            if isinstance(ds, dict):
+                ds_id = ds.get("id") or ds.get("dataset_id") or ds.get("name")
+                bams = ds.get("bams") or ds.get("bam_paths") or []
+                label = ds.get("label")
+                if ds_id is None:
+                    continue
+                out.append({
+                    "dataset_id": str(ds_id),
+                    "bam_paths": [str(b) for b in bams] if isinstance(bams, (list, tuple)) else [str(bams)],
+                    "label": label,
+                })
+            elif isinstance(ds, str):
+                out.append({"dataset_id": ds, "bam_paths": [], "label": None})
+        return out
 
     def write_manifest(
         self,
         resolved_config: dict,
         *,
+        run_id: str | None = None,
         stratum_to_label: dict | None = None,
+        entity_counts: dict | None = None,
         contract_version: str = "0.1.0",
     ) -> str:
         """Write ``run_manifest.json`` (E2) at the run root and return its path.
 
-        Contents:
+        The written object conforms to ``peakatail_contract.models.RunManifest``
+        (frozen v0.1.0), i.e. it parses+validates cleanly there:
+          * ``run_id`` / ``root`` — run identity (root = absolute run dir).
           * ``contract_version`` (semver) — the hub validates against this.
-          * ``artifacts`` — registered + auto-discovered (path/stage/format/
-            schema@version/n_rows).
+          * ``datasets`` — DatasetRef list derived from the resolved config.
+          * ``artifacts`` — registered + auto-discovered Artifact dicts
+            (path/stage/format/schema_name/schema_version/entity_counts).
           * ``resolved_config`` — the RESOLVED run config (B0), never argparse
-            defaults.
-          * ``id_grammar`` — the stable-ID space grammar.
+            defaults; the ONLY config surface the hub reads.
           * ``stratum_to_label`` — full celltype labels for truncated stratum
             dir names (fixes D10's 48-char truncation join break).
+          * ``entity_counts`` — run-level totals for the QC funnel.
+
+        ``id_grammar`` is written as an extra, informational field (ignored by
+        the contract model, which does not forbid extras).
         """
+        base = Path(self.base_dir)
         artifacts = list(self._artifacts) + self._auto_discover_artifacts()
+        datasets = self._datasets_from_config(resolved_config)
+        counts = dict(entity_counts or {})
+        counts.setdefault("n_datasets", len(datasets))
         manifest = {
+            "run_id": run_id or base.name or str(base),
+            "root": str(base.resolve()),
             "contract_version": contract_version,
             "timestamp": datetime.now().isoformat(),
+            "datasets": datasets,
             "artifacts": artifacts,
             "resolved_config": resolved_config,
+            "stratum_to_label": stratum_to_label or {},
+            "entity_counts": counts,
+            # informational only (not a contract field; extras are ignored)
             "id_grammar": {
                 "pas_uid": "chrom:pos:strand (pos = end-1 on +, start on -)",
                 "cell_uid": "{dataset_id}:{barcode}",
@@ -203,7 +252,6 @@ class OutputManager:
                 "canonical_cluster": "shared int across datasets (obs column)",
                 "finding_uid": "{arm}:{celltype}:{gene_id}",
             },
-            "stratum_to_label": stratum_to_label or {},
         }
         path = os.path.join(self.base_dir, "run_manifest.json")
         with open(path, "w") as f:

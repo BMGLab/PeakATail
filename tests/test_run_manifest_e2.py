@@ -1,40 +1,66 @@
-"""E2: run_manifest.json — the contract artifact the hub indexes."""
+"""E2: run_manifest.json — the contract artifact the hub indexes.
+
+Conforms to peakatail_contract.models.RunManifest (frozen v0.1.0).
+"""
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 from ema.outputs import OutputManager
 
+# The frozen contract package lives in the sibling hub repo. If it (and pydantic)
+# can be imported, we additionally assert the manifest parses cleanly there.
+_CONTRACT_SRC = Path("/home/user/D/peakatail-hub/packages/contract/src")
 
-def test_manifest_has_contract_version_and_id_grammar(tmp_path: Path) -> None:
-    mgr = OutputManager(base_dir=str(tmp_path))
-    path = mgr.write_manifest({"directories": {"atlas": "a.bed"}})
+
+def _contract_available() -> bool:
+    if not _CONTRACT_SRC.exists():
+        return False
+    import sys
+    if str(_CONTRACT_SRC) not in sys.path:
+        sys.path.insert(0, str(_CONTRACT_SRC))
+    return importlib.util.find_spec("peakatail_contract") is not None and \
+        importlib.util.find_spec("pydantic") is not None
+
+
+def test_manifest_has_run_identity_and_id_grammar(tmp_path: Path) -> None:
+    run = tmp_path / "run_TS"
+    run.mkdir()
+    mgr = OutputManager(base_dir=str(run))
+    path = mgr.write_manifest({"directories": {"atlas": "a.bed", "datasets": []}})
     data = json.loads(Path(path).read_text())
+    assert data["run_id"] == "run_TS"
+    assert data["root"] == str(run.resolve())
     assert data["contract_version"] == "0.1.0"
     assert data["resolved_config"]["directories"]["atlas"] == "a.bed"
-    assert "pas_uid" in data["id_grammar"]
     assert data["id_grammar"]["cell_uid"] == "{dataset_id}:{barcode}"
-    assert data["stratum_to_label"] == {}
+    assert data["entity_counts"]["n_datasets"] == 0
 
 
-def test_register_and_stratum_to_label(tmp_path: Path) -> None:
+def test_register_artifact_and_datasets(tmp_path: Path) -> None:
     mgr = OutputManager(base_dir=str(tmp_path))
     art = tmp_path / "unified" / "concatenated.mtx"
     art.parent.mkdir(parents=True)
     art.write_text("%%MatrixMarket\n")
-    mgr.register_artifact(str(art), stage="merge", fmt="mtx", schema="counts@1", n_rows=5)
+    mgr.register_artifact(
+        str(art), stage="merge", fmt="mtx", schema_name="counts",
+        entity_counts={"n_pas": 5},
+    )
     path = mgr.write_manifest(
-        {"filters": {"min_read": 1500}},
-        stratum_to_label={"CD8_T_cells_effector_memory_termi": "CD8 T cells effector memory terminally differentiated"},
+        {"directories": {"datasets": [{"id": "dsA", "bams": ["a.bam"]}]}},
+        stratum_to_label={"CD8_trunc": "CD8 T cells effector memory"},
     )
     data = json.loads(Path(path).read_text())
-    paths = {a["path"] for a in data["artifacts"]}
-    assert "unified/concatenated.mtx" in paths
     reg = next(a for a in data["artifacts"] if a["path"] == "unified/concatenated.mtx")
-    assert reg["n_rows"] == 5 and reg["schema"] == "counts@1"
-    # D10: full label recoverable from truncated stratum dir name.
-    assert data["stratum_to_label"]["CD8_T_cells_effector_memory_termi"].startswith("CD8 T cells")
+    assert reg["schema_name"] == "counts"
+    assert reg["schema_version"] == "0.1.0"
+    assert reg["entity_counts"] == {"n_pas": 5}
+    assert data["datasets"] == [{"dataset_id": "dsA", "bam_paths": ["a.bam"], "label": None}]
+    assert data["stratum_to_label"]["CD8_trunc"].startswith("CD8 T cells")
 
 
 def test_auto_discovers_standard_artifacts(tmp_path: Path) -> None:
@@ -48,3 +74,29 @@ def test_auto_discovers_standard_artifacts(tmp_path: Path) -> None:
     paths = {a["path"] for a in data["artifacts"]}
     assert "unified/pas_uid.tsv" in paths
     assert "provenance/pas_ledger.tsv" in paths
+    # format values must be contract Format enum members
+    assert {a["format"] for a in data["artifacts"]} <= {"bed", "mtx", "tsv", "h5ad", "parquet", "json"}
+
+
+@pytest.mark.skipif(not _contract_available(), reason="peakatail_contract/pydantic not importable")
+def test_manifest_parses_against_frozen_contract(tmp_path: Path) -> None:
+    from peakatail_contract.models import RunManifest  # type: ignore
+
+    run = tmp_path / "run_TS"
+    run.mkdir()
+    (run / "unified").mkdir()
+    (run / "unified" / "pas_uid.tsv").write_text("new_pas_id\tpas_uid\n1\tchr1:9:+\n")
+    mgr = OutputManager(base_dir=str(run))
+    mgr.register_artifact(
+        str(run / "unified" / "pas_uid.tsv"),
+        stage="unified", fmt="tsv", schema_name="pas_uid",
+    )
+    path = mgr.write_manifest(
+        {"directories": {"datasets": [{"id": "dsA", "bams": ["a.bam"]}]}},
+    )
+    data = json.loads(Path(path).read_text())
+    # Must construct without raising — extras (timestamp, id_grammar) are ignored.
+    manifest = RunManifest.model_validate(data)
+    assert manifest.run_id == "run_TS"
+    assert manifest.datasets[0].dataset_id == "dsA"
+    assert any(a.format.value == "tsv" for a in manifest.artifacts)
