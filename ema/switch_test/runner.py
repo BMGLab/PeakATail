@@ -99,6 +99,29 @@ def _dispatch_pair(
     )
 
 
+def _resolve_pasbed(h5ad_path: str, explicit: str | None = None) -> Path | None:
+    """Resolve the pasbed.bed for a clustered h5ad (B4).
+
+    Resolution order:
+      1. ``explicit`` (the user's ``--pasbed``) if it exists.
+      2. Walk up from the h5ad's directory (up to 4 levels) looking for a
+         ``pasbed.bed`` — the run layout puts it a sibling dir away from the
+         clustering h5ad, so a naive ``h5ad.parent/pasbed.bed`` misses it.
+    Returns the resolved ``Path`` or ``None`` if nothing is found.
+    """
+    if explicit:
+        p = Path(explicit)
+        if p.exists():
+            return p
+    search_root = Path(h5ad_path).resolve().parent
+    for _ in range(4):
+        candidate = search_root / "pasbed.bed"
+        if candidate.exists():
+            return candidate
+        search_root = search_root.parent
+    return None
+
+
 def run_diff(
     h5ad_paths: list[str],
     pasbed: str | None,
@@ -307,10 +330,15 @@ def run_diff(
                     "gene_id will be blank in differential TSVs."
                 )
 
-            # chrom/start/end/strand from pasbed.bed, if it exists next to the h5ad.
+            # chrom/start/end/strand from pasbed.bed.
+            # B4: honour the explicit --pasbed argument first, then resolve via
+            # the run layout (walk up from the h5ad). The old code hardcoded
+            # ``h5ad.parent/pasbed.bed`` and ignored the passed ``pasbed`` arg —
+            # under the current layout the pasbed is a sibling *dir* away, so the
+            # coordinate columns came back silently blank.
             _pasbed_cols: pd.DataFrame | None = None
-            _pasbed_path = Path(h5ad_path).parent / "pasbed.bed"
-            if _pasbed_path.exists():
+            _pasbed_path = _resolve_pasbed(h5ad_path, pasbed)
+            if _pasbed_path is not None and _pasbed_path.exists():
                 try:
                     _bed = pd.read_csv(
                         _pasbed_path,
