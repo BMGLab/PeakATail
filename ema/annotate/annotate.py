@@ -7,8 +7,8 @@ from scipy.io import mmwrite
 
 
 def annotate(sparse_matrix, pas_ids, collist, genes,
-             annotated_matrix=directory_config.annotated_matrix,
-             pasbed_dir=directory_config.pasbed,
+             annotated_matrix=None,
+             pasbed_dir=None,
              ):
     """Annotate PAS with gene assignments and filter the count matrix.
 
@@ -27,6 +27,17 @@ def annotate(sparse_matrix, pas_ids, collist, genes,
     Returns:
         AnnotatedResult: object with sparse_matrix, pas_ids, collist, gene_ids.
     """
+    # B2: resolve the output paths at CALL time, not at function-definition
+    # time. The old signature bound ``directory_config.annotated_matrix`` /
+    # ``.pasbed`` as default argument values, which captured the pre-
+    # ``set_directory_config`` ``emaout/`` defaults at import — so a run wrote
+    # stray shadow files (emaout/pasbed.bed, emaout/annotated_matrix.mtx) instead
+    # of into the timestamped run dir. Sentinels + call-time resolution fix this.
+    if annotated_matrix is None:
+        annotated_matrix = directory_config.annotated_matrix
+    if pasbed_dir is None:
+        pasbed_dir = directory_config.pasbed
+
     # Build a DataFrame index from PAS IDs -- DO NOT overwrite with range(1,N)
     # The PAS IDs from make_dataframe() are the actual MatrixMarket row indices
 
