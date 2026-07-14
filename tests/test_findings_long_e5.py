@@ -61,14 +61,16 @@ def test_findings_long_shape_keys_and_direction() -> None:
     assert r0["canonical_cluster"] == "A"
     assert r0["comparison_cluster"] == "B"
     assert r0["strategy"] == "fisher"
-    assert r0["direction"] == "undetermined"  # significant, polarity unknown
+    # single-PAS genes here → significance-based fallback basis
+    assert r0["direction_basis"] == "significance"
+    assert r0["direction"] == "undetermined"  # significant, single-PAS gene
     assert r0["n_reads"] == 40  # 30 + 10
     assert r0["n_cells_subject"] == 60
     assert r0["finding_uid"].startswith("switch_diff_fisher:fisher:A:1:chr1:109:+")
 
     r1 = out.iloc[1]
     assert r1["pas_uid"] == "chr2:200:-"  # - strand summit = start
-    assert r1["direction"] == "flat"  # q=0.95 not significant
+    assert r1["direction"] == "flat"  # q=0.95 not significant (single-PAS fallback)
     # every direction is one of the exhaustive enum values, never NA
     assert set(out["direction"]) <= {"shorten", "lengthen", "flat", "undetermined"}
 
@@ -133,3 +135,73 @@ def test_length_long_shannon_gene_level() -> None:
     assert out.iloc[0]["pas_uid"] is None
     assert out.iloc[0]["direction"] is None
     assert out.iloc[0]["canonical_cluster"] == "B"
+
+
+# --- D8 deterministic structural direction ---
+from ema.switch_test.long_output import structural_direction_by_gene
+
+
+def _gene_rows(strand, positions_deltas, qval=0.001):
+    """positions_deltas: list of (start,end,delta_proportion) for one gene."""
+    rows = []
+    for i, (s, e, d) in enumerate(positions_deltas):
+        rows.append({
+            "gene_id": "G", "chrom": "chr1", "start": str(s), "end": str(e),
+            "strand": strand, "delta_proportion": d, "qvalue": qval,
+        })
+    return rows
+
+
+def test_structural_plus_strand_distal_up_is_lengthen() -> None:
+    # + strand: distal = largest coordinate. Give the distal PAS a positive delta.
+    rows = _gene_rows("+", [(100, 110, -0.3), (500, 510, +0.4)])
+    assert structural_direction_by_gene(rows)["G"] == "lengthen"
+
+
+def test_structural_plus_strand_distal_down_is_shorten() -> None:
+    rows = _gene_rows("+", [(100, 110, +0.3), (500, 510, -0.4)])
+    assert structural_direction_by_gene(rows)["G"] == "shorten"
+
+
+def test_structural_minus_strand_distal_is_smallest_coord() -> None:
+    # - strand: distal = SMALLEST coordinate (farthest in transcription dir).
+    # distal PAS at start=100 with +delta → distal usage up → lengthen.
+    rows = _gene_rows("-", [(100, 110, +0.4), (500, 510, -0.3)])
+    assert structural_direction_by_gene(rows)["G"] == "lengthen"
+    # flip the distal delta sign → shorten
+    rows2 = _gene_rows("-", [(100, 110, -0.4), (500, 510, +0.3)])
+    assert structural_direction_by_gene(rows2)["G"] == "shorten"
+
+
+def test_structural_not_significant_is_flat() -> None:
+    rows = _gene_rows("+", [(100, 110, -0.3), (500, 510, +0.4)], qval=0.9)
+    assert structural_direction_by_gene(rows)["G"] == "flat"
+
+
+def test_structural_single_pas_gene_omitted() -> None:
+    rows = _gene_rows("+", [(100, 110, +0.4)])
+    assert "G" not in structural_direction_by_gene(rows)  # no structural call
+
+
+def test_structural_alternative_last_exon_ranks_by_3prime() -> None:
+    # Three PAS (tandem + ALE); distal is the farthest 3' one (end 900).
+    rows = _gene_rows("+", [(100, 110, +0.1), (500, 510, +0.1), (900, 910, +0.5)])
+    assert structural_direction_by_gene(rows)["G"] == "lengthen"
+
+
+def test_findings_long_two_pas_gene_gets_structural_basis() -> None:
+    df = pd.DataFrame({
+        "pas_id": ["1", "2"],
+        "gene_id": ["G", "G"],
+        "chrom": ["chr1", "chr1"],
+        "start": ["100", "500"],
+        "end": ["110", "510"],
+        "strand": ["+", "+"],
+        "pvalue": [0.001, 0.001],
+        "qvalue": [0.001, 0.001],
+        "delta_proportion": [-0.4, 0.4],  # distal (end 510) up → lengthen
+        "cluster1": ["A", "A"], "cluster2": ["B", "B"],
+    })
+    out = findings_long({("A", "B"): df}, strategy="fisher", arm="arm1")
+    assert set(out["direction"]) == {"lengthen"}
+    assert set(out["direction_basis"]) == {"structural"}

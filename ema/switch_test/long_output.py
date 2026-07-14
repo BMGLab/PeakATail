@@ -32,13 +32,14 @@ from ema.datasets.pas_merge import pas_uid_of
 
 log = logging.getLogger(__name__)
 
-# FindingRow column order (peakatail_contract.models.FindingRow).
+# FindingRow column order (peakatail_contract.models.FindingRow) + one extra
+# informational column (direction_basis) the contract ignores on validate().
 FINDING_LONG_COLUMNS = [
     "finding_uid", "pas_uid", "gene_id", "canonical_cluster", "comparison_cluster",
     "celltype", "strategy", "arm", "direction", "utr_class",
     "qvalue", "pvalue", "delta_proportion", "log2fc", "odds_ratio",
     "n_cells", "n_reads", "n_cells_subject", "n_cells_comparison",
-    "n_reads_subject", "n_reads_comparison",
+    "n_reads_subject", "n_reads_comparison", "direction_basis",
 ]
 
 _SEP = ":"
@@ -88,6 +89,78 @@ def classify_direction(qvalue, delta_proportion, fdr: float = 0.05) -> str:
     return "undetermined"  # significant, but shorten/lengthen polarity unknown
 
 
+def _summit_pos(start, end, strand):
+    """Strand-aware 3' summit position (contract ids.pas_summit_pos)."""
+    try:
+        s, e = int(start), int(end)
+    except (TypeError, ValueError):
+        return None
+    if strand == "+":
+        return e - 1
+    if strand == "-":
+        return s
+    return None
+
+
+def structural_direction_by_gene(rows, fdr: float = 0.05, eps: float = 1e-9) -> dict:
+    """Deterministic, geometry-derived 3'UTR direction per gene (D8).
+
+    Rank each gene's PAS by 3' position along the UTR (strand-aware): the
+    *distal* PAS is the one farthest in the transcription direction — largest
+    coordinate on ``+``, smallest on ``-``. The gene's direction is the sign of
+    the change in **distal** PAS usage between the two compared groups:
+    Δdistal > 0 → ``lengthen``, < 0 → ``shorten``, ≈ 0 or not significant →
+    ``flat``, and ``undetermined`` when the geometry is unresolvable (single-PAS
+    gene, missing coordinates, or no usage delta).
+
+    Δdistal is taken from the distal PAS's ``delta_proportion`` (proportion delta
+    of subject − comparison group) when present, else its ``log2fc``. This is
+    definitional geometry, NOT fitted biology — mark rows ``direction_basis=
+    "structural"``; the *magnitude/significance calibration* still wants a real
+    no-atlas re-run.
+
+    Returns ``{gene_id: direction}``.
+    """
+    by_gene: dict[str, list[dict]] = {}
+    for r in rows:
+        gid = str(r.get("gene_id", "") or "")
+        if not gid:
+            continue
+        by_gene.setdefault(gid, []).append(r)
+
+    out: dict[str, str] = {}
+    for gid, grows in by_gene.items():
+        # PAS with resolvable geometry.
+        located = []
+        for r in grows:
+            pos = _summit_pos(r.get("start"), r.get("end"), r.get("strand"))
+            if pos is not None and r.get("strand") in ("+", "-"):
+                located.append((pos, r))
+        if len(located) < 2:
+            # Single-PAS / unlocated gene has no distal-vs-proximal contrast — no
+            # structural call is possible; omit it so the caller falls back to the
+            # significance-based classifier for these rows.
+            continue
+        strand = located[0][1].get("strand")
+        # Distal = farthest in transcription direction.
+        distal = (max if strand == "+" else min)(located, key=lambda t: t[0])[1]
+        d = _finite(distal.get("delta_proportion"))
+        if d is None:
+            d = _finite(distal.get("log2fc"))
+        q = _finite(distal.get("qvalue"))
+        if d is None:
+            out[gid] = "undetermined"
+        elif q is not None and q >= fdr:
+            out[gid] = "flat"
+        elif abs(d) <= eps:
+            out[gid] = "flat"
+        elif d > 0:
+            out[gid] = "lengthen"   # distal usage up → longer 3'UTR
+        else:
+            out[gid] = "shorten"    # distal usage down → shorter 3'UTR
+    return out
+
+
 def _canon(label, canonical_map) -> str:
     if canonical_map and label in canonical_map:
         return str(canonical_map[label])
@@ -115,10 +188,24 @@ def findings_long(
             continue
         canon_subj = _canon(c1, canonical_map)
         canon_comp = _canon(c2, canonical_map)
-        for r in df.to_dict("records"):
+        recs = df.to_dict("records")
+        # D8: deterministic per-gene structural direction for THIS comparison.
+        gene_dir = structural_direction_by_gene(recs, fdr=fdr)
+        for r in recs:
             pas_id = str(r.get("pas_id", ""))
             puid = _pas_uid_for_row(r.get("chrom"), r.get("start"), r.get("end"), r.get("strand"))
-            direction = classify_direction(r.get("qvalue"), r.get("delta_proportion"), fdr)
+            gid = str(r.get("gene_id", "") or "")
+            # Structural direction (geometry) where the gene had ≥2 located PAS;
+            # else fall back to the conservative significance-only classifier.
+            _sdir = gene_dir.get(gid)
+            if _sdir is not None:
+                direction = _sdir
+                direction_basis = "structural"
+            else:
+                direction = classify_direction(
+                    r.get("qvalue"), r.get("delta_proportion"), fdr
+                )
+                direction_basis = "significance"
             n_reads_1 = _finite(r.get("n_reads_pas_cluster1"))
             n_reads_2 = _finite(r.get("n_reads_pas_cluster2"))
             n_reads = None
@@ -146,6 +233,10 @@ def findings_long(
                 "n_cells_comparison": _as_int(r.get("n_cells_cluster2")),
                 "n_reads_subject": _as_int(r.get("n_reads_pas_cluster1")),
                 "n_reads_comparison": _as_int(r.get("n_reads_pas_cluster2")),
+                # How the direction was derived: "structural" (geometry, ≥2
+                # located PAS) or "significance" (single-PAS fallback). Geometry
+                # polarity is not yet calibrated on a real no-atlas re-run.
+                "direction_basis": direction_basis,
             })
     return pd.DataFrame(rows, columns=FINDING_LONG_COLUMNS)
 
