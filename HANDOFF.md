@@ -1,9 +1,9 @@
 # Engine branch handoff — `engine/bugfixes-e-series`
 
-Branch off `d8db1e9`. **30 atomic commits**, all with unit tests. Worktree:
+Branch off `d8db1e9`. **33 atomic commits**, all with unit tests. Worktree:
 `trees/engine-fixes`. Venv: `/home/user/PeakATail/.venv`.
 
-**Test status:** `797 passed, 4 skipped, 5 failed` (pytest, full suite).
+**Test status:** `802 passed, 4 skipped, 5 failed` (pytest, full suite).
 The 5 failures are **pre-existing at base `d8db1e9`** (verified against a temp
 base worktree) and unrelated to this branch:
 
@@ -35,8 +35,9 @@ base worktree) and unrelated to this branch:
 ### Write-side / contract
 - **E1** content-addressed `pas_uid = chrom:pos:strand` sidecar (`unified/pas_uid.tsv`).
 - **E2** `OutputManager → run_manifest.json`, conforming to frozen `peakatail_contract.RunManifest` (validated in the contract venv).
-- **E3** append-only pas/cell drop ledgers (`ema/provenance.py`, `record_drop`), **wired at atlas-snap AND the per-dataset cb_filter/pas_gene/preprocess drop sites**, with a reusable invariant checker `check_survivor_invariant()` + `surviving_count_from_tsv()`, self-checked per worker. Conforms to `PasLedgerRow`/`CellLedgerRow` column order.
+- **E3** append-only pas/cell drop ledgers (`ema/provenance.py`, `record_drop`), **wired at atlas-snap AND the per-dataset cb_filter/pas_gene/preprocess drop sites**, with a reusable invariant checker `check_survivor_invariant()` + `surviving_count_from_tsv()`, self-checked per worker. **Sidecar-then-reconcile:** each multiprocessing worker writes its own `provenance/` sidecar (no shared state); the parent (`main.py`, after the pool joins) calls `reconcile_dataset_ledgers()` — per-dataset `surviving PAS == n_vars(clusters.h5ad)` self-check + cohort concatenation into `provenance/by_dataset/` + `provenance/reconcile_summary.json`. Two-level model: the run-level atlas ledger and per-dataset ledgers answer different questions and are kept separate (never force-merged). Conforms to `PasLedgerRow`/`CellLedgerRow` column order.
 - **E5** `findings_long` (FindingRow) + `length_long` (LengthRow) producers; parquet with `.tsv` fallback (`pyarrow>=15` added to deps, fallback kept).
+- **E2 per-artifact content hash** — `run_manifest.json` artifact entries now carry `content_hash` (`"sha256:<hex>"`, streamed) so a consumer can detect a stale index when a referenced artifact changes but the manifest bytes don't. Rides as an extra key (contract ignores it on validate); **consuming it needs a contract `Artifact.content_hash` field bump — hub-team**.
 
 ### Statistics
 - **D4** fisher `count_mode` — **opt-in `"cells"`** (de-pseudoreplicated per-cell contingency among gene-expressing cells). **DEFAULT is `"reads"` (legacy, unchanged)**; `test_nb_regression` restored verbatim to base. See flag #3.
@@ -63,14 +64,16 @@ base worktree) and unrelated to this branch:
    wrap `ema/celltype/scoring.py` behind a loader + CLI; validate ARI/AMI on the
    real cohort.
 
-2. **E3 full cross-dataset run-level reconciliation.** Per-dataset ledgers
-   (`provenance/<ds_id>/`) + the per-dataset invariant (`surviving PAS ==
-   n_vars(clusters.h5ad)`) are wired and self-checked. A run-level merge of all
-   per-dataset ledgers + atlas-snap into one cohort `provenance/pas_ledger.tsv`
-   (and D10 `stratum_to_label` population, which is tied to A1 celltyping) needs
-   a real multi-sample run to exercise end-to-end. **Next step:** add a
-   post-cohort reconcile pass that concatenates `provenance/<ds>/*.tsv` +
-   the unified atlas-snap ledger; re-check the invariant per dataset.
+2. **E3 live cross-stage invariant on a REAL cohort run.** The
+   sidecar-then-reconcile machinery is fully wired and tested on a synthetic
+   2-dataset mini-run: per-dataset sidecars, `reconcile_dataset_ledgers()`, the
+   `surviving PAS == n_vars(clusters.h5ad)` self-check, cohort concatenation,
+   and `reconcile_summary.json`. What remains is **running it on a real
+   multi-sample cohort** to confirm the invariant holds on live data (and to
+   surface any drop site the accounting still misses). D10 `stratum_to_label`
+   population is tied to A1 celltyping. **Next step:** execute a real
+   multi-sample run; inspect `provenance/reconcile_summary.json` (`all_ok`) and
+   any per-dataset warning in the run log.
 
 3. **D4/D5 number-effect + default flip.** The per-cell fisher and split-select
    nb_multi are textbook-correct and landed as opt-in with synthetic tests, but
