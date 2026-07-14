@@ -108,5 +108,11 @@ class AtlasSnapDiagMatplotlib(VizStrategy):
             "n_unsnapped": unsnapped,
             "snap_rate": round(snapped / total, 4) if total > 0 else None,
             "n_snap_distances": len(distances),
+            # D3: snap_rate is coverage, not precision. Post-snap precision is
+            # circular (=1.0 by construction); benchmark the unsnapped set.
+            "caveat": (
+                "snap_rate is coverage, not precision; post-snap precision is "
+                "circular (=1.0). Benchmark the unsnapped set for a fair estimate."
+            ),
         })
         return paths
