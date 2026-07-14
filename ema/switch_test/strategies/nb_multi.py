@@ -229,6 +229,8 @@ class NbMultiStrategy(DiffAPAStrategy):
         cluster2: str | None = None,   # ignored for multi-condition
         min_cells_per_group: int = 10,
         n_jobs: int = -1,
+        sample_split: bool = False,
+        split_seed: int = 0,
         **_ignored,  # pas_gene_map is fisher-only
     ) -> pd.DataFrame:
         """Run NB omnibus test across all cluster levels.
@@ -256,6 +258,48 @@ class NbMultiStrategy(DiffAPAStrategy):
         common_idx = count_matrix.index.intersection(cluster_labels.index)
         mat = count_matrix.loc[common_idx]
         labs = cluster_labels.loc[common_idx]
+
+        # D5: the omnibus filter (which PAS are "testable") is decided on the
+        # SAME cells the LRT then tests — a selection/inference double-dip that
+        # inflates significance toward ~100%. ``sample_split=True`` removes it:
+        # partition cells 50/50 (deterministic, seeded), SELECT testable PAS on
+        # half A, and run the LRT (INFERENCE) on the disjoint half B. Default
+        # False (unchanged behaviour); enabling it changes reported numbers and
+        # halves power — characterise on the no-atlas re-run (flagged). Note this
+        # does NOT remove the upstream circularity of clusters being defined on
+        # the same counts; that must be split at clustering time.
+        if sample_split:
+            n = len(common_idx)
+            if n < 4:
+                raise ValueError("sample_split needs >=4 cells")
+            rng = np.random.RandomState(split_seed)
+            perm = rng.permutation(n)
+            half = n // 2
+            idx_A = common_idx[perm[:half]]
+            idx_B = common_idx[perm[half:]]
+            mat_A, labs_A = mat.loc[idx_A], labs.loc[idx_A]
+            # Selection on A: PAS with >= min_cells_per_group nonzero cells AND
+            # nonzero signal in >= 2 clusters (mirrors the per-PAS LRT filter).
+            selected: list = []
+            for p in mat.columns:
+                nz = mat_A[p].values > 0
+                if int(nz.sum()) < min_cells_per_group:
+                    continue
+                if labs_A[nz].nunique() < 2:
+                    continue
+                selected.append(p)
+            if not selected:
+                return pd.DataFrame(
+                    columns=["pvalue", "qvalue", "test_stat", "df",
+                             "dispersion", "n_cells"]
+                )
+            # Inference on the disjoint half B, restricted to selected PAS.
+            return self.test(
+                mat.loc[idx_B, selected], labs.loc[idx_B],
+                cluster1=cluster1, cluster2=cluster2,
+                min_cells_per_group=min_cells_per_group, n_jobs=n_jobs,
+                sample_split=False,
+            )
 
         cluster_cats = sorted(labs.unique().tolist())
         K = len(cluster_cats)
