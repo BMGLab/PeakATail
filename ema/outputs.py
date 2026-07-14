@@ -55,6 +55,8 @@ class OutputManager:
 
     def __init__(self, base_dir: str = "emaout") -> None:
         self.base_dir = base_dir
+        # E2: registered artifacts for run_manifest.json.
+        self._artifacts: list[dict] = []
         self.dirs = {
             "peak_calling": os.path.join(base_dir, "01_peak_calling"),
             "cb_filter": os.path.join(base_dir, "02_cb_filter"),
@@ -96,6 +98,117 @@ class OutputManager:
         path = os.path.join(self.base_dir, "run_config.json")
         with open(path, "w") as f:
             json.dump(config, f, indent=2, default=str)
+
+    # ------------------------------------------------------------------ #
+    # E2: run_manifest.json — the contract artifact the hub indexes.     #
+    # ------------------------------------------------------------------ #
+    def register_artifact(
+        self,
+        path: str,
+        *,
+        stage: str,
+        fmt: str,
+        schema: str | None = None,
+        n_rows: int | None = None,
+    ) -> None:
+        """Register one produced artifact for the run manifest (E2).
+
+        ``path`` is stored relative to the run root when possible so the
+        manifest is relocatable.
+        """
+        try:
+            rel = os.path.relpath(path, self.base_dir)
+        except ValueError:
+            rel = str(path)
+        self._artifacts.append(
+            {
+                "path": rel,
+                "stage": stage,
+                "format": fmt,
+                "schema": schema,
+                "n_rows": n_rows,
+            }
+        )
+
+    def _auto_discover_artifacts(self) -> list[dict]:
+        """Best-effort scan of the run root for standard artifacts (E2).
+
+        Complements explicit ``register_artifact`` calls so the manifest is
+        useful even where registration isn't threaded through. Patterns map to
+        (stage, format, schema@version).
+        """
+        patterns = [
+            ("unified/pas_uid.tsv", "ids", "tsv", "pas_uid@1"),
+            ("unified/atlas_mapping.tsv", "atlas_snap", "tsv", "atlas_mapping@2"),
+            ("unified/multi_sample_pas_mapping.tsv", "pas_merge", "tsv", "pas_mapping@2"),
+            ("provenance/pas_ledger.tsv", "provenance", "tsv", "pas_ledger@1"),
+            ("provenance/cell_ledger.tsv", "provenance", "tsv", "cell_ledger@1"),
+            ("run_config.json", "run", "json", "run_config@1"),
+        ]
+        found: list[dict] = []
+        base = Path(self.base_dir)
+        seen = {a["path"] for a in self._artifacts}
+        for rel, stage, fmt, schema in patterns:
+            if (base / rel).exists() and rel not in seen:
+                found.append(
+                    {"path": rel, "stage": stage, "format": fmt,
+                     "schema": schema, "n_rows": None}
+                )
+        # Per-dataset clustering h5ads + stage stats.
+        clustering = base / "07_clustering"
+        if clustering.exists():
+            for h5ad in sorted(clustering.glob("*/clusters.h5ad")):
+                found.append({
+                    "path": os.path.relpath(h5ad, self.base_dir),
+                    "stage": "clustering", "format": "h5ad",
+                    "schema": "clusters@1", "n_rows": None,
+                })
+            for ss in sorted(clustering.glob("*/stage_stats.json")):
+                found.append({
+                    "path": os.path.relpath(ss, self.base_dir),
+                    "stage": "qc", "format": "json",
+                    "schema": "stage_stats@1", "n_rows": None,
+                })
+        return found
+
+    def write_manifest(
+        self,
+        resolved_config: dict,
+        *,
+        stratum_to_label: dict | None = None,
+        contract_version: str = "0.1.0",
+    ) -> str:
+        """Write ``run_manifest.json`` (E2) at the run root and return its path.
+
+        Contents:
+          * ``contract_version`` (semver) — the hub validates against this.
+          * ``artifacts`` — registered + auto-discovered (path/stage/format/
+            schema@version/n_rows).
+          * ``resolved_config`` — the RESOLVED run config (B0), never argparse
+            defaults.
+          * ``id_grammar`` — the stable-ID space grammar.
+          * ``stratum_to_label`` — full celltype labels for truncated stratum
+            dir names (fixes D10's 48-char truncation join break).
+        """
+        artifacts = list(self._artifacts) + self._auto_discover_artifacts()
+        manifest = {
+            "contract_version": contract_version,
+            "timestamp": datetime.now().isoformat(),
+            "artifacts": artifacts,
+            "resolved_config": resolved_config,
+            "id_grammar": {
+                "pas_uid": "chrom:pos:strand (pos = end-1 on +, start on -)",
+                "cell_uid": "{dataset_id}:{barcode}",
+                "cluster_uid": "{dataset_id}:{leiden}",
+                "canonical_cluster": "shared int across datasets (obs column)",
+                "finding_uid": "{arm}:{celltype}:{gene_id}",
+            },
+            "stratum_to_label": stratum_to_label or {},
+        }
+        path = os.path.join(self.base_dir, "run_manifest.json")
+        with open(path, "w") as f:
+            json.dump(manifest, f, indent=2, default=str)
+        return path
 
 
 def build_resolved_run_config() -> dict:

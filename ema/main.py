@@ -257,6 +257,15 @@ def run(
             single_sample_h5ad=_pipeline_result.get("single_sample_h5ad"),
         )
 
+    # E2: write the run manifest — the contract artifact the hub indexes. Built
+    # from the RESOLVED config (B0) + auto-discovered artifacts + id grammar.
+    try:
+        from ema.outputs import OutputManager, build_resolved_run_config
+        _mgr = OutputManager(base_dir=str(directory_config.output_dir))
+        _mgr.write_manifest(build_resolved_run_config())
+    except Exception as _e:  # never fail a run over the manifest
+        log.warning("run_manifest.json write failed: %s", _e)
+
     return 0
 
 
