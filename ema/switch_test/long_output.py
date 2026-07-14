@@ -246,11 +246,89 @@ def _as_int(x):
     return int(f) if f is not None else None
 
 
-# LengthRow column order (peakatail_contract.models.LengthRow).
+# LengthRow column order (peakatail_contract.models.LengthRow) + the
+# informational ``direction_basis`` column the contract ignores on validate()
+# (same pattern as findings_long).
 LENGTH_LONG_COLUMNS = [
     "strategy", "gene_id", "transcript_id", "cell_uid", "canonical_cluster",
-    "value", "pas_uid", "rank", "direction",
+    "value", "pas_uid", "rank", "direction", "direction_basis",
 ]
+
+
+def structural_length_direction(
+    df: pd.DataFrame,
+    *,
+    strategy: str,
+    value_col: str,
+    gene_col: str = "gene_id",
+    cluster_col: str = "cluster",
+    rank_col: str | None = None,
+    eps: float = 1e-9,
+) -> dict:
+    """Deterministic 3'UTR shorten/lengthen call per (gene, cluster) — D8 length.
+
+    Geometry, not fitted biology: the "distal usage" of a gene in a cluster is
+    compared one-vs-rest against the gene's mean distal usage in every OTHER
+    cluster present in ``df``. The sign of that change is the direction:
+
+        Δdistal > 0  → ``lengthen`` (more distal PAS usage → longer 3'UTR)
+        Δdistal < 0  → ``shorten``
+        |Δdistal| ≈ 0 → ``flat``
+        gene in < 2 clusters (no contrast) → ``undetermined``
+
+    Distal usage per strategy:
+        * ``classic``  — ``value`` IS the PDUI (distal fraction); use it directly
+          (strand handled upstream in the PDUI computation).
+        * ``proportion`` — the distal PAS is the highest ``rank`` within the gene
+          (contract: proximal=0); distal usage = mean proportion of that PAS.
+        * ``shannon`` — entropy has no proximal/distal polarity → all
+          ``undetermined``.
+
+    Returns ``{(gene_id, cluster_label): direction}`` with the RAW cluster label
+    (caller maps to canonical). Values are the contract Direction enum strings.
+    """
+    import numpy as np
+
+    if strategy == "shannon":
+        return {}  # caller falls back to undetermined
+
+    work = df.copy()
+    work["_val"] = work[value_col].map(_finite)
+    work = work.dropna(subset=["_val"])
+    if work.empty:
+        return {}
+    work["_gene"] = work[gene_col].astype(str)
+    work["_clu"] = work[cluster_col].astype(str)
+
+    if strategy == "proportion":
+        if not rank_col or rank_col not in work.columns:
+            return {}  # can't identify the distal PAS without a rank
+        work["_rank"] = pd.to_numeric(work[rank_col], errors="coerce")
+        work = work.dropna(subset=["_rank"])
+        if work.empty:
+            return {}
+        # distal PAS = max rank within each gene.
+        distal_rank = work.groupby("_gene")["_rank"].transform("max")
+        work = work[work["_rank"] == distal_rank]
+
+    # distal usage per (gene, cluster) = mean of the distal-usage value.
+    usage = work.groupby(["_gene", "_clu"])["_val"].mean()
+
+    out: dict = {}
+    for gene, per_clu in usage.groupby(level=0):
+        clusters = per_clu.index.get_level_values(1)
+        if len(clusters) < 2:
+            for clu in clusters:
+                out[(gene, clu)] = "undetermined"
+            continue
+        total = float(per_clu.sum())
+        n = len(per_clu)
+        for (_, clu), subj in per_clu.items():
+            rest_mean = (total - float(subj)) / (n - 1)
+            delta = float(subj) - rest_mean
+            out[(gene, clu)] = ("lengthen" if delta > eps
+                                else "shorten" if delta < -eps else "flat")
+    return out
 
 
 def cell_uid(dataset_id: str, barcode: str) -> str:
@@ -289,10 +367,24 @@ def length_long(
     The ``_gene_`` isoform sentinel is normalized to ``None`` (contract: "no
     specific isoform" is an explicit null, not a fabricated transcript).
 
+    Direction (D8 length polarity) is the deterministic structural shorten/
+    lengthen call from :func:`structural_length_direction` — a one-vs-rest
+    Δdistal-usage sign per (gene, cluster), strand handled upstream. It is
+    stamped for ``classic`` (PDUI = distal fraction) and ``proportion`` (distal
+    = max-rank PAS); ``shannon`` (entropy, no polarity) stays ``undetermined``.
+    Rows carry ``direction_basis="structural"`` so downstream can distinguish
+    geometry from any future model-fitted direction.
+
     NOTE: not auto-wired into run_length yet — the per-strategy column names and
     cell→dataset namespacing need confirmation against real length outputs. This
     is the tested LengthRow producer for hub-team; wiring is flagged as follow-up.
     """
+    # Structural direction per (gene, RAW cluster label) for this length output.
+    dir_map = structural_length_direction(
+        df, strategy=strategy, value_col=value_col,
+        gene_col=gene_col, cluster_col=cluster_col, rank_col=rank_col,
+    )
+
     rows: list[dict] = []
     for r in df.to_dict("records"):
         transcript = None
@@ -305,19 +397,23 @@ def length_long(
         if pas_id is not None and pas_uid_map:
             puid = pas_uid_map.get(pas_id)
         rank = _as_int(r.get(rank_col)) if (rank_col and rank_col in r) else None
+        gene = str(r.get(gene_col, "") or "")
+        raw_clu = str(r.get(cluster_col, ""))
+        # Deterministic structural direction; "undetermined" (never NA-silent)
+        # when the gene lacks a >=2-cluster contrast or the strategy has no
+        # polarity axis (shannon).
+        direction = dir_map.get((gene, raw_clu), "undetermined")
         rows.append({
             "strategy": strategy,
-            "gene_id": str(r.get(gene_col, "") or ""),
+            "gene_id": gene,
             "transcript_id": transcript,
             "cell_uid": cell_uid(dataset_id, r.get(cell_col, "")),
             "canonical_cluster": _canon(r.get(cluster_col, ""), canonical_map),
             "value": _finite(r.get(value_col)),
             "pas_uid": puid,
             "rank": rank,
-            # Direction only for proportion (per-PAS) rows; left None otherwise
-            # (contract: classic/shannon are gene-level trends without a per-row
-            # direction). Polarity itself is a follow-up (needs isoform rank).
-            "direction": None,
+            "direction": direction,
+            "direction_basis": "structural",
         })
     return pd.DataFrame(rows, columns=LENGTH_LONG_COLUMNS)
 

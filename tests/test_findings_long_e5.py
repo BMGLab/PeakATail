@@ -133,7 +133,9 @@ def test_length_long_shannon_gene_level() -> None:
     out = length_long(df, strategy="shannon", value_col="entropy", dataset_id="dsA")
     assert out.iloc[0]["value"] == 1.2
     assert out.iloc[0]["pas_uid"] is None
-    assert out.iloc[0]["direction"] is None
+    # shannon (entropy) has no proximal/distal polarity → undetermined, never NA.
+    assert out.iloc[0]["direction"] == "undetermined"
+    assert out.iloc[0]["direction_basis"] == "structural"
     assert out.iloc[0]["canonical_cluster"] == "B"
 
 
@@ -205,3 +207,95 @@ def test_findings_long_two_pas_gene_gets_structural_basis() -> None:
     out = findings_long({("A", "B"): df}, strategy="fisher", arm="arm1")
     assert set(out["direction"]) == {"lengthen"}
     assert set(out["direction_basis"]) == {"structural"}
+
+
+# --- D8 length polarity: structural_length_direction (geneview-critical) ---
+from ema.switch_test.long_output import structural_length_direction
+
+
+def test_length_dir_classic_pdui_lengthen_and_shorten():
+    # PDUI = distal fraction. Cluster A high PDUI vs B low → A lengthens, B shortens
+    # (one-vs-rest Δdistal-usage sign). Strand handled upstream in PDUI.
+    df = pd.DataFrame({
+        "gene_id": ["G", "G"],
+        "cluster": ["A", "B"],
+        "pdui": [0.8, 0.2],
+        "cell": ["c1", "c2"],
+    })
+    dmap = structural_length_direction(df, strategy="classic", value_col="pdui")
+    assert dmap[("G", "A")] == "lengthen"
+    assert dmap[("G", "B")] == "shorten"
+
+
+def test_length_dir_classic_flat_when_equal():
+    df = pd.DataFrame({
+        "gene_id": ["G", "G"], "cluster": ["A", "B"],
+        "pdui": [0.5, 0.5], "cell": ["c1", "c2"],
+    })
+    dmap = structural_length_direction(df, strategy="classic", value_col="pdui")
+    assert dmap[("G", "A")] == "flat" and dmap[("G", "B")] == "flat"
+
+
+def test_length_dir_single_cluster_undetermined():
+    df = pd.DataFrame({"gene_id": ["G", "G"], "cluster": ["A", "A"],
+                       "pdui": [0.8, 0.6], "cell": ["c1", "c2"]})
+    dmap = structural_length_direction(df, strategy="classic", value_col="pdui")
+    assert dmap[("G", "A")] == "undetermined"  # no >=2-cluster contrast
+
+
+def test_length_dir_proportion_uses_distal_max_rank():
+    # Tandem 3'UTR: rank 0 = proximal, rank 1 = distal. Distal usage higher in A.
+    df = pd.DataFrame({
+        "gene_id": ["G", "G", "G", "G"],
+        "cluster": ["A", "A", "B", "B"],
+        "pas_id": ["p0", "p1", "p0", "p1"],
+        "rank": [0, 1, 0, 1],
+        "proportion": [0.3, 0.7, 0.8, 0.2],   # distal(rank1): A=0.7 vs B=0.2
+        "cell": ["c1", "c1", "c2", "c2"],
+    })
+    dmap = structural_length_direction(
+        df, strategy="proportion", value_col="proportion", rank_col="rank")
+    assert dmap[("G", "A")] == "lengthen"   # more distal usage
+    assert dmap[("G", "B")] == "shorten"
+
+
+def test_length_dir_proportion_needs_rank():
+    df = pd.DataFrame({"gene_id": ["G", "G"], "cluster": ["A", "B"],
+                       "proportion": [0.7, 0.2], "cell": ["c1", "c2"]})
+    # no rank_col → cannot identify distal PAS → empty map (rows → undetermined)
+    assert structural_length_direction(df, strategy="proportion",
+                                       value_col="proportion") == {}
+
+
+def test_length_dir_shannon_has_no_polarity():
+    df = pd.DataFrame({"gene_id": ["G", "G"], "cluster": ["A", "B"],
+                       "entropy": [1.2, 0.4], "cell": ["c1", "c2"]})
+    assert structural_length_direction(df, strategy="shannon", value_col="entropy") == {}
+
+
+def test_length_long_classic_stamps_structural_direction():
+    # End-to-end through length_long: classic PDUI, two clusters → real polarity.
+    df = pd.DataFrame({
+        "gene_id": ["G", "G"],
+        "transcript_id": ["_gene_", "_gene_"],
+        "cluster": ["A", "B"],
+        "pdui": [0.9, 0.1],
+        "cell": ["c1", "c2"],
+    })
+    out = length_long(df, strategy="classic", value_col="pdui", dataset_id="dsA")
+    by_clu = dict(zip(out["canonical_cluster"], out["direction"]))
+    assert by_clu["A"] == "lengthen" and by_clu["B"] == "shorten"
+    assert set(out["direction_basis"]) == {"structural"}
+    # direction is always a valid contract enum, never NA
+    assert set(out["direction"]) <= {"shorten", "lengthen", "flat", "undetermined"}
+
+
+def test_length_long_direction_never_na_any_strategy():
+    for strategy, vcol, extra in [
+        ("classic", "pdui", {}),
+        ("shannon", "entropy", {}),
+    ]:
+        df = pd.DataFrame({"gene_id": ["G"], "cluster": ["A"],
+                           vcol: [0.5], "cell": ["c1"]})
+        out = length_long(df, strategy=strategy, value_col=vcol, dataset_id="d")
+        assert out.iloc[0]["direction"] in {"shorten", "lengthen", "flat", "undetermined"}
