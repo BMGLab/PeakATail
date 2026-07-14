@@ -1088,6 +1088,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                     "Cross-dataset matching (%s): %d cluster entries -> %d canonical clusters",
                     args.cluster_match_method, len(match_df), n_canonical,
                 )
+                # B6: round-trip the canonical map back into each dataset's obs
+                # so cross-sample comparisons join on a shared id space instead
+                # of the per-sample (non-comparable) leiden labels.
+                from ema.clustering.cross_dataset.roundtrip import write_canonical_clusters
+                try:
+                    write_canonical_clusters(match_df, existing)
+                except (KeyError, OSError, ValueError) as e:
+                    log.warning(
+                        "canonical_cluster round-trip into obs skipped (%s): %s",
+                        type(e).__name__, e,
+                    )
             except (FileNotFoundError, KeyError, ValueError, OSError) as e:
                 log.warning(
                     "Cross-dataset matching skipped (%s): %s",
