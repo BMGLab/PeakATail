@@ -122,6 +122,69 @@ def _resolve_pasbed(h5ad_path: str, explicit: str | None = None) -> Path | None:
     return None
 
 
+def _resolve_pas_gene_map(h5ad_path: str) -> dict[str, str]:
+    """Resolve ``{pas_id: gene_id}`` for a clustered h5ad (B7).
+
+    Walks up from the h5ad directory (up to 5 levels) looking for a per-dataset
+    ``annotatedpas.bed`` (col4=pas_id, col7=gene_id) or ``pas_gene.tsv``
+    (pas_id<TAB>gene_id). Returns an empty dict if nothing is found. This is the
+    authoritative gene_id source; ``adata.var['gene_id']`` may be ~59% NaN after
+    an across-dataset concat (bug B7), so it must never be trusted alone.
+    """
+    search_root = Path(h5ad_path).resolve().parent
+    for _ in range(5):
+        annot = search_root / "annotatedpas.bed"
+        if annot.exists():
+            mapping: dict[str, str] = {}
+            try:
+                with open(annot) as fh:
+                    for line in fh:
+                        parts = line.rstrip("\n").split("\t")
+                        if len(parts) >= 7 and parts[6]:
+                            mapping[str(parts[3])] = parts[6]
+                if mapping:
+                    return mapping
+            except OSError:
+                pass
+        pg = search_root / "pas_gene.tsv"
+        if pg.exists():
+            mapping = {}
+            try:
+                with open(pg) as fh:
+                    for line in fh:
+                        parts = line.rstrip("\n").split("\t")
+                        if len(parts) >= 2 and parts[0] != "pas_id" and parts[1]:
+                            mapping[str(parts[0])] = parts[1]
+                if mapping:
+                    return mapping
+            except OSError:
+                pass
+        search_root = search_root.parent
+    return {}
+
+
+def _repair_gene_id(gene_id_map, pas_gene_map: dict[str, str]):
+    """Fill NaN/empty entries of a ``var['gene_id']`` Series from a pas_gene map.
+
+    Joins on the Series INDEX (var_names = pas_id), which is intact even when the
+    concat outer-join NaN'd the gene_id *column* (B7). Returns ``(repaired_series,
+    n_repaired)``.
+    """
+    import pandas as pd  # local import — heavy
+
+    series = gene_id_map.copy()
+    if not pas_gene_map:
+        return series, 0
+    is_missing = series.isna() | (series.astype(str).str.strip().isin(["", "nan", "None"]))
+    n_repaired = 0
+    for idx in series.index[is_missing]:
+        repl = pas_gene_map.get(str(idx))
+        if repl:
+            series.at[idx] = repl
+            n_repaired += 1
+    return series, n_repaired
+
+
 def run_diff(
     h5ad_paths: list[str],
     pasbed: str | None,
@@ -324,11 +387,34 @@ def run_diff(
             _gene_id_map: pd.Series | None = None
             if "gene_id" in adata.var.columns:
                 _gene_id_map = adata.var["gene_id"].copy()
+                # B7: adata.var['gene_id'] can be ~59% NaN after an across-dataset
+                # concat (outer join drops it for PAS absent in some datasets),
+                # which silently drops most genes from the findings. Repair the
+                # NaN entries from the authoritative per-dataset pas_gene mapping,
+                # joined on var_names (pas_id), which survives the concat.
+                _pas_gene_map = _resolve_pas_gene_map(h5ad_path)
+                _gene_id_map, _n_fixed = _repair_gene_id(_gene_id_map, _pas_gene_map)
+                if _n_fixed:
+                    log.info(
+                        "run_diff: repaired %d NaN gene_id entries from pas_gene map",
+                        _n_fixed,
+                    )
             else:
-                log.warning(
-                    "run_diff: adata.var has no 'gene_id' column; "
-                    "gene_id will be blank in differential TSVs."
-                )
+                # No column at all — rebuild it entirely from the pas_gene map.
+                _pas_gene_map = _resolve_pas_gene_map(h5ad_path)
+                if _pas_gene_map:
+                    _gene_id_map = pd.Series(
+                        {str(v): _pas_gene_map.get(str(v), "") for v in adata.var_names}
+                    )
+                    log.info(
+                        "run_diff: adata.var had no 'gene_id'; rebuilt %d entries "
+                        "from pas_gene map", len(_gene_id_map),
+                    )
+                else:
+                    log.warning(
+                        "run_diff: adata.var has no 'gene_id' column and no "
+                        "pas_gene map found; gene_id will be blank in TSVs."
+                    )
 
             # chrom/start/end/strand from pasbed.bed.
             # B4: honour the explicit --pasbed argument first, then resolve via
