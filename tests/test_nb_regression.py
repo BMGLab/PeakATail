@@ -334,13 +334,10 @@ class TestFisherInflation:
         fisher = get_diff_strategy("fisher")
         nb = get_diff_strategy("nb_pairwise")
 
-        # D4: read-based contingency is the pseudoreplicated (anti-conservative)
-        # one; the engine DEFAULT is now count_mode="cells" (calibrated), so this
-        # inflation regression explicitly pins the legacy 'reads' mode.
         fisher_results = fisher.test(
             count_matrix, cluster_labels,
             cluster1="cluster_A", cluster2="cluster_B",
-            min_cells_per_group=5, count_mode="reads",
+            min_cells_per_group=5,
         )
         nb_results = nb.test(
             count_matrix, cluster_labels,
@@ -372,13 +369,10 @@ class TestFisherInflation:
         fisher = get_diff_strategy("fisher")
         nb = get_diff_strategy("nb_pairwise")
 
-        # D4: read-based contingency is the pseudoreplicated (anti-conservative)
-        # one; the engine DEFAULT is now count_mode="cells" (calibrated), so this
-        # inflation regression explicitly pins the legacy 'reads' mode.
         fisher_results = fisher.test(
             count_matrix, cluster_labels,
             cluster1="cluster_A", cluster2="cluster_B",
-            min_cells_per_group=5, count_mode="reads",
+            min_cells_per_group=5,
         )
         nb_results = nb.test(
             count_matrix, cluster_labels,
