@@ -287,6 +287,35 @@ def run_one_dataset_downstream(
     with open(cluster_h5ad.parent / "clustering_stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
 
+    # B5: multi-sample runs previously emitted NO per-dataset stage funnel (the
+    # single-sample branch of main.py did, via output_mgr.save_stats). Write the
+    # per-dataset cell/PAS drop funnel so multi-sample cohort runs are auditable.
+    stage_stats: dict[str, Any] = {
+        "dataset_id": ds_id,
+        "cb_filter": {
+            "min_read": int(min_read),
+            "cells_kept": len(_kept_cbs),
+        },
+        "input_matrix": {
+            "input_pas": int(len(pas_ids)),
+            "cells": int(len(collist)),
+        },
+        "annotated": {
+            "annotated_pas": int(len(result.pas_ids)),
+            "cells": int(len(result.collist)),
+        },
+        "preprocessing": {
+            "final_cells": int(adata.n_obs),
+            "final_pas": int(adata.n_vars),
+            "min_cells": int(filter_min_cells),
+            "min_genes": int(filter_min_genes),
+        },
+    }
+    stage_stats_path = cluster_h5ad.parent / "stage_stats.json"
+    with open(stage_stats_path, "w") as fh:
+        json.dump(stage_stats, fh, indent=2)
+    log.info("%s per-dataset stage funnel -> %s", prefix, stage_stats_path)
+
     log.info("%s done — %d cells, %d PAS -> %s", prefix, adata.n_obs, adata.n_vars, cluster_h5ad)
     return stats
 
