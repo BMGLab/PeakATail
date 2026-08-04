@@ -269,6 +269,178 @@ def run(
     return 0
 
 
+# ---------------------------------------------------------------------------
+# D6: internal-priming (--ip-filter) / annotation (--annot-filter) filters.
+#
+# The filter LOGIC lives in ema.experimental.peak_filters / internal_priming
+# (pre-existing, not modified here). These two helpers are the wiring seam
+# that makes `ema run` actually invoke it:
+#
+#   * _validate_pas_filter_config() — fail loud, before any pipeline compute,
+#     if a filter is enabled but its required input is missing.
+#   * _apply_pas_filters(output_mgr) — apply the enabled filter(s) to
+#     directory_config.posbed / .negbed *in place*, at the one point common
+#     to both the single-sample and multi-sample paths: right after those
+#     BEDs hold their final pre-annotation PAS set and right before
+#     find_close() consumes them to build the gene-assignment DataFrame
+#     that annotate() joins the count matrix against. Filtering here means
+#     a dropped PAS is absent from `genes.index`, so annotate()'s
+#     `genes.index.intersection(pas_ids)` naturally drops it from the
+#     count matrix too — no other file needs touching.
+#
+# Both flags default to False, and this module is only imported when at
+# least one is enabled, so the default-off pipeline never enters this code
+# path at all — output is byte-identical to pre-D6 behaviour.
+# ---------------------------------------------------------------------------
+def _resolve_annotation_bed() -> str:
+    """Return the annotation BED source for --annot-filter.
+
+    Uses the explicit ``--annotation-bed`` override when given, otherwise
+    falls back to the GTF-derived gene BED that GTF preprocessing already
+    writes to ``directory_config.endbed`` (see ema/annotate/gtftobed.py).
+    """
+    override = getattr(args, "annotation_bed", None)
+    if override:
+        return str(override)
+    return str(directory_config.endbed)
+
+
+def _validate_pas_filter_config() -> None:
+    """Raise a clear error BEFORE running if --ip-filter / --annot-filter
+    are enabled but misconfigured. Never silently skips a requested filter.
+    """
+    import os
+
+    ip_filter = bool(getattr(args, "ip_filter", False))
+    annot_filter = bool(getattr(args, "annot_filter", False))
+    if not ip_filter and not annot_filter:
+        return
+
+    if ip_filter:
+        genome_fasta = getattr(args, "genome_fasta", None)
+        if not genome_fasta or not os.path.exists(genome_fasta):
+            raise ValueError(
+                "--ip-filter is enabled but --genome-fasta is missing or does "
+                f"not exist (got: {genome_fasta!r}). Provide a genome FASTA "
+                "indexed with pyfaidx (.fai) via --genome-fasta / YAML "
+                "`genome_fasta:`."
+            )
+
+    if annot_filter:
+        annotation_bed_override = getattr(args, "annotation_bed", None)
+        if annotation_bed_override:
+            if not os.path.exists(annotation_bed_override):
+                raise ValueError(
+                    "--annot-filter is enabled but --annotation-bed does not "
+                    f"exist: {annotation_bed_override!r}."
+                )
+        elif not directory_config.gtf_dir or not os.path.exists(str(directory_config.gtf_dir)):
+            # No explicit override and no GTF to derive one from at
+            # find_close() time -- the GTF-derived endbed cannot be produced.
+            raise ValueError(
+                "--annot-filter is enabled but no --annotation-bed was "
+                "given and no --gtf is set to derive one from. Provide "
+                "--annotation-bed or --gtf."
+            )
+
+
+def _apply_pas_filters(output_mgr) -> None:
+    """Apply the enabled PAS filter(s) to the pos/neg PAS BEDs, in place.
+
+    No-op — ema.experimental.peak_filters is not even imported — when both
+    --ip-filter and --annot-filter are off, so default-off runs take
+    exactly the pre-D6 code path.
+    """
+    import os
+
+    ip_filter = bool(getattr(args, "ip_filter", False))
+    annot_filter = bool(getattr(args, "annot_filter", False))
+    if not ip_filter and not annot_filter:
+        return
+
+    from ema.experimental.peak_filters import apply_filters
+
+    genome_fasta = getattr(args, "genome_fasta", None)
+    annotation_bed = _resolve_annotation_bed() if annot_filter else None
+
+    # Re-validate defensively: _validate_pas_filter_config() already ran at
+    # the top of the pipeline, but this function may also be called directly
+    # (e.g. from tests) without that pre-flight check having run first.
+    if ip_filter and (not genome_fasta or not os.path.exists(genome_fasta)):
+        raise ValueError(
+            "--ip-filter is enabled but --genome-fasta is missing or does "
+            f"not exist (got: {genome_fasta!r})."
+        )
+    if annot_filter and not os.path.exists(annotation_bed):
+        raise ValueError(
+            "--annot-filter is enabled but the resolved annotation BED does "
+            f"not exist: {annotation_bed!r} (provide --annotation-bed or --gtf)."
+        )
+
+    combined_stats: dict = {
+        "ip_filter": ip_filter,
+        "annot_filter": annot_filter,
+        "genome_fasta": genome_fasta if ip_filter else None,
+        "annotation_bed": annotation_bed if annot_filter else None,
+    }
+    filtered_any = False
+    for strand_label, bed_path in (
+        ("pos", directory_config.posbed),
+        ("neg", directory_config.negbed),
+    ):
+        bed_path = str(bed_path)
+        if not os.path.exists(bed_path) or os.path.getsize(bed_path) == 0:
+            # Nothing to filter for this strand (e.g. all-single-strand data).
+            combined_stats[strand_label] = {"total": 0, "passed": 0, "filtered": 0}
+            continue
+        tmp_out = bed_path + ".pas_filter_tmp"
+        stats = apply_filters(
+            input_bed=bed_path,
+            output_bed=tmp_out,
+            genome_fasta=genome_fasta,
+            annotation_bed=annotation_bed,
+            enable_internal_priming=ip_filter,
+            enable_annotation_filter=annot_filter,
+            ip_window_left=getattr(args, "ip_window_left", 10),
+            ip_window_right=getattr(args, "ip_window_right", 30),
+            ip_a_stretch=getattr(args, "ip_a_stretch", 6),
+            ip_a_fraction=getattr(args, "ip_a_fraction", 0.7),
+        )
+        os.replace(tmp_out, bed_path)
+        combined_stats[strand_label] = stats
+        filtered_any = True
+
+    # "peak_filters" is not one of OutputManager's pre-registered numbered
+    # stage dirs (self.dirs), so save_stats("peak_filters", ...) would raise
+    # KeyError. Use the existing pas_gene (04_pas_gene_assignment) stage dir
+    # instead -- filtering happens immediately before that stage -- via a
+    # distinctly-named file so it can't collide with pas_gene_stats.json.
+    _stats_path = output_mgr.path("pas_gene", "peak_filters_stats.json")
+    with open(_stats_path, "w") as _f:
+        json.dump(combined_stats, _f, indent=2)
+    # Register the rewritten pasbeds as filtered artifacts (best-effort --
+    # never fail the run over manifest bookkeeping).
+    if filtered_any:
+        try:
+            output_mgr.register_artifact(
+                str(directory_config.posbed), stage="peak_filters",
+                fmt="bed", schema_name="pas_bed_filtered",
+            )
+            output_mgr.register_artifact(
+                str(directory_config.negbed), stage="peak_filters",
+                fmt="bed", schema_name="pas_bed_filtered",
+            )
+        except Exception as e:  # pragma: no cover -- bookkeeping only
+            log.warning("peak_filters: register_artifact failed: %s", e)
+    log.info(
+        "peak_filters: ip_filter=%s annot_filter=%s pos(total=%s filtered=%s) "
+        "neg(total=%s filtered=%s)",
+        ip_filter, annot_filter,
+        combined_stats["pos"].get("total"), combined_stats["pos"].get("filtered"),
+        combined_stats["neg"].get("total"), combined_stats["neg"].get("filtered"),
+    )
+
+
 def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> dict:
     """Execute the full pipeline using the current module-level config state.
 
@@ -311,6 +483,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # Set up output directory structure
     output_mgr = OutputManager(base_dir=directory_config.output_dir)
     output_mgr.setup()
+
+    # D6: fail loud, before any peak-calling compute is spent, if --ip-filter
+    # / --annot-filter are enabled but misconfigured (see _apply_pas_filters).
+    _validate_pas_filter_config()
 
     # Save run configuration (B0: serialize the RESOLVED config actually in
     # effect — directory_config/variable_config/filter_config — not the raw
@@ -719,6 +895,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "utr_count": len(utr_lengths),
         })
 
+        # D6: optional internal-priming / annotation filters, applied to the
+        # pos/neg PAS BEDs in place, before find_close() derives the gene
+        # assignment from them. No-op (not even imported) when both flags
+        # are off — see _apply_pas_filters().
+        _apply_pas_filters(output_mgr)
+
         # Find closest gene for each PAS
         _pas_gene_stage = _add_stage("PAS→gene assignment", total=1)
         genes = find_close(
@@ -946,6 +1128,13 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                 _p.write(line)
             elif len(parts) >= 6 and parts[5] == "-":
                 _n.write(line)
+
+    # D6: optional internal-priming / annotation filters, applied to the
+    # unified pos/neg PAS BEDs in place, before find_close() derives the
+    # gene assignment from them. No-op (not even imported) when both flags
+    # are off — see _apply_pas_filters().
+    _apply_pas_filters(output_mgr)
+
     genes = find_close(
         utr_lengths=utr_lengths,
         max_distance=getattr(args, "max_gene_distance", 5000),

@@ -165,10 +165,6 @@ def run(**kwargs) -> None:
         # these, we tell you it is a no-op so you know the result you are
         # looking at did NOT honour your request.
         _NOT_WIRED = {
-            "ip_filter": "--ip-filter (internal-priming filter not integrated into `ema run`)",
-            "genome_fasta": "--genome-fasta (only consumed by --ip-filter, currently no-op)",
-            "annot_filter": "--annot-filter (annotation filter not integrated into `ema run`)",
-            "ip_a_stretch": "--ip-a-stretch (only consumed by --ip-filter, currently no-op)",
             "benchmark": "--benchmark (run scripts/validate_strategies.py instead)",
             "validate_db": "--validate-db (run scripts/validate_strategies.py instead)",
         }
@@ -256,7 +252,7 @@ def _pipeline_kwargs(kwargs: dict, user_set: set[str] | None = None) -> dict:
 
     Two responsibilities:
     1. Strip CLI-only keys (config, output, bam_dir, ...) and not-yet-wired
-       flags (ip_filter, benchmark, ...) — they have no place in args.
+       flags (benchmark, validate_db) — they have no place in args.
     2. Drop any kwarg the user did NOT explicitly set on the CLI. Without
        this, ``--pas-gap``'s default of 100 would clobber a YAML
        ``pas_gap: 200`` in the bridge layer.
@@ -276,7 +272,6 @@ def _pipeline_kwargs(kwargs: dict, user_set: set[str] | None = None) -> dict:
         # Not-yet-wired flags (warned above) — strip so they don't end up
         # in args via _kwarg_to_args_map. Keeping the warn-loud-but-do-nothing
         # behavior visible in one place.
-        "ip_filter", "genome_fasta", "annot_filter", "ip_a_stretch",
         "benchmark", "validate_db",
         # Plot flags are resolved into plot_engines before pipeline_run is called;
         # the raw strings should not be forwarded into the legacy arg bridge.

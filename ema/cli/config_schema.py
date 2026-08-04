@@ -452,38 +452,83 @@ class RunConfig:
         ),
     )
 
-    # ─── filters ─────────────────────────────────────────────────────────
+    # ─── filters (D6: wired into `ema run`; see ema/main.py::_apply_pas_filters) ──
     ip_filter: bool = field(
         default=False,
         metadata=_spec(
             cli_flag="--ip-filter", yaml_key="ip_filter", is_flag=True,
-            skip_legacy_bridge=True,  # currently a no-op in `ema run`
-            description="Enable internal-priming filter (currently no-op).",
+            legacy_args_attr="ip_filter",
+            description=(
+                "Enable internal-priming filter: drops PAS near genomic "
+                "A-rich stretches (requires --genome-fasta). Applied to the "
+                "pos/neg PAS BEDs before gene assignment."
+            ),
         ),
     )
     genome_fasta: Optional[str] = field(
         default=None,
         metadata=_spec(
             cli_flag="--genome-fasta", yaml_key="genome_fasta",
-            skip_legacy_bridge=True,
+            legacy_args_attr="genome_fasta",
             click_type=click.Path(exists=True),
-            description="Genome FASTA for --ip-filter (currently no-op).",
+            description="Genome FASTA (indexed with pyfaidx/.fai) required by --ip-filter.",
         ),
     )
     annot_filter: bool = field(
         default=False,
         metadata=_spec(
             cli_flag="--annot-filter", yaml_key="annot_filter", is_flag=True,
-            skip_legacy_bridge=True,
-            description="Annotation filter (currently no-op).",
+            legacy_args_attr="annot_filter",
+            description=(
+                "Enable annotation filter: keeps only PAS overlapping an "
+                "annotated gene region. Uses --annotation-bed if given, "
+                "otherwise the GTF-derived gene BED (requires --gtf)."
+            ),
+        ),
+    )
+    annotation_bed: Optional[str] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--annotation-bed", yaml_key="annotation_bed",
+            legacy_args_attr="annotation_bed",
+            click_type=click.Path(exists=True, dir_okay=False),
+            description=(
+                "Annotation BED for --annot-filter. Optional -- defaults to "
+                "the GTF-derived gene BED (directory_config.endbed) when unset."
+            ),
         ),
     )
     ip_a_stretch: int = field(
         default=6,
         metadata=_spec(
             cli_flag="--ip-a-stretch", yaml_key="ip_a_stretch",
-            skip_legacy_bridge=True,
-            description="A-stretch length for --ip-filter (currently no-op).",
+            legacy_args_attr="ip_a_stretch",
+            description="Minimum consecutive A's (or T's on - strand) flagged as internal priming.",
+        ),
+    )
+    ip_a_fraction: float = field(
+        default=0.7,
+        metadata=_spec(
+            cli_flag="--ip-a-fraction", yaml_key="ip_a_fraction",
+            legacy_args_attr="ip_a_fraction",
+            click_type=click.FLOAT,
+            description="Alternative internal-priming trigger: A/T fraction within the window.",
+        ),
+    )
+    ip_window_left: int = field(
+        default=10,
+        metadata=_spec(
+            cli_flag="--ip-window-left", yaml_key="ip_window_left",
+            legacy_args_attr="ip_window_left",
+            description="Internal-priming check window, bp upstream of the PAS.",
+        ),
+    )
+    ip_window_right: int = field(
+        default=30,
+        metadata=_spec(
+            cli_flag="--ip-window-right", yaml_key="ip_window_right",
+            legacy_args_attr="ip_window_right",
+            description="Internal-priming check window, bp downstream of the PAS.",
         ),
     )
     min_pas_per_cell: int = field(
