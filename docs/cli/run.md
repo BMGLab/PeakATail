@@ -198,8 +198,9 @@ Options:
 | `--bam-dir` | PATH | — | Convenience flag: treats a single BAM file as a one-dataset run with `id="default"`. Mutually exclusive with `--bam-files` when no `--config` is given. |
 | `--bam-files` | TEXT | — | Comma-separated list of BAM paths for a one-dataset run. Same effect as `--bam-dir` but accepts multiple files. |
 | `--gtf` | PATH | — | Ensembl or GENCODE GTF annotation file. Used for gene-end and UTR annotation of PAS sites. |
-| `--atlas` | PATH | — | Reference PAS atlas BED for snapping detected PAS to known sites. |
-| `--atlas-distance` | INT | 50 | Snap distance in bp: a detected PAS within this distance of an atlas entry is assigned the atlas coordinates. Reduce to 10 bp for high-precision snapping. |
+| `--atlas` | PATH | — | Reference PAS atlas BED (e.g. PolyASite v3.0). **Off unless provided.** When provided, PAS are *annotated* against it by default (see `--atlas-mode`), never dropped. |
+| `--atlas-distance` | INT | 50 | Match distance in bp: a PAS whose 3' summit is within this distance of an atlas entry is `atlas_match=True`. |
+| `--atlas-mode` | TEXT | `annotate` | `annotate` (default) keeps ALL PAS and adds `atlas_match`/`atlas_distance_bp` columns — the unified PAS set is built exactly like a no-atlas run (a pure overlay; novel PAS are never fragmented or dropped). `filter` restores the legacy snap-and-drop (drops PAS with no atlas hit). Use `annotate` when hunting alternative/novel polyA. |
 | `--seq-len` | INT | 150 | Sequencing read length. Warns and defaults to 150 if not set. |
 | `--cb-len` | INT | 16 | Cell-barcode length in bp. Warns and defaults to 16 if not set. |
 | `--barcode-tag` | TEXT | CB | BAM tag carrying the cell barcode. Defaults to `CB` (Cell Ranger convention). |
@@ -245,6 +246,23 @@ Options:
 |---|---|---|---|
 | `--min-pas-per-cell` | INT | 50 | Minimum number of distinct PAS detected per cell barcode. Cells below this threshold are excluded. Also bridges to `filter_config.min_genes` in the legacy interface. |
 | `--min-read` | INT | 1500 | Minimum total read count per cell barcode. Cells below this are discarded before count matrix construction. Reduce to 500 for low-depth protocols. |
+| `--min-cells` | INT | 3 | Minimum number of cells a PAS must be expressed in to survive preprocessing. |
+
+### Internal-priming annotation (D9)
+
+Like the atlas, the internal-priming filter is **off unless enabled** and
+**annotates rather than drops** by default — false poly(A) sites caused by the
+oligo-dT primer mis-binding genomic A-stretches get an `internal_priming` flag
+column (on the PAS ledger + `annotatedpas.bed`) so you can filter downstream.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--ip-filter` | FLAG | off | Enable the internal-priming check. Requires `--genome-fasta`. |
+| `--ip-filter-mode` | TEXT | `annotate` | `annotate` flags A-stretch PAS but keeps them; `filter` drops them. |
+| `--genome-fasta` | PATH | — | Genome FASTA (`.fai` indexed) — required with `--ip-filter`; used to read the sequence downstream of each PAS. |
+| `--ip-a-stretch` | INT | 6 | Minimum consecutive genomic A's downstream of a PAS to flag it as internal priming. |
+| `--ip-window-left` / `--ip-window-right` | INT | 10 / 30 | Window (bp) around the PAS examined for the A-stretch. |
+| `--ip-a-fraction` | FLOAT | 0.7 | Alternative: flag if the A-fraction in the window exceeds this. |
 | `--min-cells` | INT | 3 | Minimum number of cells expressing a PAS. PAS detected in fewer cells than this are removed from the matrix. |
 | `--ip-filter` | FLAG | off | **Currently a no-op.** Will enable internal-priming filtering when integrated. Emits a warning if set. |
 | `--genome-fasta` | PATH | — | **Currently a no-op.** Will supply the genome FASTA for the internal-priming filter. |
