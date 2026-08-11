@@ -166,15 +166,22 @@ class Run:
         p = Path(rel_or_abs)
         return p if p.is_absolute() else self._root / p
 
-    def _resolve_artifact(self, schema_name: str, conventional_relpath: str) -> Path:
+    def _resolve_artifact(self, schema_name: str, *conventional_relpaths: str) -> Path:
         """Resolve one artifact's path: prefer the ``run_manifest.json``
         entry whose ``schema_name`` matches (registered explicitly or by
-        ``OutputManager._auto_discover_artifacts``); fall back to
-        ``conventional_relpath`` under :attr:`root` when the manifest omits
-        the entry, or when the registered path doesn't actually exist on
-        disk (a stale/incomplete manifest is not fatal by itself). Raises
-        :class:`RunReadError` naming every path tried if neither resolves
-        to an existing file.
+        ``OutputManager._auto_discover_artifacts``); fall back to each
+        ``conventional_relpaths`` under :attr:`root` in order when the
+        manifest omits the entry, or when the registered path doesn't
+        actually exist on disk (a stale/incomplete manifest is not fatal by
+        itself). Raises :class:`RunReadError` naming every path tried if
+        nothing resolves to an existing file.
+
+        Multiple conventional paths matter because the SAME logical artifact
+        lands in different places by run shape: e.g. the provenance ledgers
+        sit at ``provenance/pas_ledger.tsv`` when a run-level (atlas-snap)
+        drop ledger exists, but on a multi-sample no-atlas run only the
+        reconciled per-dataset ledger at ``provenance/by_dataset/
+        pas_ledger.tsv`` is written (verified on a real Laughney run).
         """
         tried: list[Path] = []
         for artifact in self._manifest.get("artifacts") or []:
@@ -185,10 +192,11 @@ class Run:
                     return candidate
                 break  # one manifest entry per schema_name is expected
 
-        conventional = self._resolve(conventional_relpath)
-        tried.append(conventional)
-        if conventional.exists():
-            return conventional
+        for relpath in conventional_relpaths:
+            conventional = self._resolve(relpath)
+            tried.append(conventional)
+            if conventional.exists():
+                return conventional
 
         raise RunReadError(
             f"could not resolve artifact schema_name={schema_name!r} for "
@@ -227,14 +235,18 @@ class Run:
     def pas_ledger(self) -> pd.DataFrame:
         """``provenance/pas_ledger.tsv`` -- columns per
         ``ema/provenance.py::PAS_LEDGER_COLUMNS``."""
-        path = self._resolve_artifact("PasLedgerRow", "provenance/pas_ledger.tsv")
+        path = self._resolve_artifact(
+            "PasLedgerRow", "provenance/pas_ledger.tsv", "provenance/by_dataset/pas_ledger.tsv"
+        )
         return pd.read_csv(path, sep="\t")
 
     @cached_property
     def cell_ledger(self) -> pd.DataFrame:
         """``provenance/cell_ledger.tsv`` -- columns per
         ``ema/provenance.py::CELL_LEDGER_COLUMNS``."""
-        path = self._resolve_artifact("CellLedgerRow", "provenance/cell_ledger.tsv")
+        path = self._resolve_artifact(
+            "CellLedgerRow", "provenance/cell_ledger.tsv", "provenance/by_dataset/cell_ledger.tsv"
+        )
         return pd.read_csv(path, sep="\t")
 
     @cached_property

@@ -175,6 +175,16 @@ class OutputManager:
             ("unified/multi_sample_pas_mapping.tsv", "pas_merge", "tsv", "pas_mapping"),
             ("provenance/pas_ledger.tsv", "provenance", "tsv", "PasLedgerRow"),
             ("provenance/cell_ledger.tsv", "provenance", "tsv", "CellLedgerRow"),
+            # Multi-sample runs write the reconciled per-dataset ledgers under
+            # by_dataset/ (the run-level provenance/pas_ledger.tsv only exists
+            # when a run-level, e.g. atlas-snap, drop ledger was written).
+            # Listed AFTER the run-level paths so, when both exist, the
+            # run-level one is the first manifest entry for its schema_name;
+            # on a no-atlas multi-sample run only these by_dataset entries are
+            # emitted (the run-level files don't exist, so aren't registered).
+            ("provenance/by_dataset/pas_ledger.tsv", "provenance", "tsv", "PasLedgerRow"),
+            ("provenance/by_dataset/cell_ledger.tsv", "provenance", "tsv", "CellLedgerRow"),
+            ("provenance/reconcile_summary.json", "provenance", "json", "reconcile_summary"),
             ("run_config.json", "run", "json", "run_config"),
         ]
         found: list[dict] = []
