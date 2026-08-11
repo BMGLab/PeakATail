@@ -24,17 +24,23 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 import numpy as np
+import pandas as pd
 
 from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
 from ema.viz._meta import write_figure_meta
+from ema.viz._gene_track_helpers import pas_distance_table
 
 log = logging.getLogger(__name__)
 
 # Maximum clusters rendered even when panel has more.
 _MAX_CLUSTERS = 12
+# Above this many PAS the in-figure distance table degrades to a summary plus
+# the largest gaps; the complete table is always written to the CSV sidecar.
+_MAX_TABLE_ROWS = 12
 # Height (inches) per isoform row in the gene structure track.
 _ISOFORM_ROW_HEIGHT = 0.35
 # Height (inches) per cluster coverage row.
@@ -142,11 +148,19 @@ class GeneTrackMatplotlib(VizStrategy):
             pas_widths = [min_visible_w] * len(panel.pas_positions)
             pas_left_edges = [int(p) - min_visible_w // 2 for p in panel.pas_positions]
 
-        # Subplot heights in order: [gene_structure (optional), cluster0, cluster1, ...]
+        # Subplot heights in order: [gene_structure (optional), cluster0, ...,
+        # distance_table (optional)]
         subplot_heights: list[float] = []
         if has_structure:
             subplot_heights.append(_ISOFORM_ROW_HEIGHT * n_isoforms)
         subplot_heights.extend([_CLUSTER_ROW_HEIGHT] * n_clusters_rendered)
+        n_track_axes = len(subplot_heights)
+
+        dist_df = pas_distance_table(panel) if panel.show_distance_table else None
+        if dist_df is not None and not dist_df.empty:
+            n_tbl_rows = min(len(dist_df), _MAX_TABLE_ROWS) + 1  # +1 header
+            # Extra 0.55in of headroom: the shared x-axis label lives here too.
+            subplot_heights.append(0.80 + 0.22 * n_tbl_rows)
 
         total_height = max(sum(subplot_heights), _MIN_FIG_HEIGHT)
         fig_width = max(9, min(14, gene_span / 1000 + 8))
@@ -187,6 +201,21 @@ class GeneTrackMatplotlib(VizStrategy):
         y_cap = max(y_cap, 1e-6)
 
         cmap = plt.cm.viridis  # type: ignore[attr-defined]
+
+        # One colour per distinct condition (e.g. healthy / primary tumour /
+        # metastasis), assigned in first-appearance order so the palette follows
+        # the track order rather than the alphabet.
+        cond_colours: dict[str, str] = {}
+        if panel.group_conditions:
+            _palette = [
+                "#1b7837", "#2166ac", "#b2182b", "#762a83",
+                "#e08214", "#4d4d4d", "#01665e", "#8c510a",
+            ]
+            _seen: list[str] = []
+            for c in panel.group_conditions:
+                if c and c not in _seen:
+                    _seen.append(c)
+            cond_colours = {c: _palette[i % len(_palette)] for i, c in enumerate(_seen)}
 
         for rank, ci in enumerate(cluster_indices):
             ax = axes[ax_idx + rank]
@@ -240,14 +269,34 @@ class GeneTrackMatplotlib(VizStrategy):
 
             # Y-axis styling.
             ax.set_ylim(0, y_cap)
+            # Only prefix numeric labels (Leiden ids). A descriptive label --
+            # a stage name, a cell type -- speaks for itself, and writing
+            # "cluster Normal" for --cluster-key stage was actively wrong.
+            if cluster_label.isdigit():
+                track_label = f"{panel.cluster_key} {cluster_label}"
+            else:
+                track_label = cluster_label
             ax.set_ylabel(
-                f"cluster {cluster_label}\n(n={n_cells})",
+                f"{track_label}\n(n={n_cells})",
                 fontsize=7,
                 labelpad=4,
+                color=cond_colours.get(
+                    panel.group_conditions[ci] if panel.group_conditions else "", "black"
+                ),
             )
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
             ax.tick_params(axis="y", labelsize=6)
+            # Encode condition as a faint wash behind the whole track. A
+            # coloured left spine (the previous encoding) is a vertical rule at
+            # x=0 with the same width and orientation as a PAS bar, and readers
+            # mistook it for data. A background band cannot be confused with a
+            # peak because it spans the axes rather than rising from the floor.
+            if panel.group_conditions:
+                cond = panel.group_conditions[ci]
+                if cond in cond_colours:
+                    r, g, b = mcolors.to_rgb(cond_colours[cond])
+                    ax.set_facecolor((r, g, b, 0.07))
             ax.set_xlim(x_min, x_max)
             ax.yaxis.set_major_formatter(
                 matplotlib.ticker.FormatStrFormatter("%.2g")  # type: ignore[attr-defined]
@@ -264,7 +313,11 @@ class GeneTrackMatplotlib(VizStrategy):
         # ``155,276 kb`` and mistaking the view for a chromosome-scale
         # window.  Absolute coordinates remain in the figure title for IGV
         # / UCSC cross-reference.
-        bottom_ax = axes[-1]
+        # The last *track* axis, not axes[-1]: a distance-table axis may sit
+        # below it. sharex=True suppresses tick labels on every axis but the
+        # bottom one, so re-enable them here.
+        bottom_ax = axes[n_track_axes - 1]
+        bottom_ax.tick_params(axis="x", labelbottom=True)
         gene_anchor = x_lo
         if gene_span >= 1_000_000:
             unit_label, unit_div, fmt_str = "Mb", 1_000_000, "{val:,.2f}"
@@ -285,6 +338,10 @@ class GeneTrackMatplotlib(VizStrategy):
             fontsize=9,
         )
         bottom_ax.tick_params(axis="x", labelsize=7)
+
+        # --- PAS distance table ---
+        if dist_df is not None and not dist_df.empty:
+            _draw_distance_table(axes[-1], dist_df, panel)
 
         # --- figure title ---
         # Make the gene-scope explicit:
@@ -312,7 +369,34 @@ class GeneTrackMatplotlib(VizStrategy):
             f"({'−' if panel.strand == '-' else '+'} strand, "
             f"{length_str}) — {n_pas} PAS"
         )
+        # A panel is usually restricted to one cell type; name it once in the
+        # header rather than repeating it on every track label.
+        if panel.subtitle:
+            title = f"{title}\n{panel.subtitle}"
         fig.suptitle(title, fontsize=9, y=1.01)
+
+        # Condition legend (healthy / primary tumour / metastasis, ...).
+        if cond_colours:
+            # Swatches match the track wash: a filled band with a saturated
+            # edge, not a line (a line reads as a bar).
+            handles = [
+                mpatches.Patch(
+                    facecolor=(*mcolors.to_rgb(col), 0.25),
+                    edgecolor=col,
+                    linewidth=0.8,
+                    label=cond,
+                )
+                for cond, col in cond_colours.items()
+            ]
+            fig.legend(
+                handles=handles,
+                loc="upper right",
+                bbox_to_anchor=(0.995, 1.0),
+                fontsize=6,
+                frameon=False,
+                title="Condition",
+                title_fontsize=6,
+            )
 
         # --- colorbar legend (proportion) ---
         sm = plt.cm.ScalarMappable(  # type: ignore[attr-defined]
@@ -388,6 +472,101 @@ def _select_top_clusters(panel: Any, top_n: int) -> list[int]:
     # Sort non-empty by descending total reads and take top_n.
     non_empty_sorted = sorted(non_empty, key=lambda i: row_totals[i], reverse=True)
     return non_empty_sorted[:top_n]
+
+
+def _fmt_bp(v: Any) -> str:
+    """Format a base-pair count, rendering NA as an em dash."""
+    if v is None or (isinstance(v, float) and np.isnan(v)) or v is pd.NA:
+        return "—"
+    try:
+        return f"{int(v):,}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _draw_distance_table(
+    ax: "plt.Axes",  # type: ignore[name-defined]
+    dist_df: "pd.DataFrame",  # type: ignore[name-defined]
+    panel: Any,
+) -> None:
+    """Render the PAS distance table beneath the tracks.
+
+    Genes with more than ``_MAX_TABLE_ROWS`` PAS get a summary plus the largest
+    gaps instead of every row -- a 38-row table is unreadable at figure scale.
+    The truncation is stated in the caption line, never silent, and the full
+    table is written alongside the figure as a CSV.
+    """
+    ax.axis("off")
+    n = len(dist_df)
+    truncated = n > _MAX_TABLE_ROWS
+
+    if truncated:
+        # Keep the rows a reader would ask about: the widest gaps.
+        show = (
+            dist_df.dropna(subset=["gap_to_next_bp"])
+            .sort_values("summit_dist_to_next_bp", ascending=False)
+            .head(_MAX_TABLE_ROWS)
+            .sort_values("rank")
+        )
+    else:
+        show = dist_df
+
+    # Single-line headers: matplotlib table cells do not grow to fit a second
+    # line, so "\n" in a header is silently clipped.
+    has_utr = "utr_transcripts" in show.columns
+    col_labels = ["#", "PAS id", "start", "end", "width bp",
+                  "summit", "gap→next bp", "summit→next bp"]
+    if has_utr:
+        col_labels += ["3'UTR (transcript)"]
+
+    def _utr_cell(v: str) -> str:
+        """One transcript per PAS is the common case; summarise when several."""
+        tx = [t for t in str(v).split(";") if t]
+        if not tx:
+            return "—"
+        return tx[0] if len(tx) == 1 else f"{tx[0]} +{len(tx) - 1}"
+
+    cells = []
+    for _, r in show.iterrows():
+        row = [
+            str(r["rank"]), str(r["pas_id"]), f"{int(r['start']):,}",
+            f"{int(r['end']):,}", f"{int(r['width_bp']):,}",
+            f"{int(r['summit_pos']):,}",
+            _fmt_bp(r["gap_to_next_bp"]), _fmt_bp(r["summit_dist_to_next_bp"]),
+        ]
+        if has_utr:
+            row.append(_utr_cell(r["utr_transcripts"]))
+        cells.append(row)
+
+    # Explicit bbox rather than loc=: the axis above this one owns the shared
+    # x-axis label, which is drawn *below* its axes and would collide with a
+    # table anchored to the top of ours.
+    tbl = ax.table(cellText=cells, colLabels=col_labels, cellLoc="right",
+                   bbox=[0.02, 0.16, 0.96, 0.68])
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(6)
+    for (row, _col), cell in tbl.get_celld().items():
+        cell.set_linewidth(0.3)
+        if row == 0:
+            cell.set_text_props(weight="bold")
+            cell.set_facecolor("#f0f0f0")
+
+    gaps = dist_df["summit_dist_to_next_bp"].dropna()
+    if len(gaps):
+        stats = (f"n_PAS={n};  adjacent-summit distance "
+                 f"min={int(gaps.min()):,}  median={int(gaps.median()):,}  "
+                 f"max={int(gaps.max()):,} bp")
+    else:
+        stats = f"n_PAS={n}; single PAS, no adjacent pair"
+    note = (f"PAS ordered 5'→3' ({panel.strand} strand). {stats}.")
+    if truncated:
+        note += (f"  Showing the {_MAX_TABLE_ROWS} largest of {n - 1} adjacent "
+                 f"gaps; full table in the accompanying _pas_distances.csv.")
+    if "utr_transcripts" in dist_df.columns:
+        note += ("  3'UTR column: transcript(s) in which this PAS is the proximal or "
+                 "distal site (per-isoform length output); blank = neither.")
+    ax.text(0.5, 0.0, note, transform=ax.transAxes, ha="center", va="bottom",
+            fontsize=6, color="#444444")
 
 
 def _draw_gene_structure(

@@ -70,7 +70,18 @@ class DatasetManager:
         if len(tagged_bams) == 1:
             pysam.sort("-@", threads_arg, "-o", str(sorted_path), tagged_bams[0])
         else:
-            pysam.merge("-@", threads_arg, "-f", str(merged_path), *tagged_bams)
+            # -c is CRITICAL: every tagged BAM carries the SAME @RG ID
+            # (=dataset_id). Without -c, `samtools merge` treats the identical
+            # IDs as a collision and RENAMES them with hex suffixes
+            # (dataset_id-4B7F9BA8, …), one per input run. Downstream, reads
+            # then carry per-run RG tags, so `cb = f"{rg}_{barcode}"` gets a
+            # per-run prefix and the 8 runs of a library STOP pooling into one
+            # cell namespace (same barcode across runs is wrongly split, and
+            # per-dataset selection by `startswith(f"{id}_")` drops the
+            # suffixed reads entirely). -c combines the identical @RG IDs into
+            # ONE, so the merged BAM keeps a single @RG=dataset_id and barcodes
+            # namespace correctly per library. -p does the same for @PG.
+            pysam.merge("-c", "-p", "-@", threads_arg, "-f", str(merged_path), *tagged_bams)
             pysam.sort("-@", threads_arg, "-o", str(sorted_path), str(merged_path))
             merged_path.unlink(missing_ok=True)
 

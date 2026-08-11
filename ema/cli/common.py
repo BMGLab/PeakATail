@@ -230,6 +230,16 @@ def parse_plot_engines(spec: str, no_plots: bool = False) -> list[str]:
 _DEFAULT_PARENT_DIR = "peakatail_runs"
 
 
+def _no_timestamp() -> bool:
+    """True if PEAKATAIL_NO_TIMESTAMP disables the ``_<ts>`` output suffix.
+
+    Lets a workflow engine (Nextflow/Snakemake) get deterministic output dirs
+    so a downstream step can hand fixed paths to the next.
+    """
+    import os
+    return os.environ.get("PEAKATAIL_NO_TIMESTAMP", "").strip().lower() in {"1", "true", "yes"}
+
+
 def detect_run_dir(input_paths: list[str | Path] | tuple) -> Path | None:
     """Return the originating ``peakatail_runs/<run>/`` directory for inputs, if any.
 
@@ -289,9 +299,11 @@ def resolve_subcommand_output_dir(
     if not user_explicit:
         run_dir = detect_run_dir(list(source_paths))
         if run_dir is not None:
+            leaf_name = subdir if subdir else Path(base).name
+            if _no_timestamp():
+                return run_dir / leaf_name
             from datetime import datetime
             ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-            leaf_name = subdir if subdir else Path(base).name
             return run_dir / f"{leaf_name}_{ts}"
     return resolve_output_dir(base)
 
@@ -313,13 +325,22 @@ def resolve_output_dir(base: str | Path, parent: str | Path | None = None) -> Pa
         parent: Override the default ``peakatail_runs`` parent dir. Use ``""``
             to disable nesting entirely.
 
+    Timestamping can be disabled (for deterministic paths, e.g. under a
+    Nextflow/Snakemake DAG that hands fixed paths between steps) by setting the
+    environment variable ``PEAKATAIL_NO_TIMESTAMP=1``.  When disabled the leaf
+    is exactly ``base`` with no ``_<ts>`` suffix, so the output dir equals the
+    user-supplied path verbatim.
+
     Returns:
         A fresh ``Path``. Does NOT create the directory (caller decides when).
     """
     from datetime import datetime
-    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     base = Path(base)
-    leaf = Path(f"{base.name}_{ts}")
+    if _no_timestamp():
+        leaf = Path(base.name)
+    else:
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        leaf = Path(f"{base.name}_{ts}")
     # Absolute paths or paths with explicit directories are passed through.
     if base.is_absolute() or len(base.parts) > 1:
         return base.parent / leaf

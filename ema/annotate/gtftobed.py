@@ -26,7 +26,7 @@ def gtf_bed(endbeddir=dc.endbed,
             biotypes=("protein_coding", "lncRNA", "snRNA", "antisense",
                       "miRNA", "processed_transcript", "lincRNA"),
             source_types=("gene",),
-            id_prefixes=("ENSG",),
+            id_prefixes=("ENS",),
             score=0
             ) -> dict:
     """Convert a GTF file to BED format, extract features, and compute UTR lengths.
@@ -42,7 +42,10 @@ def gtf_bed(endbeddir=dc.endbed,
             output_dir/utr_lengths.tsv.
         biotypes: Tuple of gene biotypes to include.
         source_types: Tuple of GTF feature types for gene entries.
-        id_prefixes: Tuple of gene ID prefixes to include (e.g., "ENSG").
+        id_prefixes: Tuple of gene ID prefixes to include. Default `("ENS",)`
+            matches Ensembl IDs across species: human ENSG, mouse ENSMUSG,
+            rat ENSRNOG, etc. Set to `("ENSG",)` to restrict to human, or
+            `("ENSMUSG",)` for mouse-only.
         score: BED score field value.
 
     Returns:

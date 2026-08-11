@@ -74,6 +74,101 @@ class GenePanel:
     # the opaque Ensembl identifier alone.  Empty when no GTF supplied or
     # the gene wasn't found.
     gene_name: str = ""
+    # The ``obs`` column the tracks were grouped by.  Numeric labels (Leiden
+    # ids) are rendered as ``"<cluster_key> 3"``; descriptive labels (stage
+    # names, cell types) are rendered verbatim.  Writing "cluster Normal" for
+    # ``--cluster-key stage`` was misleading.
+    cluster_key: str = "cluster"
+    # Free-text line under the gene title, e.g. the cell type a panel is
+    # restricted to.  Every panel is one cell type, so naming it once in the
+    # header beats repeating it on every track label.
+    subtitle: str = ""
+    # Optional per-track condition (same order as ``clusters``), taken from
+    # ``color_key``.  The renderer colours each track by it and draws a legend,
+    # so the reader sees healthy / primary tumour / metastasis at a glance
+    # without a long y-label.  Empty when ``color_key`` was not supplied.
+    group_conditions: list[str] = field(default_factory=list)
+    # When True the renderer draws a PAS distance table beneath the tracks.
+    show_distance_table: bool = False
+    # pas_id -> transcript ids whose 3'UTR that PAS was assigned to, as recorded
+    # by `switch length --isoform-agg per_isoform`. Empty when not supplied.
+    pas_isoforms: dict[int, list[str]] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# PAS distance table
+# ---------------------------------------------------------------------------
+def pas_distance_table(panel: "GenePanel") -> pd.DataFrame:
+    """Per-PAS coordinates and the gap to the next PAS, ordered 5' -> 3'.
+
+    Rows follow the direction of transcription, so ``rank`` 1 is the most
+    proximal PAS (closest to the TSS) and the last row the most distal. On the
+    ``-`` strand that means descending genomic coordinate.
+
+    Two distances are reported for each adjacent pair, because they are not
+    interchangeable and the pipeline's own atlas benchmark conflated them:
+
+    ``gap_to_next_bp``
+        Edge-to-edge distance: ``start`` of the next PAS minus ``end`` of this
+        one, in transcription order. Negative when the two PAS regions overlap.
+        This is the amount of sequence *between* the peaks.
+    ``summit_dist_to_next_bp``
+        Distance between the two representative PAS positions (summits). This
+        is what a tandem-UTR length interpretation actually refers to, and is
+        independent of how wide the merger made each peak.
+
+    The last row has NA in both columns: there is no next PAS.
+    """
+    n = len(panel.pas_positions)
+    if n == 0:
+        return pd.DataFrame(
+            columns=["rank", "pas_id", "chrom", "strand", "start", "end",
+                     "width_bp", "summit_pos", "gap_to_next_bp",
+                     "summit_dist_to_next_bp"]
+        )
+
+    starts = list(panel.pas_starts) if panel.pas_starts else list(panel.pas_positions)
+    ends = list(panel.pas_ends) if panel.pas_ends else [p + 1 for p in panel.pas_positions]
+    if len(starts) != n or len(ends) != n:
+        starts = list(panel.pas_positions)
+        ends = [p + 1 for p in panel.pas_positions]
+
+    df = pd.DataFrame({
+        "pas_id": list(panel.pas_ids),
+        "chrom": panel.chrom,
+        "strand": panel.strand,
+        "start": [int(s) for s in starts],
+        "end": [int(e) for e in ends],
+        "summit_pos": [int(p) for p in panel.pas_positions],
+    })
+    df["width_bp"] = df["end"] - df["start"]
+
+    # 5' -> 3': ascending coordinate on +, descending on -.
+    df = df.sort_values("summit_pos", ascending=(panel.strand != "-")).reset_index(drop=True)
+    df.insert(0, "rank", np.arange(1, len(df) + 1))
+
+    if panel.strand == "-":
+        # Next PAS lies at a LOWER coordinate, so the intervening sequence runs
+        # from its end up to this PAS's start.
+        gap = df["start"].values[:-1] - df["end"].values[1:]
+    else:
+        gap = df["start"].values[1:] - df["end"].values[:-1]
+    summit_d = np.abs(np.diff(df["summit_pos"].values))
+
+    df["gap_to_next_bp"] = list(gap) + [pd.NA]
+    df["summit_dist_to_next_bp"] = list(summit_d) + [pd.NA]
+
+    cols = ["rank", "pas_id", "chrom", "strand", "start", "end", "width_bp",
+            "summit_pos", "gap_to_next_bp", "summit_dist_to_next_bp"]
+    if panel.pas_isoforms:
+        # The UTR (transcript) each PAS was assigned to by the per-isoform
+        # quantification. Read from that output, never recomputed here.
+        df["utr_transcripts"] = [
+            ";".join(panel.pas_isoforms.get(int(p), [])) for p in df["pas_id"]
+        ]
+        df["n_utr"] = [len(panel.pas_isoforms.get(int(p), [])) for p in df["pas_id"]]
+        cols += ["n_utr", "utr_transcripts"]
+    return df[cols]
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +229,10 @@ def build_gene_panel(
     gene_id_col: str = "gene_id",
     isoforms: list[tuple[str, list[tuple[int, int]]]] | None = None,
     gene_name: str = "",
+    color_key: str | None = None,
+    subtitle: str = "",
+    show_distance_table: bool = False,
+    pas_isoforms: dict[int, list[str]] | None = None,
 ) -> GenePanel | None:
     """Build a :class:`GenePanel` for one gene.
 
@@ -191,11 +290,27 @@ def build_gene_panel(
     X = np.asarray(X, dtype=np.float64)  # (n_cells, n_pas)
 
     # Per-cluster aggregation.
-    clusters = sorted(
-        adata.obs[cluster_key].astype(str).unique(),
-        key=lambda x: int(x) if x.isdigit() else x,
-    )
-    cluster_labels = adata.obs[cluster_key].astype(str).values
+    #
+    # Track order matters: for an ordered covariate (disease stage, timepoint) a
+    # plain alphabetical sort interleaves the levels -- "Normal" lands between
+    # "MetBrain" and "StageIA", i.e. healthy tissue in the middle of the tumour
+    # tracks.  Honour an explicit pandas Categorical ordering when the caller
+    # supplies one; otherwise fall back to the natural sort.
+    _col = adata.obs[cluster_key]
+    _present = set(_col.astype(str))
+    if isinstance(getattr(_col, "dtype", None), pd.CategoricalDtype) and _col.cat.ordered:
+        clusters = [str(c) for c in _col.cat.categories if str(c) in _present]
+    else:
+        clusters = sorted(_present, key=lambda x: int(x) if x.isdigit() else x)
+    cluster_labels = _col.astype(str).values
+
+    # Per-track condition (e.g. healthy / primary tumour / metastasis).
+    group_conditions: list[str] = []
+    if color_key and color_key in adata.obs.columns:
+        _cond = adata.obs[color_key].astype(str).values
+        for c in clusters:
+            vals = _cond[cluster_labels == c]
+            group_conditions.append(str(vals[0]) if len(vals) else "")
     n_clusters = len(clusters)
     n_pas = len(pas_ids)
     reads = np.zeros((n_clusters, n_pas), dtype=np.float64)
@@ -227,6 +342,11 @@ def build_gene_panel(
         reads_per_cell=rpc,
         proportions=proportions,
         isoforms=isoforms or [],
+        cluster_key=str(cluster_key),
+        subtitle=str(subtitle),
+        group_conditions=group_conditions,
+        show_distance_table=bool(show_distance_table),
+        pas_isoforms=dict(pas_isoforms or {}),
     )
 
 

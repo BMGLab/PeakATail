@@ -117,8 +117,20 @@ def match_barcodes(gex_barcodes, peak_barcodes, peak_labels):
     return common
 
 
-def create_sankey(gex_labels, peak_labels, output_path):
-    """Create Sankey diagram showing cell flow between two clusterings."""
+def create_sankey(gex_labels, peak_labels, output_path, title=None,
+                  left_labeller=None, right_labeller=None):
+    """Create Sankey diagram showing cell flow between two clusterings.
+
+    Args:
+        gex_labels, peak_labels: aligned per-cell label Series (same cells,
+            same order). Left and right sides of the flow.
+        output_path: PNG path.
+        title: figure title; defaults to the original GEX-vs-peak wording.
+        left_labeller, right_labeller: optional ``f(label) -> str`` used to
+            render node names. Defaults keep the ``GEX_<c>`` / ``Peak_<c>``
+            scheme. Pass a labeller to annotate nodes with, say, a cluster's
+            modal cell type and purity.
+    """
     try:
         import plotly.graph_objects as go
 
@@ -126,8 +138,11 @@ def create_sankey(gex_labels, peak_labels, output_path):
         gex_unique = sorted(gex_labels.unique())
         peak_unique = sorted(peak_labels.unique())
 
+        _lfmt = left_labeller or (lambda c: f"GEX_{c}")
+        _rfmt = right_labeller or (lambda c: f"Peak_{c}")
+
         # Node labels
-        node_labels = [f"GEX_{c}" for c in gex_unique] + [f"Peak_{c}" for c in peak_unique]
+        node_labels = [_lfmt(c) for c in gex_unique] + [_rfmt(c) for c in peak_unique]
         n_gex = len(gex_unique)
 
         # Node colors
@@ -153,7 +168,7 @@ def create_sankey(gex_labels, peak_labels, output_path):
         )])
 
         fig.update_layout(
-            title_text="Cell Flow: Gene Expression Clusters → Peak-Based Clusters",
+            title_text=title or "Cell Flow: Gene Expression Clusters → Peak-Based Clusters",
             font_size=12, width=1200, height=800
         )
         fig.write_image(output_path)
