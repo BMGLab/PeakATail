@@ -3,12 +3,114 @@ from ema.countmatrix.indexing import get_mapping
 from ema.config import filter_config, directory_config, variable_config
 from ema.outputs import MATRIX_MARKET_HEADER
 import numpy as np
+import pandas as pd
 import scipy.io as sci
 import scipy.sparse as sp
 import anndata as ad
 import scanpy as sc
 
 filtered_cb_list = []
+
+
+class _RaggedMatrixData(Exception):
+    """Internal signal: a matrix file's tokenization is ambiguous for the
+    vectorized fast-path reader (e.g. a data row has more than 3
+    whitespace-separated tokens, or a required column fails int parsing).
+
+    Callers catch this and fall back to :func:`_filter_cb_legacy`, which is
+    a byte-for-byte copy of the original row-by-row implementation — so
+    correctness is guaranteed on any input, and the vectorized path is a
+    pure speed optimization for the well-formed (real-world) case.
+    """
+
+
+def _read_matrix_file_vectorized(path: str, n_cb: int) -> "pd.DataFrame":
+    """Vectorized read of one MatrixMarket-ish matrix file.
+
+    Mirrors, exactly, the per-line semantics of the original ``filter_cb``
+    passes for a single file:
+
+      * blank lines and ``%``-comment lines are skipped (``comment="%"``,
+        ``skip_blank_lines=True``);
+      * a data row with fewer than 3 whitespace tokens is dropped
+        (``len(columns) < 3: continue``);
+      * a data row with MORE than 3 whitespace tokens is ambiguous for a
+        fixed-width vectorized parse (the original only ever reads the
+        first 3 tokens and ignores the rest) — raises :class:`_RaggedMatrixData`
+        so the caller falls back to the reference implementation;
+      * the FIRST surviving row of the file is the MatrixMarket dimension
+        header IFF ``int(row[1]) > n_cb`` (and ``n_cb > 0``); if
+        ``int(row[1])`` isn't parseable at all the row is also dropped
+        (matches ``first_data_line`` handling in both original passes —
+        either way the header slot is "consumed" exactly once per file);
+      * any row whose pas/cb/count token doesn't parse as an int raises
+        :class:`_RaggedMatrixData` (pass 1 of the original crashes
+        uncaught on a bad ``columns[2]``; deferring to the reference
+        implementation reproduces that crash exactly instead of trying to
+        reconcile pass-1-crashes vs. pass-2-silently-skips in vectorized
+        code).
+
+    Returns:
+        DataFrame with int64 columns ``pas``, ``cb``, ``count`` and a
+        ``cb_str`` column carrying the ORIGINAL (pre-int-cast) barcode-index
+        token — Pass 1 of the original code accumulates counts keyed by
+        that raw string, not by its int value, so this is preserved to stay
+        byte-identical on pathological inputs (e.g. a leading-zero token).
+    """
+    try:
+        df = pd.read_csv(
+            path, sep=r"\s+", comment="%", header=None, dtype=str,
+            engine="c", skip_blank_lines=True, na_filter=False,
+        )
+    except pd.errors.ParserError as exc:
+        raise _RaggedMatrixData(f"{path}: ragged whitespace tokenization") from exc
+    except pd.errors.EmptyDataError:
+        df = pd.DataFrame()
+
+    empty = pd.DataFrame({"pas": pd.Series(dtype="int64"),
+                           "cb_str": pd.Series(dtype=object),
+                           "cb": pd.Series(dtype="int64"),
+                           "count": pd.Series(dtype="int64")})
+    if df.shape[0] == 0:
+        return empty
+    if df.shape[1] < 3:
+        # every surviving row had <3 tokens -> all dropped
+        return empty
+    if df.shape[1] > 3:
+        raise _RaggedMatrixData(f"{path}: rows with >3 whitespace tokens")
+
+    valid = df[2] != ""  # rows with <3 tokens were padded with "" in col 2
+    df = df[valid]
+    if df.empty:
+        return empty
+
+    # -- header detection: mirrors `first_data_line` handling exactly --
+    first_pos = df.index[0]
+    first_col1 = df.at[first_pos, 1]
+    drop_first = False
+    try:
+        col_idx = int(first_col1)
+        if col_idx > n_cb and n_cb > 0:
+            drop_first = True
+    except ValueError:
+        drop_first = True
+    if drop_first:
+        df = df.drop(index=first_pos)
+    if df.empty:
+        return empty
+
+    pas_num = pd.to_numeric(df[0], errors="coerce")
+    cb_num = pd.to_numeric(df[1], errors="coerce")
+    count_num = pd.to_numeric(df[2], errors="coerce")
+    if pas_num.isna().any() or cb_num.isna().any() or count_num.isna().any():
+        raise _RaggedMatrixData(f"{path}: non-integer token in a data row")
+
+    return pd.DataFrame({
+        "pas": pas_num.to_numpy(dtype="int64"),
+        "cb_str": df[1].to_numpy(),
+        "cb": cb_num.to_numpy(dtype="int64"),
+        "count": count_num.to_numpy(dtype="int64"),
+    })
 
 
 def filter_cb(input_matrix_paths: list = None,
@@ -78,6 +180,106 @@ def filter_cb(input_matrix_paths: list = None,
     else:
         matrix_paths = [negativematrixpath, positivematrixpath]
 
+    # Vectorized fast path: each file is read ONCE via pandas' C parser and
+    # reused for both the count-summation pass and the row-collection pass
+    # (the original re-read every file once per pass). Falls back to the
+    # byte-for-byte-identical row-by-row implementation whenever a file's
+    # tokenization is ambiguous for a fixed-width vectorized parse — see
+    # _read_matrix_file_vectorized / _RaggedMatrixData. That guarantees
+    # correctness on any input while making the common (well-formed,
+    # multi-million-row) case fast.
+    try:
+        per_file = [_read_matrix_file_vectorized(p, len(_cb_lookup)) for p in matrix_paths]
+    except _RaggedMatrixData:
+        _filter_cb_legacy(
+            matrix_paths=matrix_paths,
+            cb_lookup=_cb_lookup,
+            min_read=min_read,
+            sorted_corrected_sparse_path=sorted_corrected_sparse_path,
+            filter_cb_file=filter_cb_file,
+        )
+        return
+
+    if per_file:
+        combined = pd.concat(per_file, ignore_index=True)
+    else:
+        combined = pd.DataFrame({
+            "pas": pd.Series(dtype="int64"), "cb_str": pd.Series(dtype=object),
+            "cb": pd.Series(dtype="int64"), "count": pd.Series(dtype="int64"),
+        })
+
+    # Pass 1 (vectorized): sum counts per RAW cb token across ALL files,
+    # grouped on the STRING token — exactly like the original dict keyed by
+    # `columns[1]` (not its int value), so a pathological leading-zero token
+    # ("007" vs "7") reproduces the original's split-bucket behaviour.
+    if combined.empty:
+        keep_cb: set[int] = set()
+    else:
+        sums = combined.groupby("cb_str")["count"].sum()
+        keep_cb = {int(cb) for cb, total in sums.items() if total >= min_read}
+
+    # Pass 2 (vectorized): keep rows whose (int) cb is in keep_cb.
+    kept = combined[combined["cb"].isin(keep_cb)]
+
+    matrix_pas_header = int(kept["pas"].max()) if len(kept) else 0
+    matrix_cb_header = len(keep_cb)
+    matrix_nzero_header = len(kept)
+
+    # Stable sort by ORIGINAL cb — ties keep the original file/row traversal
+    # order, matching Python's stable `sorted(lines_to_keep, key=lambda x: x[1])`.
+    kept_sorted = kept.sort_values(by="cb", kind="stable")
+    cb_sorted = kept_sorted["cb"].to_numpy()
+
+    # Contiguous 1..K re-index: a new group starts wherever cb differs from
+    # the previous (already cb-sorted) row — identical to the original's
+    # adjacent-duplicate walk over the cb-sorted rows.
+    if len(cb_sorted):
+        first_of_group = np.concatenate(([True], cb_sorted[1:] != cb_sorted[:-1]))
+        new_cb = np.cumsum(first_of_group)
+    else:
+        first_of_group = np.empty(0, dtype=bool)
+        new_cb = np.empty(0, dtype=np.int64)
+
+    with open(sorted_corrected_sparse_path, "w") as sorted_corrected_sparse_list:
+        sorted_corrected_sparse_list.write(MATRIX_MARKET_HEADER)
+        sorted_corrected_sparse_list.write(f"{matrix_pas_header} {matrix_cb_header} {matrix_nzero_header}\n")
+        if len(kept_sorted):
+            out_df = pd.DataFrame({
+                0: kept_sorted["pas"].to_numpy(),
+                1: new_cb,
+                2: kept_sorted["count"].to_numpy(),
+            })
+            out_df.to_csv(
+                sorted_corrected_sparse_list, sep=" ", header=False,
+                index=False, lineterminator="\n",
+            )
+
+    # filtered_cb_list: cb_lookup value for each newly-encountered ORIGINAL
+    # cb in ascending order == sorted-unique original cbs present in kept rows.
+    if len(cb_sorted):
+        unique_sorted_cbs = cb_sorted[first_of_group]
+        filtered_cb_list.extend(_cb_lookup[int(c) - 1] for c in unique_sorted_cbs)
+
+    with open(filter_cb_file, "w") as file:
+        if filtered_cb_list:
+            file.write("\n".join(str(item) for item in filtered_cb_list) + "\n")
+
+
+def _filter_cb_legacy(*, matrix_paths, cb_lookup, min_read,
+                       sorted_corrected_sparse_path, filter_cb_file) -> None:
+    """Byte-for-byte copy of the original row-by-row ``filter_cb`` body.
+
+    Used as the correctness fallback whenever a matrix file's tokenization
+    is too ambiguous for the vectorized fast path (see _RaggedMatrixData) —
+    pathological/malformed input that should essentially never occur on
+    real MatrixMarket output, but which the original implementation
+    tolerated (or, for a bad ``columns[2]``, crashed on) on a line-by-line
+    basis. Mutates the module-level ``filtered_cb_list`` exactly like the
+    original function did.
+    """
+    global filtered_cb_list
+    _cb_lookup = cb_lookup
+
     # Pass 1: sum counts per column index (1-based in file)
     cb_counts: dict[str, int] = defaultdict(int)
     for path in matrix_paths:
@@ -89,23 +291,8 @@ def filter_cb(input_matrix_paths: list = None,
                 columns = line.split()
                 if len(columns) < 3:
                     continue
-                # When reading MatrixMarket files (from concat_matrices output),
-                # the first non-% line is the dimension header — skip it.
-                # Legacy per-BAM matrices written by peackcalling have no header.
-                # Detect header: all three tokens are numeric digits AND it is the
-                # first such line.  We use the `first_data_line` flag per file.
                 if first_data_line:
                     first_data_line = False
-                    # Heuristic: if column[2] is suspiciously large compared to a
-                    # normal count value AND columns[0] and [1] are also large, it
-                    # is likely the dimension header.  Simpler: just check whether
-                    # reading it as a data entry would produce a valid col index.
-                    # Actually, we must be careful — for legacy files there is NO
-                    # header.  Use: if the number of non-zero entries (col[2]) is
-                    # much larger than any realistic single-cell count, it is a
-                    # header.  More robust: always try to use the line as data;
-                    # if col_index (columns[1]) would be out of range for _cb_lookup
-                    # treat as header and skip.
                     try:
                         col_idx = int(columns[1])
                     except ValueError:
