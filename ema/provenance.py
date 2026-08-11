@@ -330,9 +330,13 @@ def record_pas_drops(
                 orig_pas_key=p, last_stage="preprocess",
             )
     for p in final_pas_ids:
+        # For a surviving PAS the final id IS the unified id (var_name), so set
+        # unified_pas_id explicitly — the join key to pasbed.bed / clusters.h5ad
+        # (coordinates are sourced there by design, not duplicated onto the
+        # ledger). Without this the column was silently NaN for every row.
         ledger.record_pas(
-            orig_pas_key=p, gene_id=gene_of.get(p), last_stage="clustering",
-            dropped_at="", drop_reason="",
+            orig_pas_key=p, unified_pas_id=p, gene_id=gene_of.get(p),
+            last_stage="clustering", dropped_at="", drop_reason="",
         )
     return ledger.count_surviving("pas")
 

@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 import scipy.sparse as sp
 import numpy as np
+import pandas as pd
 
 
 def _encode_pas_key(dataset_id: str, strand: str | None, pasnumber: str) -> str:
@@ -295,11 +296,24 @@ def concat_matrices(
     new_pas_id_to_row: dict[str, int] = {pid: i for i, pid in enumerate(all_new_pas_ids)}
 
     # Step 3–5: Iterate datasets, parse MTX files, build COO data.
-    rows: list[int] = []
-    cols: list[int] = []
-    vals: list[int] = []
+    #
+    # Columns are keyed by (dataset_id, cb) so a cell that contributes a
+    # separate mtx per strand (the pos and neg peak-call matrices share ONE
+    # cb.tsv per BAM — see main.py "same cb.tsv path as pos") collapses into a
+    # SINGLE column carrying both its +-strand and −-strand PAS (which B1's
+    # strand-keyed mapping already routes to distinct rows). Without this the
+    # same barcode landed in two columns — one all-pos, one all-neg — so every
+    # two-strand cell was double-counted as two "cells" downstream (inflated
+    # n_obs, split clustering). coo duplicate-summing then merges the two
+    # sparse column vectors losslessly.
+    # Vectorized per file (matrices are large — no Python per-triple loop):
+    # read the whole MTX with pandas, map old-PAS->unified-row and
+    # local-col->canonical-(dataset,cb)-col with numpy, accumulate arrays.
+    row_chunks: list[np.ndarray] = []
+    col_chunks: list[np.ndarray] = []
+    val_chunks: list[np.ndarray] = []
     merged_cbs: list[str] = []
-    col_offset = 0
+    col_key_to_idx: dict[tuple[str, str], int] = {}
 
     for _mtx_i, (mtx_path, dataset_id, cb_path) in enumerate(
         zip(mtx_paths, dataset_ids, cb_paths)
@@ -308,59 +322,60 @@ def concat_matrices(
         cb_path = Path(cb_path)
         strand_val = strands[_mtx_i] if strand_mode else ""
 
-        # Read CB list: column N in MTX = line N in cb.tsv (0-based).
+        # CB list: column N in MTX = line N in cb.tsv (0-based). Resolve each
+        # local column to its canonical (dataset_id, cb) column index once,
+        # into a lookup array (local 0-based col -> canonical col), so pos/neg
+        # of the same cell reuse ONE column.
         cb_list = [line.strip() for line in open(cb_path) if line.strip()]
-        n_cols_local = len(cb_list)
+        local_canon = np.empty(len(cb_list), dtype=np.int64)
+        for _local_c, _cb in enumerate(cb_list):
+            _key = (dataset_id, _cb)
+            _idx = col_key_to_idx.get(_key)
+            if _idx is None:
+                _idx = len(merged_cbs)
+                col_key_to_idx[_key] = _idx
+                merged_cbs.append(_cb)
+            local_canon[_local_c] = _idx
 
-        # Parse MTX. Detect format: if file starts with "%" comments, it's MatrixMarket
-        # and the first non-% line is the dimension header to skip. If the file has no
-        # comment lines, it's the legacy headerless COO format from peackcalling.py
-        # and every line is a data triple.
-        with open(mtx_path) as _peek:
-            _first_char = _peek.read(1)
-        has_mm_header = (_first_char == "%")
+        # Per-file old-pasnumber -> unified row map (dataset_id + strand fixed
+        # for this file), as parallel numpy arrays for a vectorized lookup.
+        pairs = [
+            (old_int, new_pas_id_to_row[new_pas_id])
+            for (ds, st, old_int), new_pas_id in mapping.items()
+            if ds == dataset_id and st == strand_val
+        ]
+        if not pairs or len(cb_list) == 0:
+            continue
+        old_arr = np.fromiter((p[0] for p in pairs), dtype=np.int64, count=len(pairs))
+        row_arr = np.fromiter((p[1] for p in pairs), dtype=np.int64, count=len(pairs))
 
-        skip_header = has_mm_header  # only skip first data line if MatrixMarket header is present
-        with open(mtx_path) as f:
-            for line in f:
-                line = line.rstrip("\n")
-                if not line or line.startswith("%"):
-                    continue
-                if skip_header:
-                    skip_header = False
-                    continue
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-                try:
-                    r, c, v = int(parts[0]), int(parts[1]), int(parts[2])
-                except ValueError:
-                    continue
+        triples = _read_mtx_triples(mtx_path)  # (N,3) int64: pas, col, count
+        if triples.size == 0:
+            continue
+        r = triples[:, 0]
+        c = triples[:, 1] - 1  # 1-based -> 0-based local column
+        v = triples[:, 2]
 
-                new_pas_id = mapping.get((dataset_id, strand_val, r))
-                if new_pas_id is None:
-                    # This PAS didn't survive the merge (filtered out) — skip.
-                    continue
-
-                new_row = new_pas_id_to_row[new_pas_id]
-                new_col = col_offset + (c - 1)  # 1-based to 0-based
-                rows.append(new_row)
-                cols.append(new_col)
-                vals.append(v)
-
-        col_offset += n_cols_local
-        merged_cbs.extend(cb_list)
+        # Map PAS rows via a Series (NaN where the PAS didn't survive the merge).
+        new_row = pd.Series(r).map(pd.Series(row_arr, index=old_arr)).to_numpy()
+        keep = ~np.isnan(new_row) & (c >= 0) & (c < len(cb_list))
+        if not keep.any():
+            continue
+        row_chunks.append(new_row[keep].astype(np.int32))
+        col_chunks.append(local_canon[c[keep]].astype(np.int32))
+        val_chunks.append(v[keep].astype(np.int32))
 
     # Steps 6–7: Build sparse matrix and sum duplicates (same PAS merged from
-    # multiple original pasnumbers hitting the same cell column).
+    # multiple original pasnumbers hitting the same cell column, AND the pos/neg
+    # column collapse above).
     n_rows = len(new_pas_id_to_row)
-    n_cols = col_offset
+    n_cols = len(merged_cbs)
+    all_rows = np.concatenate(row_chunks) if row_chunks else np.empty(0, dtype=np.int32)
+    all_cols = np.concatenate(col_chunks) if col_chunks else np.empty(0, dtype=np.int32)
+    all_vals = np.concatenate(val_chunks) if val_chunks else np.empty(0, dtype=np.int32)
 
     matrix = sp.coo_matrix(
-        (
-            np.array(vals, dtype=np.int32),
-            (np.array(rows, dtype=np.int32), np.array(cols, dtype=np.int32)),
-        ),
+        (all_vals, (all_rows, all_cols)),
         shape=(n_rows, n_cols),
         dtype=np.int32,
     )
@@ -383,6 +398,32 @@ def concat_matrices(
             f.write(cb + "\n")
 
     return output_mtx, output_cb
+
+
+def _read_mtx_triples(path: Path) -> np.ndarray:
+    """Read a MatrixMarket-or-legacy COO ``.mtx`` into an ``(N, 3)`` int64
+    array ``[pas_row, cell_col, count]`` using the pandas C parser (no
+    per-triple Python loop — these matrices are large).
+
+    Handles both formats concat_matrices accepts: MatrixMarket (``%`` comment
+    lines + a ``n_rows n_cols nnz`` dimension header) and the legacy headerless
+    triple format written by peakcalling. Returns an empty ``(0, 3)`` array for
+    an empty/degenerate file rather than raising.
+    """
+    with open(path) as _peek:
+        has_mm_header = _peek.read(1) == "%"
+    try:
+        df = pd.read_csv(
+            path, sep=r"\s+", comment="%", header=None,
+            skip_blank_lines=True, dtype=np.int64,
+        )
+    except (ValueError, pd.errors.EmptyDataError):
+        return np.empty((0, 3), dtype=np.int64)
+    if df.shape[0] == 0 or df.shape[1] < 3:
+        return np.empty((0, 3), dtype=np.int64)
+    if has_mm_header:
+        df = df.iloc[1:]  # drop the "n_rows n_cols nnz" dimension line
+    return df.iloc[:, :3].to_numpy(dtype=np.int64)
 
 
 def _pas_sort_key(pas_id: str) -> tuple[int, str]:
