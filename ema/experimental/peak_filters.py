@@ -24,7 +24,8 @@ def apply_filters(input_bed: str, output_bed: str,
                   ip_window_left: int = 10,
                   ip_window_right: int = 30,
                   ip_a_stretch: int = 6,
-                  ip_a_fraction: float = 0.7) -> dict:
+                  ip_a_fraction: float = 0.7,
+                  ip_mode: str = "annotate") -> dict:
     """Apply all enabled filters sequentially to a BED file.
 
     Filters are applied in order:
@@ -45,9 +46,17 @@ def apply_filters(input_bed: str, output_bed: str,
         ip_window_right: Right window for internal priming check.
         ip_a_stretch: Minimum consecutive A's for internal priming.
         ip_a_fraction: Minimum A-fraction for internal priming.
+        ip_mode: ``"annotate"`` (default, keep + flag) or ``"filter"`` (drop)
+            -- forwarded to :func:`ema.experimental.internal_priming.
+            filter_internal_priming`. Only affects the internal-priming
+            filter; the annotation-region filter (``enable_annotation_filter``)
+            is a distinct "keep only PAS overlapping a gene region" concept
+            and always drops non-overlapping peaks, unaffected by this flag.
 
     Returns:
-        Dict with statistics from each applied filter.
+        Dict with statistics from each applied filter. When the internal
+        priming filter runs, ``all_stats["internal_priming_flags"]`` is the
+        ``{pas_id: bool}`` map from :func:`filter_internal_priming`.
     """
     all_stats = {"filters_applied": []}
     current_input = input_bed
@@ -62,13 +71,15 @@ def apply_filters(input_bed: str, output_bed: str,
                 window_left=ip_window_left,
                 window_right=ip_window_right,
                 a_stretch=ip_a_stretch,
-                a_fraction=ip_a_fraction
+                a_fraction=ip_a_fraction,
+                mode=ip_mode,
             )
             all_stats["internal_priming"] = ip_stats
+            all_stats["internal_priming_flags"] = ip_stats.get("flags", {})
             all_stats["filters_applied"].append("internal_priming")
             current_input = ip_output
-            logger.info(f"Internal priming: {ip_stats['filtered']}/{ip_stats['total']} "
-                       f"removed ({ip_stats['filtered_fraction']:.1%})")
+            logger.info(f"Internal priming (mode={ip_mode}): {ip_stats['filtered']}/{ip_stats['total']} "
+                       f"removed, {ip_stats.get('flagged', 0)}/{ip_stats['total']} flagged")
         else:
             logger.warning("Internal priming filter enabled but no genome FASTA provided. Skipping.")
 

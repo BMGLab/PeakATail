@@ -55,9 +55,12 @@ def _build_run(tmp_path: Path, *, register_clusters_artifact: bool = False) -> P
         root / "provenance" / "pas_ledger.tsv",
         PAS_LEDGER_COLUMNS,
         [
-            ["p1", "chr1", 100, 110, "+", "u1", "", "ENSG1", 0, "CORE", "pas_gene", "", ""],
-            ["p2", "chr2", 200, 260, "-", "u2", "", "ENSG2", 5, "CORE", "pas_gene", "", ""],
-            ["p3", "chr3", 300, 310, "+", "u3", "", "", "", "", "atlas_snap", "atlas_snap", "no_gene"],
+            # D9: the ledger now carries 3 additional trailing columns
+            # (atlas_match, atlas_distance_bp, internal_priming) — "" here
+            # since this synthetic fixture predates atlas/ip running.
+            ["p1", "chr1", 100, 110, "+", "u1", "", "ENSG1", 0, "CORE", "pas_gene", "", "", "", "", ""],
+            ["p2", "chr2", 200, 260, "-", "u2", "", "ENSG2", 5, "CORE", "pas_gene", "", "", "", "", ""],
+            ["p3", "chr3", 300, 310, "+", "u3", "", "", "", "", "atlas_snap", "atlas_snap", "no_gene", "", "", ""],
         ],
     )
     _write_tsv(

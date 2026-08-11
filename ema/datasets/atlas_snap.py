@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import subprocess
 
 
@@ -10,6 +11,7 @@ def snap_beds_to_atlas(
     distance: int = 50,
     strands: list[str] | None = None,
     ledger=None,
+    mode: str = "annotate",
 ) -> tuple[Path, Path]:
     """Snap called PAS coordinates to a reference atlas via bedtools closest.
 
@@ -20,23 +22,63 @@ def snap_beds_to_atlas(
         atlas_bed: Path to reference atlas BED with columns:
             chrom, start, end, atlas_pas_id, score, strand.
         output_dir: Directory where output files are written.
-        distance: Maximum distance in bp; called PAS farther than this are dropped.
+        distance: Maximum distance in bp for a PAS to count as an atlas
+            match (``atlas_match=True``). In ``"filter"`` mode this is also
+            the hard drop cutoff (today's pre-existing behaviour).
+        mode: ``"annotate"`` (default) or ``"filter"``.
+
+            * ``"annotate"`` — the scientist is hunting ALTERNATIVE
+              polyadenylation, so a PAS that doesn't match the atlas is
+              signal, not noise: EVERY input PAS is kept. Matched PAS are
+              snapped onto the atlas summit coordinate (today's behaviour);
+              unmatched PAS keep their OWN (already summit-collapsed)
+              coordinates and get their own unique PAS id (no cross-dataset
+              merging of unmatched PAS is performed here — see module
+              docstring / D6 report for the open question on whether that
+              should happen).
+            * ``"filter"`` — today's pre-D6+ behaviour: PAS with no atlas
+              hit within ``distance`` are dropped (``dropped_at=
+              "atlas_snap"`` in the ledger, if one is supplied).
+
+            Regardless of mode, ``atlas_match``/``atlas_distance_bp`` are
+            computed for every input PAS and written to two sidecars in
+            ``output_dir`` (see Returns): ``atlas_status.tsv`` (per
+            *unified* PAS id) and ``atlas_stats.json`` (run-level counts).
 
     Returns:
         Tuple of (snapped_bed_path, mapping_path) where:
-            snapped_bed_path: BED file with one row per unique atlas PAS that
-                received at least one mapping, using atlas coordinates.
-                Columns: chrom, start, end, atlas_pas_id, score, strand.
+            snapped_bed_path: BED file with one row per unique kept PAS
+                (atlas coordinates for matched PAS, own coordinates for
+                unmatched PAS in ``"annotate"`` mode).
+                Columns: chrom, start, end, pas_id, score, strand.
             mapping_path: TSV with header ``dataset_id\told_pasnumber\tnew_pas_id``
                 and one row per kept input PAS, where new_pas_id is the
-                atlas_pas_id string. Many called PAS may map to the same
-                atlas PAS (many-to-one snap).
+                atlas_pas_id string (matched) or a per-PAS synthetic id
+                (unmatched, annotate mode only). Many called PAS may map to
+                the same MATCHED atlas PAS (many-to-one snap); unmatched PAS
+                are always 1:1.
+
+        Two additional sidecars are always written to ``output_dir``:
+            ``atlas_status.tsv`` -- header ``new_pas_id\tatlas_match\t
+                atlas_distance_bp``, one row per PAS id appearing in
+                ``snapped_bed_path`` / the ``new_pas_id`` column of
+                ``mapping_path``. ``atlas_distance_bp`` is ``""`` when no
+                atlas feature was found at all (as opposed to found-but-
+                too-far, which is a real integer). Callers (see
+                ``ema/main.py``) read this to build the ``atlas_of`` map
+                passed to ``ema.provenance.record_pas_drops``.
+            ``atlas_stats.json`` -- ``{"n_atlas_matched", "n_atlas_unmatched",
+                "atlas_match_rate", "mode"}``.
 
     Raises:
         FileNotFoundError: If any bed_path or atlas_bed does not exist.
-        ValueError: If bed_paths and dataset_ids have different lengths.
+        ValueError: If bed_paths and dataset_ids have different lengths, or
+            mode is not one of ``{"annotate", "filter"}``.
         subprocess.CalledProcessError: If sort or bedtools closest fails.
     """
+    if mode not in ("annotate", "filter"):
+        raise ValueError(f"snap_beds_to_atlas: mode must be 'annotate' or 'filter', got {mode!r}")
+
     if len(bed_paths) != len(dataset_ids):
         raise ValueError(
             f"bed_paths length ({len(bed_paths)}) must match "
@@ -159,6 +201,7 @@ def snap_beds_to_atlas(
     # So atlas-relative indices stay constant (chrom=0, start=1, end=2, name=3,
     # score=4, strand=5) BUT shifted by +6 from input.
     _IDX_INPUT_NAME = 3
+    _IDX_INPUT_SCORE = 4
     _IDX_ATLAS_CHROM = 6
     _IDX_ATLAS_START = 7
     _IDX_ATLAS_END = 8
@@ -168,10 +211,20 @@ def snap_beds_to_atlas(
     _MIN_EXPECTED_COLS = 13  # BED6 input + BED6 atlas + distance
 
     from ema.datasets.pas_merge import _decode_pas_key
-    # mapping_rows: (dataset_id, strand, old_pasnumber, atlas_pas_id, snap_distance_bp)
+    # mapping_rows: (dataset_id, strand, old_pasnumber, key, snap_distance_bp)
+    # `key` is the atlas_pas_id for matched PAS, or the (unique) input_name
+    # for unmatched PAS kept in "annotate" mode.
     mapping_rows: list[tuple[str, str, str, str, int]] = []
-    # atlas_pas_id -> (chrom, start, end, pas_id, score, strand)
+    # atlas_pas_id -> (chrom, start, end, pas_id, score, strand) — MATCHED, atlas coords.
     atlas_hits: dict[str, tuple[str, str, str, str, str, str]] = {}
+    # input_name -> (chrom, start, end, pas_id, score, strand) — UNMATCHED, own coords.
+    unmatched_hits: dict[str, tuple[str, str, str, str, str, str]] = {}
+    # per-PAS atlas status keyed by the SAME `key` used in mapping_rows, so it
+    # can be re-keyed onto the final new_pas_id alongside atlas_hits/unmatched_hits.
+    status_by_key: dict[str, tuple[bool, "int | str"]] = {}
+
+    n_atlas_matched = 0
+    n_atlas_unmatched = 0
 
     with open(closest_raw) as f:
         for line in f:
@@ -189,72 +242,110 @@ def snap_beds_to_atlas(
             dataset_id, in_strand, old_pasnumber = _decode_pas_key(input_name)
             in_chrom = cols[0]
             in_start, in_end = cols[1], cols[2]
+            in_score = cols[_IDX_INPUT_SCORE]
 
-            def _record_drop(reason: str, snap_dist=None) -> None:
+            def _record(*, dropped_at: str, drop_reason: str, atlas_match, atlas_distance_bp) -> None:
                 if ledger is None:
                     return
                 ledger.record_pas(
                     orig_pas_key=input_name,
                     chrom=in_chrom, start=in_start, end=in_end, strand=in_strand,
-                    snap_distance_bp=snap_dist,
+                    snap_distance_bp=atlas_distance_bp,
                     last_stage="atlas_snap",
-                    dropped_at="atlas_snap",
-                    drop_reason=reason,
+                    dropped_at=dropped_at,
+                    drop_reason=drop_reason,
+                    atlas_match=atlas_match,
+                    atlas_distance_bp=atlas_distance_bp,
                 )
 
             atlas_chrom = cols[_IDX_ATLAS_CHROM]
-            # bedtools reports "." for atlas chrom when no feature found
-            if atlas_chrom == ".":
-                _record_drop("no atlas feature on contig/strand")
+            atlas_pas_id = cols[_IDX_ATLAS_PAS_ID] if atlas_chrom != "." else None
+
+            # bedtools reports "." for atlas chrom when no feature found at all.
+            has_hit = atlas_chrom != "."
+            dist: "int | None" = None
+            unparseable = False
+            if has_hit:
+                try:
+                    dist = int(cols[_IDX_DISTANCE])
+                except ValueError:
+                    unparseable = True
+                if dist is not None and dist < 0:
+                    # -1 sentinel: bedtools found no feature within range.
+                    has_hit = False
+                    dist = None
+
+            if unparseable:
+                # Malformed bedtools output — a data-integrity issue, not a
+                # scientific filtering decision. Always dropped, both modes.
+                _record(dropped_at="atlas_snap", drop_reason="unparseable closest distance",
+                        atlas_match="", atlas_distance_bp="")
                 continue
 
-            try:
-                dist = int(cols[_IDX_DISTANCE])
-            except ValueError:
-                _record_drop("unparseable closest distance")
+            atlas_match = bool(has_hit and dist is not None and dist <= distance)
+
+            if atlas_match:
+                n_atlas_matched += 1
+            else:
+                n_atlas_unmatched += 1
+
+            if mode == "filter":
+                if not atlas_match:
+                    if not has_hit:
+                        reason = "no atlas feature within range (-1)" if atlas_chrom != "." else "no atlas feature on contig/strand"
+                    else:
+                        reason = f"summit distance {dist}bp > atlas_distance {distance}bp"
+                    _record(dropped_at="atlas_snap", drop_reason=reason,
+                            atlas_match=False, atlas_distance_bp=dist if dist is not None else "")
+                    continue
+                # Matched -> keep (falls through to shared bookkeeping below).
+                _record(dropped_at="", drop_reason="", atlas_match=True, atlas_distance_bp=dist)
+                key = atlas_pas_id
+                mapping_rows.append((dataset_id, in_strand, old_pasnumber, key, dist))
+                status_by_key[key] = (True, dist)
+                if key not in atlas_hits:
+                    atlas_hits[key] = (
+                        atlas_chrom, cols[_IDX_ATLAS_START], cols[_IDX_ATLAS_END],
+                        key, cols[_IDX_ATLAS_SCORE], cols[_IDX_ATLAS_STRAND],
+                    )
                 continue
 
-            # -1 means no feature found; filter by max distance
-            if dist < 0:
-                _record_drop("no atlas feature within range (-1)")
-                continue
-            if dist > distance:
-                _record_drop(f"summit distance {dist}bp > atlas_distance {distance}bp", dist)
-                continue
-
-            atlas_pas_id = cols[_IDX_ATLAS_PAS_ID]
-
-            mapping_rows.append(
-                (dataset_id, in_strand, old_pasnumber, atlas_pas_id, dist)
-            )
-            # E3: surviving PAS (dropped_at="") with its snap distance.
-            if ledger is not None:
-                ledger.record_pas(
-                    orig_pas_key=input_name,
-                    chrom=in_chrom, start=in_start, end=in_end, strand=in_strand,
-                    snap_distance_bp=dist,
-                    last_stage="atlas_snap",
+            # mode == "annotate": EVERY PAS is kept (never dropped for a
+            # non-match — that's the signal the scientist is hunting for).
+            _record(dropped_at="", drop_reason="", atlas_match=atlas_match,
+                    atlas_distance_bp=dist if dist is not None else "")
+            if atlas_match:
+                key = atlas_pas_id
+                mapping_rows.append((dataset_id, in_strand, old_pasnumber, key, dist))
+                status_by_key[key] = (True, dist)
+                if key not in atlas_hits:
+                    atlas_hits[key] = (
+                        atlas_chrom, cols[_IDX_ATLAS_START], cols[_IDX_ATLAS_END],
+                        key, cols[_IDX_ATLAS_SCORE], cols[_IDX_ATLAS_STRAND],
+                    )
+            else:
+                # Unmatched PAS keep their OWN (already summit-collapsed)
+                # coordinates and are 1:1 (no cross-dataset merge here).
+                key = input_name
+                mapping_rows.append(
+                    (dataset_id, in_strand, old_pasnumber, key, dist if dist is not None else -1)
                 )
+                status_by_key[key] = (False, dist if dist is not None else "")
+                unmatched_hits[key] = (in_chrom, in_start, in_end, key, in_score, in_strand)
 
-            if atlas_pas_id not in atlas_hits:
-                atlas_hits[atlas_pas_id] = (
-                    atlas_chrom,
-                    cols[_IDX_ATLAS_START],
-                    cols[_IDX_ATLAS_END],
-                    atlas_pas_id,
-                    cols[_IDX_ATLAS_SCORE],
-                    cols[_IDX_ATLAS_STRAND],
-                )
-
-    # Step 6: Re-key atlas PAS IDs as sequential integers so they match MTX rows
-    # for annotate.py join. Keep the original atlas_pas_id in a sidecar lookup.
-    sorted_atlas_hits = sorted(
-        atlas_hits.values(),
+    # Step 6: Re-key PAS ids as sequential integers so they match MTX rows
+    # for annotate.py join. Matched atlas hits AND (annotate mode only)
+    # unmatched PAS share ONE sequential id space, sorted by coordinate so
+    # ids stay geographically stable. Keep the original atlas_pas_id in a
+    # sidecar lookup (unmatched PAS have no atlas string id to preserve).
+    combined_hits = {**atlas_hits, **unmatched_hits}
+    sorted_hits = sorted(
+        combined_hits.values(),
         key=lambda row: (row[0], int(row[1])),
     )
-    atlas_str_to_int: dict[str, str] = {}
-    for i, hit in enumerate(sorted_atlas_hits, start=1):
-        atlas_str_to_int[hit[3]] = str(i)
+    key_to_int: dict[str, str] = {}
+    for i, hit in enumerate(sorted_hits, start=1):
+        key_to_int[hit[3]] = str(i)
 
     # Step 6b: Write mapping TSV using integer new_pas_id.
     # Columns: dataset_id, strand, old_pasnumber, new_pas_id, snap_distance_bp.
@@ -262,34 +353,57 @@ def snap_beds_to_atlas(
     # (concat_matrices, parse_atlas_mapping) so this reordering is safe.
     with open(mapping_path, "w") as f:
         f.write("dataset_id\tstrand\told_pasnumber\tnew_pas_id\tsnap_distance_bp\n")
-        for dataset_id, in_strand, old_pasnumber, atlas_pas_id, snap_dist in mapping_rows:
-            new_int_id = atlas_str_to_int.get(atlas_pas_id)
+        for dataset_id, in_strand, old_pasnumber, key, snap_dist in mapping_rows:
+            new_int_id = key_to_int.get(key)
             if new_int_id is None:
                 continue
             f.write(
                 f"{dataset_id}\t{in_strand}\t{old_pasnumber}\t{new_int_id}\t{snap_dist}\n"
             )
 
-    # Step 6c: Sidecar lookup so atlas string IDs are preserved
+    # Step 6c: Sidecar lookup so atlas string IDs are preserved (matched only;
+    # unmatched PAS have no atlas string id).
     lookup_path = output_dir / "atlas_pas_id_lookup.tsv"
     with open(lookup_path, "w") as f:
         f.write("integer_id\tatlas_pas_id\n")
-        for atlas_id, int_id in atlas_str_to_int.items():
-            f.write(f"{int_id}\t{atlas_id}\n")
+        for atlas_id, int_id in key_to_int.items():
+            if atlas_id in atlas_hits:
+                f.write(f"{int_id}\t{atlas_id}\n")
+
+    # Step 6d (D9): atlas_status.tsv — new_pas_id -> (atlas_match, atlas_distance_bp),
+    # keyed on the SAME rekeyed id used everywhere else downstream (posbed,
+    # count matrix, clusters.h5ad var_names). See docstring for consumers.
+    status_path = output_dir / "atlas_status.tsv"
+    with open(status_path, "w") as f:
+        f.write("new_pas_id\tatlas_match\tatlas_distance_bp\n")
+        for key, int_id in key_to_int.items():
+            match, dist = status_by_key.get(key, ("", ""))
+            f.write(f"{int_id}\t{match}\t{dist}\n")
+
+    # Step 6e (D9): atlas_stats.json — run-level match/no-match counts.
+    n_total = n_atlas_matched + n_atlas_unmatched
+    atlas_stats = {
+        "mode": mode,
+        "n_atlas_matched": n_atlas_matched,
+        "n_atlas_unmatched": n_atlas_unmatched,
+        "atlas_match_rate": round(n_atlas_matched / n_total, 4) if n_total else 0.0,
+    }
+    with open(output_dir / "atlas_stats.json", "w") as f:
+        json.dump(atlas_stats, f, indent=2)
 
     # Step 7: Write snapped BED — col 4 is the integer ID (matches MTX rows)
     from ema.datasets.pas_merge import pas_uid_of
     with open(snapped_bed_path, "w") as f:
-        for chrom, start, end, pas_id, score, strand in sorted_atlas_hits:
-            int_id = atlas_str_to_int[pas_id]
+        for chrom, start, end, pas_id, score, strand in sorted_hits:
+            int_id = key_to_int[pas_id]
             f.write(f"{chrom}\t{start}\t{end}\t{int_id}\t{score}\t{strand}\n")
 
     # Step 7b (E1): content-addressed stable id sidecar (new_pas_id -> pas_uid).
     uid_path = output_dir / "pas_uid.tsv"
     with open(uid_path, "w") as f:
         f.write("new_pas_id\tpas_uid\n")
-        for chrom, start, end, pas_id, score, strand in sorted_atlas_hits:
-            int_id = atlas_str_to_int[pas_id]
+        for chrom, start, end, pas_id, score, strand in sorted_hits:
+            int_id = key_to_int[pas_id]
             f.write(f"{int_id}\t{pas_uid_of(chrom, start, end, strand)}\n")
 
     # Step 8: Clean up temp files

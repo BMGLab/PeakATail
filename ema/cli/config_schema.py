@@ -210,6 +210,23 @@ class RunConfig:
             description="Atlas snap distance (bp).",
         ),
     )
+    atlas_mode: str = field(
+        default="annotate",
+        metadata=_spec(
+            cli_flag="--atlas-mode", yaml_key="atlas_mode",
+            choice=("annotate", "filter"),
+            legacy_args_attr="atlas_mode",
+            description=(
+                "How atlas snapping handles PAS with no atlas match (only "
+                "relevant when --atlas is set). 'annotate' (default) KEEPS "
+                "every PAS -- non-matching PAS are alternative-PAS signal, "
+                "not noise -- and records atlas_match/atlas_distance_bp on "
+                "the PAS ledger + pasbed. 'filter' restores the pre-D9 "
+                "behaviour of dropping PAS with no atlas hit within "
+                "--atlas-distance."
+            ),
+        ),
+    )
     filenames: Optional[dict] = field(
         default=None,
         metadata=_spec(
@@ -472,6 +489,21 @@ class RunConfig:
             legacy_args_attr="genome_fasta",
             click_type=click.Path(exists=True),
             description="Genome FASTA (indexed with pyfaidx/.fai) required by --ip-filter.",
+        ),
+    )
+    ip_filter_mode: str = field(
+        default="annotate",
+        metadata=_spec(
+            cli_flag="--ip-filter-mode", yaml_key="ip_filter_mode",
+            choice=("annotate", "filter"),
+            legacy_args_attr="ip_filter_mode",
+            description=(
+                "How the internal-priming filter handles a flagged PAS "
+                "(only relevant when --ip-filter is set). 'annotate' "
+                "(default) KEEPS every PAS and records the internal_priming "
+                "flag on the PAS ledger + pasbed. 'filter' restores the "
+                "pre-D9 behaviour of dropping flagged PAS."
+            ),
         ),
     )
     annot_filter: bool = field(

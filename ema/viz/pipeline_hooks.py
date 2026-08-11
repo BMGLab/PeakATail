@@ -150,6 +150,15 @@ def parse_atlas_mapping(mapping_path: Path) -> tuple[int, list[int]]:
 
     Distances are read from the optional 4th column added by
     :func:`ema.datasets.atlas_snap.snap_beds_to_atlas`.
+
+    D9 caveat: in ``atlas_mode="annotate"`` (the current default), EVERY kept
+    PAS gets a mapping row -- matched (atlas coordinates) AND unmatched (own
+    coordinates) alike -- so ``snapped_count`` here means "PAS present in the
+    unified/kept set", NOT "PAS that matched the atlas". Use
+    ``unified/atlas_stats.json``'s ``n_atlas_matched`` (see
+    :func:`_render_atlas_snap_diag`) for the honest match count; this
+    function's ``snapped_count`` stays useful as an all-mode row-count read,
+    and is the fallback when that sidecar is unavailable (e.g. very old runs).
     """
     snapped = 0
     distances: list[int] = []
@@ -176,6 +185,40 @@ def parse_atlas_mapping(mapping_path: Path) -> tuple[int, list[int]]:
                 except ValueError:
                     pass
     return snapped, distances
+
+
+def parse_atlas_status_distances(status_path: Path) -> list[int]:
+    """Read per-PAS ``atlas_distance_bp`` values out of ``atlas_status.tsv``.
+
+    Both atlas paths write this sidecar (``ema.datasets.atlas_snap.
+    snap_beds_to_atlas`` for ``atlas_mode="filter"``, keyed ``new_pas_id``;
+    ``ema.datasets.atlas_annotate.annotate_pas_against_atlas`` for the
+    default ``atlas_mode="annotate"`` overlay, keyed ``unified_pas_id``) with
+    a distance for EVERY PAS -- matched and unmatched alike -- so this is a
+    more complete distance source than :func:`parse_atlas_mapping`, whose
+    mapping-file semantics vary by mode (see its docstring). Header-aware so
+    either key name is accepted; entries with an empty ``atlas_distance_bp``
+    (no atlas feature on that contig/strand at all) are skipped, not
+    coerced to 0. Returns ``[]`` if the sidecar doesn't exist (older runs).
+    """
+    distances: list[int] = []
+    if not status_path.exists():
+        return distances
+    with open(status_path) as fh:
+        header = fh.readline().rstrip("\n").split("\t")
+        col = {name: i for i, name in enumerate(header)}
+        i_dist = col.get("atlas_distance_bp")
+        if i_dist is None:
+            return distances
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) <= i_dist or parts[i_dist] == "":
+                continue
+            try:
+                distances.append(int(parts[i_dist]))
+            except ValueError:
+                pass
+    return distances
 
 
 def count_called_pas(peakcalling_dir: Path) -> int:
@@ -359,6 +402,33 @@ def _render_atlas_snap_diag(
 ) -> None:
     try:
         snapped, distances = parse_atlas_mapping(output_dir / "unified" / "atlas_mapping.tsv")
+        # Atlas-as-overlay: atlas_mode="annotate" (the default) no longer
+        # writes atlas_mapping.tsv at all (the unified PAS set comes from
+        # merge_pas_beds, which writes multi_sample_pas_mapping.tsv instead
+        # -- see ema/main.py). atlas_status.tsv, written by BOTH atlas paths
+        # (snap_beds_to_atlas for "filter", atlas_annotate's overlay for
+        # "annotate"), carries a per-PAS distance for every PAS regardless of
+        # mode, so prefer it whenever present -- a strict superset of what
+        # atlas_mapping.tsv could ever offer (that file, when it exists, only
+        # covers matched/kept rows).
+        _status_distances = parse_atlas_status_distances(
+            output_dir / "unified" / "atlas_status.tsv"
+        )
+        if _status_distances:
+            distances = _status_distances
+        # D9: prefer the real atlas-MATCH count from atlas_stats.json when it
+        # exists. In atlas_mode="annotate" (the current default), the mapping
+        # row count alone would silently re-introduce the D1 near-100%-
+        # snap-rate illusion. atlas_stats.json's n_atlas_matched is the
+        # honest, per-PAS-verified count regardless of mode.
+        _atlas_stats_path = output_dir / "unified" / "atlas_stats.json"
+        if _atlas_stats_path.exists():
+            try:
+                _atlas_stats = json.loads(_atlas_stats_path.read_text())
+                if "n_atlas_matched" in _atlas_stats:
+                    snapped = int(_atlas_stats["n_atlas_matched"])
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as _e:
+                log.warning("atlas_stats.json unreadable, falling back to mapping-row count: %s", _e)
         # D1 fix: the snap-rate denominator must count ALL called PAS on BOTH
         # strands. The old glob only read ``*.pos.bed`` (positive strand), which
         # understated ``all_called`` — and the subsequent ``max(0, ...)`` clamp

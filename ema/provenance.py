@@ -75,6 +75,14 @@ PAS_LEDGER_COLUMNS: list[str] = [
     "last_stage",
     "dropped_at",
     "drop_reason",
+    # D9: atlas-snap / internal-priming become ANNOTATE-not-drop by default
+    # (see ema/datasets/atlas_snap.py, ema/experimental/internal_priming.py).
+    # Additive at the end so existing readers (pandas, TSV-by-index) tolerate
+    # them: "" when the corresponding stage never ran for this PAS (e.g.
+    # atlas/ip disabled, or the row predates this column set).
+    "atlas_match",
+    "atlas_distance_bp",
+    "internal_priming",
 ]
 
 #: Frozen column order for cell_ledger.tsv. See ``PAS_LEDGER_COLUMNS``.
@@ -160,12 +168,25 @@ class ProvenanceLedger:
         last_stage: Any = None,
         dropped_at: Any = "",
         drop_reason: Any = "",
+        atlas_match: Any = "",
+        atlas_distance_bp: Any = "",
+        internal_priming: Any = "",
     ) -> None:
         """Append one buffered row to the PAS ledger.
 
         ``orig_pas_key`` is required; all other fields are optional and
         default to an unknown/empty value. See module docstring for the
         surviving-vs-dropped semantics of ``dropped_at``/``drop_reason``.
+
+        ``atlas_match``/``atlas_distance_bp``/``internal_priming`` (D9) default
+        to ``""`` (stage never ran for this PAS -- e.g. atlas/ip disabled).
+        When atlas snapping ran, ``atlas_match`` is a bool (whether this PAS
+        was within the configured atlas distance) and ``atlas_distance_bp``
+        is the bedtools closest distance (an int, even when ``atlas_match``
+        is False -- "found but too far" is distinct from "no atlas feature
+        at all", which stays ``""``). When the internal-priming filter ran,
+        ``internal_priming`` is a bool (True = flagged as likely internal
+        priming).
         """
         row = (
             _sanitize(orig_pas_key),
@@ -181,6 +202,9 @@ class ProvenanceLedger:
             _sanitize(last_stage),
             _sanitize(dropped_at),
             _sanitize(drop_reason),
+            _sanitize(atlas_match),
+            _sanitize(atlas_distance_bp),
+            _sanitize(internal_priming),
         )
         self._rows["pas"].append(row)
 
@@ -285,6 +309,8 @@ def record_pas_drops(
     dataset_id: str = "",
     gene_of=None,
     reasons=None,
+    atlas_of=None,
+    ip_of=None,
 ) -> int:
     """Record one dataset's PAS provenance across the two per-dataset drop sites.
 
@@ -306,8 +332,19 @@ def record_pas_drops(
 
     ``gene_of`` optionally maps a surviving pas_id → gene_id; ``reasons`` may
     override the default drop reasons ``{"pas_gene": ..., "preprocess": ...}``.
+
+    ``atlas_of`` (D9) optionally maps pas_id → ``(atlas_match, atlas_distance_bp)``
+    -- the per-unified-PAS status written by
+    ``ema.datasets.atlas_snap.snap_beds_to_atlas``'s ``atlas_status.tsv``
+    sidecar. ``ip_of`` (D9) optionally maps pas_id → ``internal_priming``
+    bool, from ``ema.experimental.peak_filters.apply_filters``'s returned
+    flags. Both default to ``{}`` (columns stay ``""`` for every row) when
+    atlas/ip did not run -- this is what keeps a no-atlas/no-ip run's ledger
+    byte-identical aside from the three additive, empty columns.
     """
     gene_of = gene_of or {}
+    atlas_of = atlas_of or {}
+    ip_of = ip_of or {}
     default_reasons = {
         "pas_gene": "no gene within max_distance (annotate)",
         "preprocess": "below min_cells (preprocessing)",
@@ -315,28 +352,44 @@ def record_pas_drops(
     if reasons:
         default_reasons.update(reasons)
 
+    def _atlas_fields(p):
+        val = atlas_of.get(p)
+        if val is None:
+            return "", ""
+        atlas_match, atlas_distance_bp = val
+        return atlas_match, atlas_distance_bp
+
     annotated = set(annotated_pas_ids)
     final = set(final_pas_ids)
     for p in input_pas_ids:
         if p not in annotated:
+            atlas_match, atlas_distance_bp = _atlas_fields(p)
             ledger.record_drop(
                 "pas", dropped_at="pas_gene", drop_reason=default_reasons["pas_gene"],
                 orig_pas_key=p, last_stage="annotate",
+                atlas_match=atlas_match, atlas_distance_bp=atlas_distance_bp,
+                internal_priming=ip_of.get(p, ""),
             )
     for p in annotated_pas_ids:
         if p not in final:
+            atlas_match, atlas_distance_bp = _atlas_fields(p)
             ledger.record_drop(
                 "pas", dropped_at="preprocess", drop_reason=default_reasons["preprocess"],
                 orig_pas_key=p, last_stage="preprocess",
+                atlas_match=atlas_match, atlas_distance_bp=atlas_distance_bp,
+                internal_priming=ip_of.get(p, ""),
             )
     for p in final_pas_ids:
         # For a surviving PAS the final id IS the unified id (var_name), so set
         # unified_pas_id explicitly — the join key to pasbed.bed / clusters.h5ad
         # (coordinates are sourced there by design, not duplicated onto the
         # ledger). Without this the column was silently NaN for every row.
+        atlas_match, atlas_distance_bp = _atlas_fields(p)
         ledger.record_pas(
             orig_pas_key=p, unified_pas_id=p, gene_id=gene_of.get(p),
             last_stage="clustering", dropped_at="", drop_reason="",
+            atlas_match=atlas_match, atlas_distance_bp=atlas_distance_bp,
+            internal_priming=ip_of.get(p, ""),
         )
     return ledger.count_surviving("pas")
 

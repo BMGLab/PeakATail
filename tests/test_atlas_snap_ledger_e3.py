@@ -45,9 +45,12 @@ def test_ledger_records_survivor_and_drop(tmp_path: Path) -> None:
     )
 
     ledger = ProvenanceLedger(run)
+    # mode="filter": this test asserts the pre-D9 drop behaviour (the far
+    # PAS is dropped, not annotated-and-kept). See test_atlas_snap_annotate_d9.py
+    # for the new default ("annotate") mode's ledger semantics.
     snap_beds_to_atlas(
         [bed], ["dsA"], atlas_bed=atlas, output_dir=unified,
-        distance=50, strands=["+"], ledger=ledger,
+        distance=50, strands=["+"], ledger=ledger, mode="filter",
     )
     ledger.flush()
 

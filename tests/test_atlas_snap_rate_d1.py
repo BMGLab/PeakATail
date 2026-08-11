@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ema.viz.pipeline_hooks import count_called_pas, parse_atlas_mapping
+from ema.viz.pipeline_hooks import (
+    count_called_pas,
+    parse_atlas_mapping,
+    parse_atlas_status_distances,
+)
 
 
 def _write_bed(path: Path, n_lines: int, strand: str) -> None:
@@ -64,3 +68,44 @@ def test_unsnapped_is_not_clamped_when_denominator_complete(tmp_path: Path) -> N
     assert all_called == 12
     assert all_called - snapped == 8  # would have been near-0 under pos-only glob
     assert distances == [0, 3, 6, 9]
+
+
+# ---------------------------------------------------------------------------
+# atlas-as-overlay: atlas_mode="annotate" (default) no longer writes
+# atlas_mapping.tsv at all (the unified PAS set now comes from
+# merge_pas_beds). atlas_status.tsv -- written by BOTH atlas paths -- is the
+# distance source the snap-rate diagnostic must fall back to so it keeps
+# working under the new routing.
+# ---------------------------------------------------------------------------
+def test_parse_atlas_status_distances_reads_unified_pas_id_keyed_sidecar(tmp_path: Path) -> None:
+    unified = tmp_path / "unified"
+    unified.mkdir()
+    status_path = unified / "atlas_status.tsv"
+    status_path.write_text(
+        "unified_pas_id\tatlas_match\tatlas_distance_bp\n"
+        "1\tTrue\t1\n"
+        "2\tFalse\t5019\n"
+        "3\tFalse\t\n"  # no atlas feature on this contig/strand at all
+    )
+    distances = parse_atlas_status_distances(status_path)
+    assert distances == [1, 5019]  # the "" row is skipped, not coerced to 0
+
+
+def test_parse_atlas_status_distances_reads_new_pas_id_keyed_sidecar(tmp_path: Path) -> None:
+    """Same reader also accepts the filter-mode (snap_beds_to_atlas) sidecar,
+    which uses the header name ``new_pas_id`` instead of ``unified_pas_id``.
+    """
+    unified = tmp_path / "unified"
+    unified.mkdir()
+    status_path = unified / "atlas_status.tsv"
+    status_path.write_text(
+        "new_pas_id\tatlas_match\tatlas_distance_bp\n"
+        "1\tTrue\t0\n"
+        "2\tTrue\t3\n"
+    )
+    distances = parse_atlas_status_distances(status_path)
+    assert distances == [0, 3]
+
+
+def test_parse_atlas_status_distances_missing_file_returns_empty(tmp_path: Path) -> None:
+    assert parse_atlas_status_distances(tmp_path / "does_not_exist.tsv") == []

@@ -68,6 +68,8 @@ def run_one_dataset_downstream(
     cluster_depth_corr_threshold: float = 0.75,
     cluster_n_svd_components: int = 50,
     cluster_n_top_hvg: int = 2000,
+    atlas_of: dict | None = None,
+    ip_of: dict | None = None,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -97,6 +99,13 @@ def run_one_dataset_downstream(
             (passed to ``preprocessing``).
         filter_min_genes: Minimum number of PAS a cell must have
             (passed to ``preprocessing``).
+        atlas_of: (D9) Optional ``{pas_id: (atlas_match, atlas_distance_bp)}``
+            map, forwarded to ``write_pas_gene_artifacts`` /
+            ``record_pas_drops`` to populate the atlas-snap status columns.
+            ``{}`` (default) when atlas snapping is disabled.
+        ip_of: (D9) Optional ``{pas_id: internal_priming_bool}`` map, same
+            plumbing as ``atlas_of``. ``{}`` (default) when the
+            internal-priming filter is disabled.
 
     Returns:
         A stats dictionary with keys ``dataset_id``, ``final_cells``,
@@ -218,6 +227,7 @@ def run_one_dataset_downstream(
     write_pas_gene_artifacts(
         Path(output_dir), ds_id,
         result.pas_ids, result.gene_ids,
+        atlas_of=atlas_of, ip_of=ip_of,
     )
     write_annotated_matrix(
         Path(output_dir), ds_id,
@@ -344,6 +354,8 @@ def run_one_dataset_downstream(
             final_pas_ids=final_pas,
             dataset_id=ds_id,
             gene_of=gene_of,
+            atlas_of=atlas_of,
+            ip_of=ip_of,
         )
         record_cell_drops(
             led,
@@ -392,10 +404,28 @@ def downstream_worker_star(args: tuple) -> dict:
               YAML/CLI wiring fix.  ``cluster_kwargs_dict`` keys map to
               the ``cluster_*`` keyword args of
               :func:`run_one_dataset_downstream`.
+            - 14 elements: ``(*pos_args[9], log_queue, progress_client,
+              cluster_kwargs_dict, plot_engines, prov_kwargs_dict)`` (D9) —
+              ``prov_kwargs_dict`` carries ``atlas_of``/``ip_of``, the
+              per-unified-PAS atlas-match/internal-priming status maps.
 
     Returns:
         The stats dict returned by ``run_one_dataset_downstream``.
     """
+    if len(args) == 14:
+        # D9: atlas_of/ip_of (per-unified-PAS status maps) added as a single
+        # trailing dict, mirroring the cluster_kwargs pattern, so
+        # record_pas_drops() / write_pas_gene_artifacts() can populate the
+        # ledger + annotatedpas.bed status columns per worker.
+        *pos_args, log_queue, progress_client, cluster_kwargs, plot_engines, prov_kwargs = args
+        return run_one_dataset_downstream(
+            *pos_args,
+            log_queue=log_queue,
+            progress_client=progress_client,
+            plot_engines=plot_engines,
+            **(cluster_kwargs or {}),
+            **(prov_kwargs or {}),
+        )
     if len(args) == 13:
         *pos_args, log_queue, progress_client, cluster_kwargs, plot_engines = args
         return run_one_dataset_downstream(

@@ -37,6 +37,11 @@ try:
 except ImportError:
     snap_beds_to_atlas = None  # type: ignore[assignment]
 
+try:
+    from ema.datasets.atlas_annotate import annotate_pas_against_atlas
+except ImportError:
+    annotate_pas_against_atlas = None  # type: ignore[assignment]
+
 
 # extract_per_dataset_mtx is defined in downstream_runner to keep it
 # pickle-safe and importable without triggering ema.config initialisation.
@@ -262,7 +267,19 @@ def run(
     try:
         from ema.outputs import OutputManager, build_resolved_run_config
         _mgr = OutputManager(base_dir=str(directory_config.output_dir))
-        _mgr.write_manifest(build_resolved_run_config())
+        # D9: fold atlas-match / internal-priming counts into entity_counts
+        # so the hub can read the QC funnel straight off the manifest.
+        _entity_counts: dict = {}
+        if _pipeline_result is not None:
+            _atlas_stats = _pipeline_result.get("atlas_stats") or {}
+            for _k in ("n_atlas_matched", "n_atlas_unmatched", "atlas_match_rate"):
+                if _k in _atlas_stats:
+                    _entity_counts[_k] = _atlas_stats[_k]
+            _ip_stats = _pipeline_result.get("ip_stats") or {}
+            for _k in ("n_ip_flagged", "ip_flag_rate"):
+                if _ip_stats.get(_k) is not None:
+                    _entity_counts[_k] = _ip_stats[_k]
+        _mgr.write_manifest(build_resolved_run_config(), entity_counts=_entity_counts)
     except Exception as _e:  # never fail a run over the manifest
         log.warning("run_manifest.json write failed: %s", _e)
 
@@ -344,19 +361,33 @@ def _validate_pas_filter_config() -> None:
             )
 
 
-def _apply_pas_filters(output_mgr) -> None:
+def _apply_pas_filters(output_mgr) -> dict | None:
     """Apply the enabled PAS filter(s) to the pos/neg PAS BEDs, in place.
 
     No-op — ema.experimental.peak_filters is not even imported — when both
     --ip-filter and --annot-filter are off, so default-off runs take
-    exactly the pre-D6 code path.
+    exactly the pre-D6 code path. Returns ``None`` in that case.
+
+    D9: --ip-filter defaults to ``ip_filter_mode="annotate"`` (keep every
+    PAS, flag it) rather than dropping it -- an internally-primed peak is
+    candidate alternative-PAS signal, not noise, for a scientist hunting
+    APA. ``--ip-filter-mode filter`` restores the pre-D9 drop behaviour.
+    (``--annot-filter``, the gene-region membership filter, is a distinct
+    concept and is unaffected -- it always drops non-overlapping peaks.)
+
+    When run, the returned dict includes ``"ip_of"`` -- the merged
+    ``{pas_id: internal_priming_bool}`` map across the pos+neg BEDs, for
+    callers to thread into :func:`ema.outputs.write_pas_gene_artifacts` /
+    :func:`ema.provenance.record_pas_drops`.
     """
     import os
 
     ip_filter = bool(getattr(args, "ip_filter", False))
     annot_filter = bool(getattr(args, "annot_filter", False))
     if not ip_filter and not annot_filter:
-        return
+        return None
+
+    ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
 
     from ema.experimental.peak_filters import apply_filters
 
@@ -379,11 +410,13 @@ def _apply_pas_filters(output_mgr) -> None:
 
     combined_stats: dict = {
         "ip_filter": ip_filter,
+        "ip_filter_mode": ip_mode if ip_filter else None,
         "annot_filter": annot_filter,
         "genome_fasta": genome_fasta if ip_filter else None,
         "annotation_bed": annotation_bed if annot_filter else None,
     }
     filtered_any = False
+    ip_of: dict = {}  # D9: merged {pas_id: internal_priming_bool} across pos+neg
     for strand_label, bed_path in (
         ("pos", directory_config.posbed),
         ("neg", directory_config.negbed),
@@ -405,19 +438,42 @@ def _apply_pas_filters(output_mgr) -> None:
             ip_window_right=getattr(args, "ip_window_right", 30),
             ip_a_stretch=getattr(args, "ip_a_stretch", 6),
             ip_a_fraction=getattr(args, "ip_a_fraction", 0.7),
+            ip_mode=ip_mode,
         )
         os.replace(tmp_out, bed_path)
         combined_stats[strand_label] = stats
         filtered_any = True
+        ip_of.update(stats.get("internal_priming_flags") or {})
+
+    if ip_filter:
+        n_ip_flagged = sum(1 for v in ip_of.values() if v)
+        combined_stats["n_ip_flagged"] = n_ip_flagged
+        combined_stats["ip_flag_rate"] = (
+            round(n_ip_flagged / len(ip_of), 4) if ip_of else 0.0
+        )
+        combined_stats["ip_of"] = ip_of
 
     # "peak_filters" is not one of OutputManager's pre-registered numbered
     # stage dirs (self.dirs), so save_stats("peak_filters", ...) would raise
     # KeyError. Use the existing pas_gene (04_pas_gene_assignment) stage dir
     # instead -- filtering happens immediately before that stage -- via a
     # distinctly-named file so it can't collide with pas_gene_stats.json.
+    # Redact the per-PAS flag maps from the ON-DISK stats (they can be as
+    # large as the PAS count and belong in the pasbed/ledger, not a JSON
+    # blob) -- the full maps are still on the RETURNED dict for the caller.
+    _disk_stats = {k: v for k, v in combined_stats.items() if k != "ip_of"}
+    for _strand_label in ("pos", "neg"):
+        _sd = _disk_stats.get(_strand_label)
+        if isinstance(_sd, dict):
+            _sd = {k: v for k, v in _sd.items() if k != "internal_priming_flags"}
+            if isinstance(_sd.get("internal_priming"), dict):
+                _sd["internal_priming"] = {
+                    k: v for k, v in _sd["internal_priming"].items() if k != "flags"
+                }
+            _disk_stats[_strand_label] = _sd
     _stats_path = output_mgr.path("pas_gene", "peak_filters_stats.json")
     with open(_stats_path, "w") as _f:
-        json.dump(combined_stats, _f, indent=2)
+        json.dump(_disk_stats, _f, indent=2)
     # Register the rewritten pasbeds as filtered artifacts (best-effort --
     # never fail the run over manifest bookkeeping).
     if filtered_any:
@@ -433,12 +489,14 @@ def _apply_pas_filters(output_mgr) -> None:
         except Exception as e:  # pragma: no cover -- bookkeeping only
             log.warning("peak_filters: register_artifact failed: %s", e)
     log.info(
-        "peak_filters: ip_filter=%s annot_filter=%s pos(total=%s filtered=%s) "
-        "neg(total=%s filtered=%s)",
-        ip_filter, annot_filter,
+        "peak_filters: ip_filter=%s(mode=%s) annot_filter=%s pos(total=%s filtered=%s) "
+        "neg(total=%s filtered=%s) n_ip_flagged=%s",
+        ip_filter, ip_mode, annot_filter,
         combined_stats["pos"].get("total"), combined_stats["pos"].get("filtered"),
         combined_stats["neg"].get("total"), combined_stats["neg"].get("filtered"),
+        combined_stats.get("n_ip_flagged"),
     )
+    return combined_stats
 
 
 def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> dict:
@@ -895,11 +953,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "utr_count": len(utr_lengths),
         })
 
-        # D6: optional internal-priming / annotation filters, applied to the
+        # D6/D9: optional internal-priming / annotation filters, applied to the
         # pos/neg PAS BEDs in place, before find_close() derives the gene
         # assignment from them. No-op (not even imported) when both flags
-        # are off — see _apply_pas_filters().
-        _apply_pas_filters(output_mgr)
+        # are off — see _apply_pas_filters(). Note: atlas snapping never
+        # runs on the single-sample path (only the multi-sample merge/atlas
+        # stage does), so atlas_of stays empty here.
+        _pas_filter_result = _apply_pas_filters(output_mgr)
+        _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
 
         # Find closest gene for each PAS
         _pas_gene_stage = _add_stage("PAS→gene assignment", total=1)
@@ -916,6 +977,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "max_gene_distance": getattr(args, "max_gene_distance", 5000),
             "utr_multiplier": getattr(args, "utr_multiplier", 2.0),
             "assigned_pas_count": len(genes),
+            "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+            "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
         })
 
         # Build sparse matrix (PAS IDs preserved)
@@ -944,6 +1007,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         write_pas_gene_artifacts(
             output_dir, bam_list[0][0],
             result.pas_ids, result.gene_ids,
+            atlas_of={}, ip_of=_ip_of,
         )
         write_annotated_matrix(
             output_dir, bam_list[0][0],
@@ -1017,6 +1081,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "atlas_enabled": bool(directory_config.atlas),
             "single_sample_h5ad": _ss_h5ad,
             "clustering_dir": directory_config.clustering_dir,
+            # D9: atlas never runs on the single-sample path.
+            "atlas_stats": None,
+            "ip_stats": {
+                "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+                "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
+            } if _pas_filter_result else None,
         }
 
     # =========================================================================
@@ -1040,14 +1110,39 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         ["+"] * len(all_dataset_ids_for_pos) + ["-"] * len(all_dataset_ids_for_neg)
     )
 
-    # Dispatch atlas vs. coordinate-merge based on config
+    # Dispatch atlas vs. coordinate-merge based on config.
+    #
+    # atlas_mode="annotate" (the default whenever --atlas is configured) is a
+    # PURE OVERLAY: the unified PAS set is built EXACTLY like a no-atlas run
+    # (merge_pas_beds proximity-merges ALL called PAS across datasets; atlas
+    # plays no role in merging or id assignment), and atlas match/distance is
+    # annotated onto that already-final set afterwards. This is what
+    # guarantees a novel PAS seen in two datasets at one locus becomes ONE
+    # unified feature regardless of whether an atlas is configured, and keeps
+    # a no-atlas run byte-identical (that path never touches atlas code at
+    # all).
+    #
+    # atlas_mode="filter" (opt-in) keeps the pre-existing snap-and-drop
+    # behaviour unchanged: atlas snapping decides PAS identity and can drop
+    # PAS with no atlas hit, via snap_beds_to_atlas.
     _atlas_stage = _add_stage(
         "Atlas snap" if directory_config.atlas else "PAS merge",
         total=None,  # indeterminate spinner — we don't know peak count yet
     )
-    # E3: provenance ledger for the biggest silent drop site (atlas snap).
+    # E3: provenance ledger for the biggest silent drop site (atlas snap,
+    # filter mode only — annotate mode never drops a PAS at this stage, so
+    # there is nothing to ledger here; atlas_match/atlas_distance_bp still
+    # reach the per-dataset ledgers via _atlas_of/record_pas_drops below).
     _prov_ledger = None
-    if directory_config.atlas:
+    # D9: {new_pas_id: (atlas_match, atlas_distance_bp)}, "" defaults when
+    # atlas didn't run — see ema.datasets.atlas_snap's atlas_status.tsv
+    # sidecar (filter mode) / ema.datasets.atlas_annotate's overlay sidecar
+    # (annotate mode, the default).
+    _atlas_of: dict = {}
+    _atlas_stats: dict | None = None
+    _atlas_mode = str(getattr(args, "atlas_mode", "annotate")) if directory_config.atlas else None
+
+    if directory_config.atlas and _atlas_mode == "filter":
         if snap_beds_to_atlas is None:
             raise RuntimeError("ema.datasets.atlas_snap is not available")
         try:
@@ -1064,6 +1159,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             distance=directory_config.atlas_distance,
             strands=all_strands,
             ledger=_prov_ledger,
+            mode=_atlas_mode,
         )
         if _prov_ledger is not None:
             try:
@@ -1074,7 +1170,43 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                 )
             except Exception as _e:
                 log.warning("provenance ledger flush failed: %s", _e)
+
+        # D9: read the atlas_status.tsv / atlas_stats.json sidecars
+        # snap_beds_to_atlas wrote, so downstream steps (per-dataset ledger,
+        # annotatedpas.bed, manifest) can report match/no-match too.
+        try:
+            _status_path = unified_dir / "atlas_status.tsv"
+            if _status_path.exists():
+                with open(_status_path) as _f:
+                    next(_f, None)  # header
+                    for _line in _f:
+                        _parts = _line.rstrip("\n").split("\t")
+                        if len(_parts) != 3:
+                            continue
+                        _new_id, _match, _dist = _parts
+                        _atlas_of[_new_id] = (
+                            _match if _match != "" else "",
+                            _dist if _dist != "" else "",
+                        )
+            _atlas_stats_path = unified_dir / "atlas_stats.json"
+            if _atlas_stats_path.exists():
+                _atlas_stats = json.loads(_atlas_stats_path.read_text())
+        except Exception as _e:  # sidecars are auxiliary — never fail the run
+            log.warning("atlas status sidecars unreadable (non-fatal): %s", _e)
+
+        if _atlas_stats:
+            output_mgr.save_stats("atlas_snap", _atlas_stats)
+            log.info(
+                "atlas snap (mode=%s): %d matched, %d unmatched (match_rate=%.4f)",
+                _atlas_mode,
+                _atlas_stats.get("n_atlas_matched", 0),
+                _atlas_stats.get("n_atlas_unmatched", 0),
+                _atlas_stats.get("atlas_match_rate", 0.0),
+            )
     else:
+        # Default-off (no atlas configured) AND atlas_mode="annotate" (the
+        # default when an atlas IS configured) both build the unified PAS
+        # set the same way — merge_pas_beds, with no atlas involvement.
         unified_bed, mapping_path = merge_pas_beds(
             all_beds,
             all_ds_ids,
@@ -1082,6 +1214,43 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             gap=getattr(args, "pas_gap", 100),
             strands=all_strands,
         )
+        if directory_config.atlas:
+            # atlas_mode="annotate": overlay atlas match/distance onto the
+            # ALREADY-FINAL unified PAS set. Pure annotation — never adds,
+            # drops, renumbers, or moves a PAS.
+            if annotate_pas_against_atlas is None:
+                raise RuntimeError("ema.datasets.atlas_annotate is not available")
+            try:
+                _status_path, _stats_path = annotate_pas_against_atlas(
+                    unified_pasbed_path=unified_bed,
+                    atlas_bed_path=directory_config.atlas,
+                    distance=directory_config.atlas_distance,
+                    output_dir=unified_dir,
+                )
+                with open(_status_path) as _f:
+                    next(_f, None)  # header
+                    for _line in _f:
+                        _parts = _line.rstrip("\n").split("\t")
+                        if len(_parts) != 3:
+                            continue
+                        _new_id, _match, _dist = _parts
+                        _atlas_of[_new_id] = (
+                            _match if _match != "" else "",
+                            _dist if _dist != "" else "",
+                        )
+                _atlas_stats = json.loads(_stats_path.read_text())
+            except Exception as _e:  # overlay is auxiliary — never fail the run
+                log.warning("atlas annotate-overlay failed (non-fatal): %s", _e)
+
+            if _atlas_stats:
+                output_mgr.save_stats("atlas_snap", _atlas_stats)
+                log.info(
+                    "atlas annotate-overlay (mode=%s): %d matched, %d unmatched (match_rate=%.4f)",
+                    _atlas_mode,
+                    _atlas_stats.get("n_atlas_matched", 0),
+                    _atlas_stats.get("n_atlas_unmatched", 0),
+                    _atlas_stats.get("atlas_match_rate", 0.0),
+                )
     # Mark atlas/merge stage complete
     _advance(_atlas_stage)
 
@@ -1129,11 +1298,15 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             elif len(parts) >= 6 and parts[5] == "-":
                 _n.write(line)
 
-    # D6: optional internal-priming / annotation filters, applied to the
+    # D6/D9: optional internal-priming / annotation filters, applied to the
     # unified pos/neg PAS BEDs in place, before find_close() derives the
     # gene assignment from them. No-op (not even imported) when both flags
-    # are off — see _apply_pas_filters().
-    _apply_pas_filters(output_mgr)
+    # are off — see _apply_pas_filters(). The unified BED name field is
+    # already the rekeyed atlas/merge pas_id at this point (see the split
+    # above), so the returned "ip_of" map is keyed correctly for
+    # write_pas_gene_artifacts / record_pas_drops in each per-dataset worker.
+    _pas_filter_result = _apply_pas_filters(output_mgr)
+    _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
 
     genes = find_close(
         utr_lengths=utr_lengths,
@@ -1150,6 +1323,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "max_gene_distance": getattr(args, "max_gene_distance", 5000),
         "utr_multiplier": getattr(args, "utr_multiplier", 2.0),
         "assigned_pas_count": len(genes),
+        "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+        "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
     })
 
     # Per-dataset clustering (each dataset_id clusters independently)
@@ -1230,12 +1405,20 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     _resolved_plot_engines: list[str] = (
         plot_engines if plot_engines is not None else ["matplotlib"]
     )
+    # D9: same atlas_of/ip_of maps for every dataset (one unified pas_id
+    # space) — built once, forwarded to each worker via _prov_kwargs so
+    # record_pas_drops() / write_pas_gene_artifacts() in
+    # run_one_dataset_downstream() can populate the ledger + annotatedpas.bed
+    # status columns.
+    _prov_kwargs: dict = {"atlas_of": _atlas_of, "ip_of": _ip_of}
     worker_args: list[tuple] = []
     for _warg in _raw_worker_args:
         _ds_id_for_sub = _warg[0]
         _sub_stage = _add_subtask(_downstream_stage, _ds_id_for_sub, total=6)
         _sub_client = _client(_sub_stage)
-        worker_args.append(_warg + (_sub_client, _cluster_kwargs, _resolved_plot_engines))
+        worker_args.append(
+            _warg + (_sub_client, _cluster_kwargs, _resolved_plot_engines, _prov_kwargs)
+        )
 
     # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
     n_datasets = len(worker_args)
@@ -1255,14 +1438,16 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         for arg_tuple in worker_args:
             # arg_tuple has: ds_id, sub_indices, sub_cbs, unified_mtx,
             #   per_dataset_dir, genes_pkl, min_read, min_cells, min_genes,
-            #   log_queue, progress_client, cluster_kwargs, plot_engines  (13 elements)
-            *pos_args, lq, pc, ck, pe = arg_tuple
+            #   log_queue, progress_client, cluster_kwargs, plot_engines,
+            #   prov_kwargs (atlas_of/ip_of, D9)  (14 elements)
+            *pos_args, lq, pc, ck, pe, pk = arg_tuple
             _st = run_one_dataset_downstream(
                 *pos_args,
                 log_queue=lq,
                 progress_client=pc,
                 plot_engines=pe,
                 **(ck or {}),
+                **(pk or {}),
             )
             if isinstance(_st, dict):
                 _all_stats.append(_st)
@@ -1380,6 +1565,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "atlas_enabled": bool(directory_config.atlas),
         "clustering_dir": directory_config.clustering_dir,
         "single_sample_h5ad": None,
+        # D9: atlas/ip match-vs-no-match stats for the run manifest.
+        "atlas_stats": _atlas_stats,
+        "ip_stats": {
+            "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+            "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
+        } if _pas_filter_result else None,
     }
 
 

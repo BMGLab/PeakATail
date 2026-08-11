@@ -33,7 +33,7 @@ from ema.outputs import OutputManager
 # Helpers
 # ---------------------------------------------------------------------------
 _FILTER_ARG_NAMES = (
-    "ip_filter", "annot_filter", "genome_fasta", "annotation_bed",
+    "ip_filter", "ip_filter_mode", "annot_filter", "genome_fasta", "annotation_bed",
     "ip_a_stretch", "ip_a_fraction", "ip_window_left", "ip_window_right",
 )
 
@@ -200,6 +200,9 @@ def test_annot_filter_with_gtf_present_validates_ok(tmp_path):
 # ---------------------------------------------------------------------------
 # 3. ip_filter actually removes an internally-primed peak (real seam,
 #    real pyfaidx-indexed genome FASTA -- skip if pyfaidx unavailable).
+#    D9: this now requires ip_filter_mode="filter" explicitly -- the default
+#    is "annotate" (keep + flag). See test_ip_filter_mode_d9.py for the
+#    default-mode ("annotate") behaviour.
 # ---------------------------------------------------------------------------
 def test_ip_filter_removes_internally_primed_peak_keeps_clean_one(tmp_path):
     pytest.importorskip("pyfaidx")
@@ -224,6 +227,7 @@ def test_ip_filter_removes_internally_primed_peak_keeps_clean_one(tmp_path):
     _write_bed(directory_config.negbed, [])
 
     args.ip_filter = True
+    args.ip_filter_mode = "filter"
     args.genome_fasta = str(genome_fasta)
     args.annot_filter = False
 
@@ -238,9 +242,58 @@ def test_ip_filter_removes_internally_primed_peak_keeps_clean_one(tmp_path):
 
     stats = json.loads(_stats_path(mgr).read_text())
     assert stats["ip_filter"] is True
+    assert stats["ip_filter_mode"] == "filter"
     assert stats["annot_filter"] is False
     assert stats["pos"]["filtered"] == 1
     assert stats["pos"]["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 3b (D9). Default mode ("annotate"): the internally-primed peak is KEPT,
+#    not dropped -- it's candidate alternative-PAS signal for a scientist
+#    hunting APA, not noise. Both PAS survive; the flagged one is
+#    identifiable via n_ip_flagged / the returned ip_of map.
+# ---------------------------------------------------------------------------
+def test_ip_filter_default_mode_annotates_instead_of_dropping(tmp_path):
+    pytest.importorskip("pyfaidx")
+    from ema.main import _apply_pas_filters, _validate_pas_filter_config
+
+    mgr = _setup_run_dir(tmp_path)
+
+    seq = list("C" * 200)
+    seq[100:110] = list("A" * 10)
+    genome_fasta = tmp_path / "genome.fa"
+    genome_fasta.write_text(">chr1\n" + "".join(seq) + "\n")
+
+    _write_bed(directory_config.posbed, [
+        ("chr1", 40, 50, "1", 0, "+"),
+        ("chr1", 90, 100, "2", 0, "+"),
+    ])
+    _write_bed(directory_config.negbed, [])
+
+    args.ip_filter = True
+    # args.ip_filter_mode left UNSET -> _apply_pas_filters must default to "annotate".
+    args.genome_fasta = str(genome_fasta)
+    args.annot_filter = False
+
+    _validate_pas_filter_config()
+    result = _apply_pas_filters(mgr)
+
+    surviving = directory_config.posbed.read_text().splitlines()
+    surviving_names = [line.split("\t")[3] for line in surviving]
+    assert surviving_names == ["1", "2"], (
+        "annotate mode (the new default) must KEEP every PAS, including "
+        f"the internally-primed one; got {surviving_names!r}"
+    )
+
+    stats = json.loads(_stats_path(mgr).read_text())
+    assert stats["ip_filter_mode"] == "annotate"
+    assert stats["pos"]["filtered"] == 0
+    assert stats["pos"]["flagged"] == 1
+    assert stats["n_ip_flagged"] == 1
+
+    assert result is not None
+    assert result["ip_of"] == {"1": False, "2": True}
 
 
 # ---------------------------------------------------------------------------

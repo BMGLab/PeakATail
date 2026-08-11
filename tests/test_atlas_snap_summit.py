@@ -48,6 +48,7 @@ def test_plus_strand_summit_distance_not_interval_distance(tmp_path: Path) -> No
         atlas_bed=atlas_bed,
         output_dir=out_dir,
         distance=50,
+        mode="filter",
     )
 
     rows = _read_mapping(mapping_path)
@@ -79,6 +80,7 @@ def test_minus_strand_summit_distance_not_interval_distance(tmp_path: Path) -> N
         atlas_bed=atlas_bed,
         output_dir=out_dir,
         distance=50,
+        mode="filter",
     )
 
     rows = _read_mapping(mapping_path)
@@ -110,6 +112,7 @@ def test_wide_peak_correctly_dropped_when_only_summit_is_far(tmp_path: Path) -> 
         atlas_bed=atlas_bed,
         output_dir=out_dir,
         distance=5,  # summit distance (9) > 5, so this must be dropped
+        mode="filter",
     )
 
     rows = _read_mapping(mapping_path)

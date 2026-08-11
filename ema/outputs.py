@@ -67,6 +67,11 @@ class OutputManager:
             "clustering": os.path.join(base_dir, "07_clustering"),
             "differential": os.path.join(base_dir, "08_differential"),
             "gtf_cache": os.path.join(base_dir, "gtf_cache"),
+            # D9: atlas-snap stats (n_atlas_matched/n_atlas_unmatched/...)
+            # land alongside the other atlas-snap outputs (atlas_mapping.tsv,
+            # atlas_status.tsv, ...) under unified/, the multi-sample-path
+            # merge/atlas output dir -- not a new numbered stage dir.
+            "atlas_snap": os.path.join(base_dir, "unified"),
         }
 
     def setup(self) -> None:
@@ -376,9 +381,12 @@ def _concat_beds(srcs: Iterable[Path | str], dst: Path) -> None:
     with open(dst, "w") as out:
         for src in srcs:
             with open(src) as f:
-                for line in f:
-                    if line.strip():
-                        out.write(line)
+                # Bulk read + filter + a single writelines() call per file
+                # instead of one out.write() per line — same bytes (each
+                # surviving line, including its own original line ending,
+                # is passed through unmodified), fewer Python-level I/O
+                # calls on files with many peak rows.
+                out.writelines(line for line in f if line.strip())
 
 
 def write_raw_peak_outputs(
@@ -554,6 +562,9 @@ def write_pas_gene_artifacts(
     dataset_id: str,
     pas_ids,
     gene_ids,
+    *,
+    atlas_of: dict | None = None,
+    ip_of: dict | None = None,
 ) -> tuple[Path, Path]:
     """Write ``pas_gene.tsv`` and ``annotatedpas.bed`` for one dataset.
 
@@ -562,15 +573,30 @@ def write_pas_gene_artifacts(
     to read the full AnnData.
 
     ``annotatedpas.bed`` extends ``pasbed.bed`` with a trailing gene_id
-    column.  It depends on ``pasbed.bed`` having been written first
-    (see :func:`write_per_dataset_beds`); if the pasbed isn't on disk
-    yet we skip the BED part and warn.
+    column, and (D9) three further trailing status columns --
+    ``atlas_match``, ``atlas_distance_bp``, ``internal_priming`` -- so the
+    "keep everything, annotate with match/no-match" atlas-snap and
+    internal-priming filters are queryable straight off the BED, not just
+    the PAS ledger. The first 6 columns stay plain BED6 so existing BED
+    consumers (bedtools, etc.) still parse the file; extra columns are
+    appended, never inserted. It depends on ``pasbed.bed`` having been
+    written first (see :func:`write_per_dataset_beds`); if the pasbed
+    isn't on disk yet we skip the BED part and warn.
 
     Args:
         output_dir: Pipeline run-root (kept for API compat; not used directly).
         dataset_id: Dataset name.
         pas_ids: Array-like of PAS IDs (parallel to ``gene_ids``).
         gene_ids: Array-like of gene IDs aligned to ``pas_ids``.
+        atlas_of: Optional ``{pas_id: (atlas_match, atlas_distance_bp)}`` --
+            see ``ema.datasets.atlas_snap.snap_beds_to_atlas``'s
+            ``atlas_status.tsv`` sidecar. PAS absent from the map (atlas
+            didn't run, or this PAS predates atlas) get ``""`` for both
+            columns.
+        ip_of: Optional ``{pas_id: internal_priming_bool}`` -- see
+            ``ema.experimental.peak_filters.apply_filters``'s
+            ``"internal_priming_flags"`` stats key. PAS absent from the
+            map get ``""``.
 
     Returns:
         ``(pas_gene_tsv_path, annotatedpas_bed_path)``.  The BED path
@@ -578,6 +604,9 @@ def write_pas_gene_artifacts(
     """
     import pandas as pd  # local import — heavy module
     from ema.config import directory_config
+
+    atlas_of = atlas_of or {}
+    ip_of = ip_of or {}
 
     pas_gene_tsv = directory_config.pas_gene_for(dataset_id)
     pas_gene_tsv.parent.mkdir(parents=True, exist_ok=True)
@@ -594,8 +623,12 @@ def write_pas_gene_artifacts(
             for line in src:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) >= 4:
-                    gid = lookup.get(parts[3], "")
-                    dst.write("\t".join(parts) + "\t" + gid + "\n")
+                    pas_id = parts[3]
+                    gid = lookup.get(pas_id, "")
+                    atlas_match, atlas_distance_bp = atlas_of.get(pas_id, ("", ""))
+                    ip_flag = ip_of.get(pas_id, "")
+                    extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag)]
+                    dst.write("\t".join(parts + extra) + "\n")
     else:
         log.warning(
             "annotatedpas.bed for %r skipped — pasbed.bed not on disk at %s",

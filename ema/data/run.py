@@ -37,6 +37,42 @@ __all__ = ["Run", "RunReadError"]
 #: BED6 column names for pasbed.bed / annotatedpas.bed (no header on disk).
 _PASBED_COLUMNS = ["chrom", "start", "end", "pas_id", "score", "strand"]
 
+#: Trailing columns ``annotatedpas.bed`` may carry beyond BED6, in the fixed
+#: order ``ema/outputs.py::write_pas_gene_artifacts`` appends them. D9 added
+#: the last three (atlas-snap / internal-priming become annotate-not-drop by
+#: default; see ``ema/datasets/atlas_snap.py`` / ``ema/experimental/
+#: internal_priming.py``) -- always present together with gene_id (never
+#: gene_id alone anymore going forward), but kept as separate optional
+#: columns here so OLD runs' 7-column (BED6 + gene_id) annotatedpas.bed
+#: files still parse correctly.
+_PASBED_EXTRA_COLUMNS = ["gene_id", "atlas_match", "atlas_distance_bp", "internal_priming"]
+
+
+def _read_pasbed_like(path: Path) -> pd.DataFrame:
+    """Read a BED6(+extra) file with no on-disk header.
+
+    Plain ``pasbed.bed`` is exactly BED6. ``annotatedpas.bed`` extends it
+    with up to 4 trailing columns (see :data:`_PASBED_EXTRA_COLUMNS`) --
+    older runs may only have ``gene_id`` (7 cols), newer runs have all 4
+    (10 cols). Naming columns positionally like this (instead of a fixed
+    ``names=_PASBED_COLUMNS`` as before) matters: pandas silently
+    misinterprets extra un-named trailing columns as an index level when
+    the file has MORE columns than a fixed ``names=`` list, corrupting
+    every column's dtype/values -- this reader avoids that by sizing
+    ``names`` to the file's actual width.
+    """
+    raw = pd.read_csv(path, sep="\t", header=None)
+    n_cols = raw.shape[1]
+    names = list(_PASBED_COLUMNS)
+    for extra in _PASBED_EXTRA_COLUMNS:
+        if len(names) >= n_cols:
+            break
+        names.append(extra)
+    while len(names) < n_cols:
+        names.append(f"extra_{len(names) - len(_PASBED_COLUMNS) + 1}")
+    raw.columns = names[:n_cols]
+    return raw
+
 
 class RunReadError(Exception):
     """Raised for any problem reading a run directory or one of its
@@ -319,7 +355,7 @@ class Run:
         path = self._resolve_artifact("pasbed.bed", "pasbed.bed")
         if not path.exists():
             path = self._resolve_artifact("annotatedpas.bed", "annotatedpas.bed")
-        return pd.read_csv(path, sep="\t", header=None, names=_PASBED_COLUMNS)
+        return _read_pasbed_like(path)
 
     # -- E5 normalized long tables -------------------------------------------- #
 
