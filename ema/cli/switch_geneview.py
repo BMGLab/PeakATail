@@ -75,6 +75,50 @@ log = logging.getLogger(__name__)
     show_default=True,
     help="obs column carrying cluster labels.",
 )
+@click.option(
+    "--color-key",
+    "color_key",
+    type=str,
+    default=None,
+    help=(
+        "obs column carrying a condition per track (e.g. healthy / primary "
+        "tumour / metastasis). Tracks are tinted by it and a legend is drawn, "
+        "so the grouping is readable without long y-labels."
+    ),
+)
+@click.option(
+    "--subtitle",
+    "subtitle",
+    type=str,
+    default="",
+    help=(
+        "Line shown under the gene title, e.g. the cell type the panel is "
+        "restricted to. Naming it once in the header beats repeating it on "
+        "every track label."
+    ),
+)
+@click.option(
+    "--pas-distance-table/--no-pas-distance-table",
+    "pas_distance_table_opt",
+    default=False,
+    show_default=True,
+    help=(
+        "Draw a table of PAS coordinates and the distance between adjacent "
+        "PAS beneath each panel, and write the full table next to the figure "
+        "as gene_<id>_pas_distances.csv."
+    ),
+)
+@click.option(
+    "--isoform-map",
+    "isoform_map",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help=(
+        "pdui_classic.tsv from `switch length --isoform-agg per_isoform`. Used "
+        "to show which transcript's 3'UTR each PAS was assigned to in the "
+        "distance table. The assignment is read from that file, not recomputed."
+    ),
+)
 @click.pass_context
 def geneview(ctx: click.Context, **kwargs) -> None:
     """Gene-track visualisation: per-cluster PAS coverage and proportions.
@@ -211,6 +255,39 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         log.info("Will render %d gene(s): %s", len(gene_list), gene_list)
 
         # ------------------------------------------------------------------ #
+        # PAS -> 3'UTR (transcript) assignment, as recorded by per-isoform     #
+        # length. Only the id columns are read; the file has millions of       #
+        # (cell, gene, transcript) rows and we need the unique triples only.   #
+        # ------------------------------------------------------------------ #
+        pas_isoforms: dict[int, list[str]] = {}
+        if kwargs.get("isoform_map"):
+            try:
+                im = pd.read_csv(
+                    kwargs["isoform_map"], sep="\t",
+                    usecols=["transcript_id", "proximal_pas_id", "distal_pas_id"],
+                ).drop_duplicates()
+                acc: dict[int, set[str]] = {}
+                for col in ("proximal_pas_id", "distal_pas_id"):
+                    for pas_id, tid in zip(im[col], im["transcript_id"]):
+                        if pd.isna(pas_id) or str(tid) == "_gene_":
+                            continue
+                        acc.setdefault(int(pas_id), set()).add(str(tid))
+                pas_isoforms = {k: sorted(v) for k, v in acc.items()}
+                log.info(
+                    "Loaded 3'UTR assignment for %d PAS from %s",
+                    len(pas_isoforms), kwargs["isoform_map"],
+                )
+                if not pas_isoforms:
+                    log.warning(
+                        "--isoform-map %s yielded no PAS->transcript pairs "
+                        "(is it a per_gene run? transcript_id would be '_gene_')",
+                        kwargs["isoform_map"],
+                    )
+            except Exception as exc:
+                log.warning("Could not read --isoform-map %s: %s",
+                            kwargs["isoform_map"], exc)
+
+        # ------------------------------------------------------------------ #
         # Resolve plot engines                                                  #
         # ------------------------------------------------------------------ #
         engines = parse_plot_engines(
@@ -269,6 +346,10 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                     cluster_key=kwargs["cluster_key"],
                     isoforms=isoforms,
                     gene_name=gene_name,
+                    color_key=kwargs.get("color_key"),
+                    subtitle=kwargs.get("subtitle", ""),
+                    show_distance_table=kwargs.get("pas_distance_table_opt", False),
+                    pas_isoforms=pas_isoforms,
                 )
                 if panel is None:
                     log.warning(
@@ -280,6 +361,14 @@ def geneview(ctx: click.Context, **kwargs) -> None:
 
                 basepath = figs_dir / f"gene_{gene_id}"
                 written = render_all("gene_track", panel, basepath, engines=engines)
+
+                # The in-figure table is capped for legibility; the CSV is not.
+                if kwargs.get("pas_distance_table_opt", False):
+                    from ema.viz._gene_track_helpers import pas_distance_table
+
+                    dist_csv = figs_dir / f"gene_{gene_id}_pas_distances.csv"
+                    pas_distance_table(panel).to_csv(dist_csv, index=False)
+                    log.info("Gene %s: wrote %s", gene_id, dist_csv.name)
                 log.info(
                     "Gene %s: %d figure file(s) written", gene_id, len(written)
                 )

@@ -37,6 +37,11 @@ try:
 except ImportError:
     snap_beds_to_atlas = None  # type: ignore[assignment]
 
+try:
+    from ema.datasets.atlas_annotate import annotate_pas_against_atlas
+except ImportError:
+    annotate_pas_against_atlas = None  # type: ignore[assignment]
+
 
 # extract_per_dataset_mtx is defined in downstream_runner to keep it
 # pickle-safe and importable without triggering ema.config initialisation.
@@ -257,7 +262,241 @@ def run(
             single_sample_h5ad=_pipeline_result.get("single_sample_h5ad"),
         )
 
+    # E2: write the run manifest — the contract artifact the hub indexes. Built
+    # from the RESOLVED config (B0) + auto-discovered artifacts + id grammar.
+    try:
+        from ema.outputs import OutputManager, build_resolved_run_config
+        _mgr = OutputManager(base_dir=str(directory_config.output_dir))
+        # D9: fold atlas-match / internal-priming counts into entity_counts
+        # so the hub can read the QC funnel straight off the manifest.
+        _entity_counts: dict = {}
+        if _pipeline_result is not None:
+            _atlas_stats = _pipeline_result.get("atlas_stats") or {}
+            for _k in ("n_atlas_matched", "n_atlas_unmatched", "atlas_match_rate"):
+                if _k in _atlas_stats:
+                    _entity_counts[_k] = _atlas_stats[_k]
+            _ip_stats = _pipeline_result.get("ip_stats") or {}
+            for _k in ("n_ip_flagged", "ip_flag_rate"):
+                if _ip_stats.get(_k) is not None:
+                    _entity_counts[_k] = _ip_stats[_k]
+        _mgr.write_manifest(build_resolved_run_config(), entity_counts=_entity_counts)
+    except Exception as _e:  # never fail a run over the manifest
+        log.warning("run_manifest.json write failed: %s", _e)
+
     return 0
+
+
+# ---------------------------------------------------------------------------
+# D6: internal-priming (--ip-filter) / annotation (--annot-filter) filters.
+#
+# The filter LOGIC lives in ema.experimental.peak_filters / internal_priming
+# (pre-existing, not modified here). These two helpers are the wiring seam
+# that makes `ema run` actually invoke it:
+#
+#   * _validate_pas_filter_config() — fail loud, before any pipeline compute,
+#     if a filter is enabled but its required input is missing.
+#   * _apply_pas_filters(output_mgr) — apply the enabled filter(s) to
+#     directory_config.posbed / .negbed *in place*, at the one point common
+#     to both the single-sample and multi-sample paths: right after those
+#     BEDs hold their final pre-annotation PAS set and right before
+#     find_close() consumes them to build the gene-assignment DataFrame
+#     that annotate() joins the count matrix against. Filtering here means
+#     a dropped PAS is absent from `genes.index`, so annotate()'s
+#     `genes.index.intersection(pas_ids)` naturally drops it from the
+#     count matrix too — no other file needs touching.
+#
+# Both flags default to False, and this module is only imported when at
+# least one is enabled, so the default-off pipeline never enters this code
+# path at all — output is byte-identical to pre-D6 behaviour.
+# ---------------------------------------------------------------------------
+def _resolve_annotation_bed() -> str:
+    """Return the annotation BED source for --annot-filter.
+
+    Uses the explicit ``--annotation-bed`` override when given, otherwise
+    falls back to the GTF-derived gene BED that GTF preprocessing already
+    writes to ``directory_config.endbed`` (see ema/annotate/gtftobed.py).
+    """
+    override = getattr(args, "annotation_bed", None)
+    if override:
+        return str(override)
+    return str(directory_config.endbed)
+
+
+def _validate_pas_filter_config() -> None:
+    """Raise a clear error BEFORE running if --ip-filter / --annot-filter
+    are enabled but misconfigured. Never silently skips a requested filter.
+    """
+    import os
+
+    ip_filter = bool(getattr(args, "ip_filter", False))
+    annot_filter = bool(getattr(args, "annot_filter", False))
+    if not ip_filter and not annot_filter:
+        return
+
+    if ip_filter:
+        genome_fasta = getattr(args, "genome_fasta", None)
+        if not genome_fasta or not os.path.exists(genome_fasta):
+            raise ValueError(
+                "--ip-filter is enabled but --genome-fasta is missing or does "
+                f"not exist (got: {genome_fasta!r}). Provide a genome FASTA "
+                "indexed with pyfaidx (.fai) via --genome-fasta / YAML "
+                "`genome_fasta:`."
+            )
+
+    if annot_filter:
+        annotation_bed_override = getattr(args, "annotation_bed", None)
+        if annotation_bed_override:
+            if not os.path.exists(annotation_bed_override):
+                raise ValueError(
+                    "--annot-filter is enabled but --annotation-bed does not "
+                    f"exist: {annotation_bed_override!r}."
+                )
+        elif not directory_config.gtf_dir or not os.path.exists(str(directory_config.gtf_dir)):
+            # No explicit override and no GTF to derive one from at
+            # find_close() time -- the GTF-derived endbed cannot be produced.
+            raise ValueError(
+                "--annot-filter is enabled but no --annotation-bed was "
+                "given and no --gtf is set to derive one from. Provide "
+                "--annotation-bed or --gtf."
+            )
+
+
+def _apply_pas_filters(output_mgr) -> dict | None:
+    """Apply the enabled PAS filter(s) to the pos/neg PAS BEDs, in place.
+
+    No-op — ema.experimental.peak_filters is not even imported — when both
+    --ip-filter and --annot-filter are off, so default-off runs take
+    exactly the pre-D6 code path. Returns ``None`` in that case.
+
+    D9: --ip-filter defaults to ``ip_filter_mode="annotate"`` (keep every
+    PAS, flag it) rather than dropping it -- an internally-primed peak is
+    candidate alternative-PAS signal, not noise, for a scientist hunting
+    APA. ``--ip-filter-mode filter`` restores the pre-D9 drop behaviour.
+    (``--annot-filter``, the gene-region membership filter, is a distinct
+    concept and is unaffected -- it always drops non-overlapping peaks.)
+
+    When run, the returned dict includes ``"ip_of"`` -- the merged
+    ``{pas_id: internal_priming_bool}`` map across the pos+neg BEDs, for
+    callers to thread into :func:`ema.outputs.write_pas_gene_artifacts` /
+    :func:`ema.provenance.record_pas_drops`.
+    """
+    import os
+
+    ip_filter = bool(getattr(args, "ip_filter", False))
+    annot_filter = bool(getattr(args, "annot_filter", False))
+    if not ip_filter and not annot_filter:
+        return None
+
+    ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
+
+    from ema.experimental.peak_filters import apply_filters
+
+    genome_fasta = getattr(args, "genome_fasta", None)
+    annotation_bed = _resolve_annotation_bed() if annot_filter else None
+
+    # Re-validate defensively: _validate_pas_filter_config() already ran at
+    # the top of the pipeline, but this function may also be called directly
+    # (e.g. from tests) without that pre-flight check having run first.
+    if ip_filter and (not genome_fasta or not os.path.exists(genome_fasta)):
+        raise ValueError(
+            "--ip-filter is enabled but --genome-fasta is missing or does "
+            f"not exist (got: {genome_fasta!r})."
+        )
+    if annot_filter and not os.path.exists(annotation_bed):
+        raise ValueError(
+            "--annot-filter is enabled but the resolved annotation BED does "
+            f"not exist: {annotation_bed!r} (provide --annotation-bed or --gtf)."
+        )
+
+    combined_stats: dict = {
+        "ip_filter": ip_filter,
+        "ip_filter_mode": ip_mode if ip_filter else None,
+        "annot_filter": annot_filter,
+        "genome_fasta": genome_fasta if ip_filter else None,
+        "annotation_bed": annotation_bed if annot_filter else None,
+    }
+    filtered_any = False
+    ip_of: dict = {}  # D9: merged {pas_id: internal_priming_bool} across pos+neg
+    for strand_label, bed_path in (
+        ("pos", directory_config.posbed),
+        ("neg", directory_config.negbed),
+    ):
+        bed_path = str(bed_path)
+        if not os.path.exists(bed_path) or os.path.getsize(bed_path) == 0:
+            # Nothing to filter for this strand (e.g. all-single-strand data).
+            combined_stats[strand_label] = {"total": 0, "passed": 0, "filtered": 0}
+            continue
+        tmp_out = bed_path + ".pas_filter_tmp"
+        stats = apply_filters(
+            input_bed=bed_path,
+            output_bed=tmp_out,
+            genome_fasta=genome_fasta,
+            annotation_bed=annotation_bed,
+            enable_internal_priming=ip_filter,
+            enable_annotation_filter=annot_filter,
+            ip_window_left=getattr(args, "ip_window_left", 10),
+            ip_window_right=getattr(args, "ip_window_right", 30),
+            ip_a_stretch=getattr(args, "ip_a_stretch", 6),
+            ip_a_fraction=getattr(args, "ip_a_fraction", 0.7),
+            ip_mode=ip_mode,
+        )
+        os.replace(tmp_out, bed_path)
+        combined_stats[strand_label] = stats
+        filtered_any = True
+        ip_of.update(stats.get("internal_priming_flags") or {})
+
+    if ip_filter:
+        n_ip_flagged = sum(1 for v in ip_of.values() if v)
+        combined_stats["n_ip_flagged"] = n_ip_flagged
+        combined_stats["ip_flag_rate"] = (
+            round(n_ip_flagged / len(ip_of), 4) if ip_of else 0.0
+        )
+        combined_stats["ip_of"] = ip_of
+
+    # "peak_filters" is not one of OutputManager's pre-registered numbered
+    # stage dirs (self.dirs), so save_stats("peak_filters", ...) would raise
+    # KeyError. Use the existing pas_gene (04_pas_gene_assignment) stage dir
+    # instead -- filtering happens immediately before that stage -- via a
+    # distinctly-named file so it can't collide with pas_gene_stats.json.
+    # Redact the per-PAS flag maps from the ON-DISK stats (they can be as
+    # large as the PAS count and belong in the pasbed/ledger, not a JSON
+    # blob) -- the full maps are still on the RETURNED dict for the caller.
+    _disk_stats = {k: v for k, v in combined_stats.items() if k != "ip_of"}
+    for _strand_label in ("pos", "neg"):
+        _sd = _disk_stats.get(_strand_label)
+        if isinstance(_sd, dict):
+            _sd = {k: v for k, v in _sd.items() if k != "internal_priming_flags"}
+            if isinstance(_sd.get("internal_priming"), dict):
+                _sd["internal_priming"] = {
+                    k: v for k, v in _sd["internal_priming"].items() if k != "flags"
+                }
+            _disk_stats[_strand_label] = _sd
+    _stats_path = output_mgr.path("pas_gene", "peak_filters_stats.json")
+    with open(_stats_path, "w") as _f:
+        json.dump(_disk_stats, _f, indent=2)
+    # Register the rewritten pasbeds as filtered artifacts (best-effort --
+    # never fail the run over manifest bookkeeping).
+    if filtered_any:
+        try:
+            output_mgr.register_artifact(
+                str(directory_config.posbed), stage="peak_filters",
+                fmt="bed", schema_name="pas_bed_filtered",
+            )
+            output_mgr.register_artifact(
+                str(directory_config.negbed), stage="peak_filters",
+                fmt="bed", schema_name="pas_bed_filtered",
+            )
+        except Exception as e:  # pragma: no cover -- bookkeeping only
+            log.warning("peak_filters: register_artifact failed: %s", e)
+    log.info(
+        "peak_filters: ip_filter=%s(mode=%s) annot_filter=%s pos(total=%s filtered=%s) "
+        "neg(total=%s filtered=%s) n_ip_flagged=%s",
+        ip_filter, ip_mode, annot_filter,
+        combined_stats["pos"].get("total"), combined_stats["pos"].get("filtered"),
+        combined_stats["neg"].get("total"), combined_stats["neg"].get("filtered"),
+        combined_stats.get("n_ip_flagged"),
+    )
+    return combined_stats
 
 
 def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> dict:
@@ -303,8 +542,15 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     output_mgr = OutputManager(base_dir=directory_config.output_dir)
     output_mgr.setup()
 
-    # Save run configuration
-    output_mgr.save_run_config(vars(args))
+    # D6: fail loud, before any peak-calling compute is spent, if --ip-filter
+    # / --annot-filter are enabled but misconfigured (see _apply_pas_filters).
+    _validate_pas_filter_config()
+
+    # Save run configuration (B0: serialize the RESOLVED config actually in
+    # effect — directory_config/variable_config/filter_config — not the raw
+    # argparse defaults, which record atlas=null on runs that snapped).
+    from ema.outputs import build_resolved_run_config
+    output_mgr.save_run_config(build_resolved_run_config())
 
     # Forward strategy-tunable hyperparameters that the user supplied via
     # CLI / YAML.  Only pass kwargs the strategy actually accepts (introspect
@@ -663,14 +909,33 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         output_mgr.save_stats("cb_filter", {
             "min_read": filter_config.min_read,
         })
+        # B3: ALWAYS write the per-dataset filtered_cb.tsv. The old
+        # ``if _filtered_cb_path.exists()`` guard silently skipped the write, so
+        # real runs left 02_cb_filter/ with only the stats JSON — making the
+        # min_read survivor set unrecoverable and the documented samtools -D
+        # workflow impossible. Prefer the authoritative in-memory list that
+        # filter_cb() just populated; fall back to the on-disk run-root file.
         from ema.outputs import write_filtered_cb
+        import ema.matrixfilter as _mf
         _filtered_cb_path = Path(directory_config.filtered_cb)
-        if _filtered_cb_path.exists():
-            write_filtered_cb(
-                output_dir, bam_list[0][0],
-                [b.strip() for b in _filtered_cb_path.read_text().splitlines() if b.strip()],
-                filter_config.min_read,
+        if _mf.filtered_cb_list:
+            _kept_cbs = list(_mf.filtered_cb_list)
+        elif _filtered_cb_path.exists():
+            _kept_cbs = [
+                b.strip()
+                for b in _filtered_cb_path.read_text().splitlines()
+                if b.strip()
+            ]
+        else:
+            _kept_cbs = []
+            log.warning(
+                "cb_filter produced no filtered barcode list for %r; writing an "
+                "empty filtered_cb.tsv (header only) for traceability.",
+                bam_list[0][0],
             )
+        write_filtered_cb(
+            output_dir, bam_list[0][0], _kept_cbs, filter_config.min_read,
+        )
 
         # Wait for GTF processing to complete before find_close
         _gtf_stage = _add_stage("GTF annotation", total=1)
@@ -688,6 +953,15 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "utr_count": len(utr_lengths),
         })
 
+        # D6/D9: optional internal-priming / annotation filters, applied to the
+        # pos/neg PAS BEDs in place, before find_close() derives the gene
+        # assignment from them. No-op (not even imported) when both flags
+        # are off — see _apply_pas_filters(). Note: atlas snapping never
+        # runs on the single-sample path (only the multi-sample merge/atlas
+        # stage does), so atlas_of stays empty here.
+        _pas_filter_result = _apply_pas_filters(output_mgr)
+        _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
+
         # Find closest gene for each PAS
         _pas_gene_stage = _add_stage("PAS→gene assignment", total=1)
         genes = find_close(
@@ -703,6 +977,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "max_gene_distance": getattr(args, "max_gene_distance", 5000),
             "utr_multiplier": getattr(args, "utr_multiplier", 2.0),
             "assigned_pas_count": len(genes),
+            "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+            "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
         })
 
         # Build sparse matrix (PAS IDs preserved)
@@ -731,6 +1007,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         write_pas_gene_artifacts(
             output_dir, bam_list[0][0],
             result.pas_ids, result.gene_ids,
+            atlas_of={}, ip_of=_ip_of,
         )
         write_annotated_matrix(
             output_dir, bam_list[0][0],
@@ -804,6 +1081,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             "atlas_enabled": bool(directory_config.atlas),
             "single_sample_h5ad": _ss_h5ad,
             "clustering_dir": directory_config.clustering_dir,
+            # D9: atlas never runs on the single-sample path.
+            "atlas_stats": None,
+            "ip_stats": {
+                "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+                "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
+            } if _pas_filter_result else None,
         }
 
     # =========================================================================
@@ -820,29 +1103,154 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     all_mtxs = all_pos_mtxs + all_neg_mtxs
     all_cbs = all_pos_cbs + all_neg_cbs
     all_ds_ids = all_dataset_ids_for_pos + all_dataset_ids_for_neg
+    # B1: the SAME dataset_id appears once per strand in all_ds_ids; carry an
+    # explicit strand per entry so the merge/atlas count-routing key becomes
+    # (dataset_id, strand, pasnumber) and pos/neg PAS #N cannot collide.
+    all_strands = (
+        ["+"] * len(all_dataset_ids_for_pos) + ["-"] * len(all_dataset_ids_for_neg)
+    )
 
-    # Dispatch atlas vs. coordinate-merge based on config
+    # Dispatch atlas vs. coordinate-merge based on config.
+    #
+    # atlas_mode="annotate" (the default whenever --atlas is configured) is a
+    # PURE OVERLAY: the unified PAS set is built EXACTLY like a no-atlas run
+    # (merge_pas_beds proximity-merges ALL called PAS across datasets; atlas
+    # plays no role in merging or id assignment), and atlas match/distance is
+    # annotated onto that already-final set afterwards. This is what
+    # guarantees a novel PAS seen in two datasets at one locus becomes ONE
+    # unified feature regardless of whether an atlas is configured, and keeps
+    # a no-atlas run byte-identical (that path never touches atlas code at
+    # all).
+    #
+    # atlas_mode="filter" (opt-in) keeps the pre-existing snap-and-drop
+    # behaviour unchanged: atlas snapping decides PAS identity and can drop
+    # PAS with no atlas hit, via snap_beds_to_atlas.
     _atlas_stage = _add_stage(
         "Atlas snap" if directory_config.atlas else "PAS merge",
         total=None,  # indeterminate spinner — we don't know peak count yet
     )
-    if directory_config.atlas:
+    # E3: provenance ledger for the biggest silent drop site (atlas snap,
+    # filter mode only — annotate mode never drops a PAS at this stage, so
+    # there is nothing to ledger here; atlas_match/atlas_distance_bp still
+    # reach the per-dataset ledgers via _atlas_of/record_pas_drops below).
+    _prov_ledger = None
+    # D9: {new_pas_id: (atlas_match, atlas_distance_bp)}, "" defaults when
+    # atlas didn't run — see ema.datasets.atlas_snap's atlas_status.tsv
+    # sidecar (filter mode) / ema.datasets.atlas_annotate's overlay sidecar
+    # (annotate mode, the default).
+    _atlas_of: dict = {}
+    _atlas_stats: dict | None = None
+    _atlas_mode = str(getattr(args, "atlas_mode", "annotate")) if directory_config.atlas else None
+
+    if directory_config.atlas and _atlas_mode == "filter":
         if snap_beds_to_atlas is None:
             raise RuntimeError("ema.datasets.atlas_snap is not available")
+        try:
+            from ema.provenance import ProvenanceLedger
+            _prov_ledger = ProvenanceLedger(output_dir)
+        except Exception as _e:  # provenance must never break a run
+            log.warning("provenance ledger init failed: %s", _e)
+            _prov_ledger = None
         unified_bed, mapping_path = snap_beds_to_atlas(
             all_beds,
             all_ds_ids,
             atlas_bed=directory_config.atlas,
             output_dir=unified_dir,
             distance=directory_config.atlas_distance,
+            strands=all_strands,
+            ledger=_prov_ledger,
+            mode=_atlas_mode,
         )
+        if _prov_ledger is not None:
+            try:
+                _prov_ledger.flush()
+                log.info(
+                    "provenance: atlas-snap pas_ledger written (%d surviving PAS)",
+                    _prov_ledger.count_surviving("pas"),
+                )
+            except Exception as _e:
+                log.warning("provenance ledger flush failed: %s", _e)
+
+        # D9: read the atlas_status.tsv / atlas_stats.json sidecars
+        # snap_beds_to_atlas wrote, so downstream steps (per-dataset ledger,
+        # annotatedpas.bed, manifest) can report match/no-match too.
+        try:
+            _status_path = unified_dir / "atlas_status.tsv"
+            if _status_path.exists():
+                with open(_status_path) as _f:
+                    next(_f, None)  # header
+                    for _line in _f:
+                        _parts = _line.rstrip("\n").split("\t")
+                        if len(_parts) != 3:
+                            continue
+                        _new_id, _match, _dist = _parts
+                        _atlas_of[_new_id] = (
+                            _match if _match != "" else "",
+                            _dist if _dist != "" else "",
+                        )
+            _atlas_stats_path = unified_dir / "atlas_stats.json"
+            if _atlas_stats_path.exists():
+                _atlas_stats = json.loads(_atlas_stats_path.read_text())
+        except Exception as _e:  # sidecars are auxiliary — never fail the run
+            log.warning("atlas status sidecars unreadable (non-fatal): %s", _e)
+
+        if _atlas_stats:
+            output_mgr.save_stats("atlas_snap", _atlas_stats)
+            log.info(
+                "atlas snap (mode=%s): %d matched, %d unmatched (match_rate=%.4f)",
+                _atlas_mode,
+                _atlas_stats.get("n_atlas_matched", 0),
+                _atlas_stats.get("n_atlas_unmatched", 0),
+                _atlas_stats.get("atlas_match_rate", 0.0),
+            )
     else:
+        # Default-off (no atlas configured) AND atlas_mode="annotate" (the
+        # default when an atlas IS configured) both build the unified PAS
+        # set the same way — merge_pas_beds, with no atlas involvement.
         unified_bed, mapping_path = merge_pas_beds(
             all_beds,
             all_ds_ids,
             output_dir=unified_dir,
             gap=getattr(args, "pas_gap", 100),
+            strands=all_strands,
         )
+        if directory_config.atlas:
+            # atlas_mode="annotate": overlay atlas match/distance onto the
+            # ALREADY-FINAL unified PAS set. Pure annotation — never adds,
+            # drops, renumbers, or moves a PAS.
+            if annotate_pas_against_atlas is None:
+                raise RuntimeError("ema.datasets.atlas_annotate is not available")
+            try:
+                _status_path, _stats_path = annotate_pas_against_atlas(
+                    unified_pasbed_path=unified_bed,
+                    atlas_bed_path=directory_config.atlas,
+                    distance=directory_config.atlas_distance,
+                    output_dir=unified_dir,
+                )
+                with open(_status_path) as _f:
+                    next(_f, None)  # header
+                    for _line in _f:
+                        _parts = _line.rstrip("\n").split("\t")
+                        if len(_parts) != 3:
+                            continue
+                        _new_id, _match, _dist = _parts
+                        _atlas_of[_new_id] = (
+                            _match if _match != "" else "",
+                            _dist if _dist != "" else "",
+                        )
+                _atlas_stats = json.loads(_stats_path.read_text())
+            except Exception as _e:  # overlay is auxiliary — never fail the run
+                log.warning("atlas annotate-overlay failed (non-fatal): %s", _e)
+
+            if _atlas_stats:
+                output_mgr.save_stats("atlas_snap", _atlas_stats)
+                log.info(
+                    "atlas annotate-overlay (mode=%s): %d matched, %d unmatched (match_rate=%.4f)",
+                    _atlas_mode,
+                    _atlas_stats.get("n_atlas_matched", 0),
+                    _atlas_stats.get("n_atlas_unmatched", 0),
+                    _atlas_stats.get("atlas_match_rate", 0.0),
+                )
     # Mark atlas/merge stage complete
     _advance(_atlas_stage)
 
@@ -855,6 +1263,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         mapping_path=mapping_path,
         output_mtx=unified_mtx,
         output_cb=unified_cb,
+        strands=all_strands,
     )
 
     log.info(
@@ -888,6 +1297,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                 _p.write(line)
             elif len(parts) >= 6 and parts[5] == "-":
                 _n.write(line)
+
+    # D6/D9: optional internal-priming / annotation filters, applied to the
+    # unified pos/neg PAS BEDs in place, before find_close() derives the
+    # gene assignment from them. No-op (not even imported) when both flags
+    # are off — see _apply_pas_filters(). The unified BED name field is
+    # already the rekeyed atlas/merge pas_id at this point (see the split
+    # above), so the returned "ip_of" map is keyed correctly for
+    # write_pas_gene_artifacts / record_pas_drops in each per-dataset worker.
+    _pas_filter_result = _apply_pas_filters(output_mgr)
+    _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
+
     genes = find_close(
         utr_lengths=utr_lengths,
         max_distance=getattr(args, "max_gene_distance", 5000),
@@ -903,6 +1323,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "max_gene_distance": getattr(args, "max_gene_distance", 5000),
         "utr_multiplier": getattr(args, "utr_multiplier", 2.0),
         "assigned_pas_count": len(genes),
+        "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+        "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
     })
 
     # Per-dataset clustering (each dataset_id clusters independently)
@@ -983,12 +1405,20 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     _resolved_plot_engines: list[str] = (
         plot_engines if plot_engines is not None else ["matplotlib"]
     )
+    # D9: same atlas_of/ip_of maps for every dataset (one unified pas_id
+    # space) — built once, forwarded to each worker via _prov_kwargs so
+    # record_pas_drops() / write_pas_gene_artifacts() in
+    # run_one_dataset_downstream() can populate the ledger + annotatedpas.bed
+    # status columns.
+    _prov_kwargs: dict = {"atlas_of": _atlas_of, "ip_of": _ip_of}
     worker_args: list[tuple] = []
     for _warg in _raw_worker_args:
         _ds_id_for_sub = _warg[0]
         _sub_stage = _add_subtask(_downstream_stage, _ds_id_for_sub, total=6)
         _sub_client = _client(_sub_stage)
-        worker_args.append(_warg + (_sub_client, _cluster_kwargs, _resolved_plot_engines))
+        worker_args.append(
+            _warg + (_sub_client, _cluster_kwargs, _resolved_plot_engines, _prov_kwargs)
+        )
 
     # Decide worker count: cap by RAM budget (each AnnData ~ 200-500 MB).
     n_datasets = len(worker_args)
@@ -1002,20 +1432,25 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         n_datasets, n_workers,
     )
 
+    _all_stats: list = []  # E3: collect per-dataset stats (carry n_vars for reconcile)
     if n_workers <= 1 or n_datasets == 1:
         # Inline path: no spawn overhead, backward-compatible.
         for arg_tuple in worker_args:
             # arg_tuple has: ds_id, sub_indices, sub_cbs, unified_mtx,
             #   per_dataset_dir, genes_pkl, min_read, min_cells, min_genes,
-            #   log_queue, progress_client, cluster_kwargs, plot_engines  (13 elements)
-            *pos_args, lq, pc, ck, pe = arg_tuple
-            run_one_dataset_downstream(
+            #   log_queue, progress_client, cluster_kwargs, plot_engines,
+            #   prov_kwargs (atlas_of/ip_of, D9)  (14 elements)
+            *pos_args, lq, pc, ck, pe, pk = arg_tuple
+            _st = run_one_dataset_downstream(
                 *pos_args,
                 log_queue=lq,
                 progress_client=pc,
                 plot_engines=pe,
                 **(ck or {}),
+                **(pk or {}),
             )
+            if isinstance(_st, dict):
+                _all_stats.append(_st)
             _advance(_downstream_stage)
     else:
         ctx = multiprocessing.get_context("spawn")
@@ -1023,7 +1458,45 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             for _stats in pool.imap_unordered(
                 downstream_worker_star, worker_args, chunksize=1
             ):
+                if isinstance(_stats, dict):
+                    _all_stats.append(_stats)
                 _advance(_downstream_stage)  # one dataset complete
+
+    # E3 sidecar-then-reconcile: after the pool joins, the parent reconciles the
+    # per-dataset ledger sidecars each worker wrote (no shared mutable state) and
+    # self-checks the per-dataset invariant surviving PAS == n_vars(clusters.h5ad).
+    # The run-level atlas-snap ledger is a DIFFERENT question and stays separate.
+    try:
+        from ema.provenance import reconcile_dataset_ledgers
+        _recon_inputs = []
+        for _st in _all_stats:
+            _ds = _st.get("dataset_id")
+            if _ds is None:
+                continue
+            _sidecar = directory_config.clusters_h5ad_for(_ds).parent / "provenance"
+            _recon_inputs.append((_ds, _sidecar, int(_st.get("final_pas", 0))))
+        if _recon_inputs:
+            _cohort_dir = output_dir / "provenance" / "by_dataset"
+            _recon = reconcile_dataset_ledgers(_recon_inputs, cohort_dir=_cohort_dir)
+            import json as _json
+            (output_dir / "provenance").mkdir(parents=True, exist_ok=True)
+            (output_dir / "provenance" / "reconcile_summary.json").write_text(
+                _json.dumps(_recon, indent=2)
+            )
+            _bad = [d["ds_id"] for d in _recon["datasets"] if not d["invariant_ok"]]
+            if _bad:
+                log.warning(
+                    "provenance reconcile: invariant OFF for %d/%d dataset(s): %s "
+                    "(pas_ledger accounting incomplete)",
+                    len(_bad), _recon["n_datasets"], _bad,
+                )
+            else:
+                log.info(
+                    "provenance reconcile: invariant OK for all %d dataset(s) "
+                    "(surviving PAS == n_vars)", _recon["n_datasets"],
+                )
+    except Exception as _e:  # provenance is auxiliary — never fail the run
+        log.warning("provenance reconcile step failed (non-fatal): %s", _e)
 
     # NOTE: PDUI and differential APA are NOT run here — they belong to the
     # separate `ema_switch` command. That command lets the user select which
@@ -1066,6 +1539,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                     "Cross-dataset matching (%s): %d cluster entries -> %d canonical clusters",
                     args.cluster_match_method, len(match_df), n_canonical,
                 )
+                # B6: round-trip the canonical map back into each dataset's obs
+                # so cross-sample comparisons join on a shared id space instead
+                # of the per-sample (non-comparable) leiden labels.
+                from ema.clustering.cross_dataset.roundtrip import write_canonical_clusters
+                try:
+                    write_canonical_clusters(match_df, existing)
+                except (KeyError, OSError, ValueError) as e:
+                    log.warning(
+                        "canonical_cluster round-trip into obs skipped (%s): %s",
+                        type(e).__name__, e,
+                    )
             except (FileNotFoundError, KeyError, ValueError, OSError) as e:
                 log.warning(
                     "Cross-dataset matching skipped (%s): %s",
@@ -1081,6 +1565,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "atlas_enabled": bool(directory_config.atlas),
         "clustering_dir": directory_config.clustering_dir,
         "single_sample_h5ad": None,
+        # D9: atlas/ip match-vs-no-match stats for the run manifest.
+        "atlas_stats": _atlas_stats,
+        "ip_stats": {
+            "n_ip_flagged": (_pas_filter_result or {}).get("n_ip_flagged"),
+            "ip_flag_rate": (_pas_filter_result or {}).get("ip_flag_rate"),
+        } if _pas_filter_result else None,
     }
 
 

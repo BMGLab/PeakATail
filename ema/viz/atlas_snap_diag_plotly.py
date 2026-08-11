@@ -123,5 +123,13 @@ class AtlasSnapDiagPlotly(VizStrategy):
             "n_unsnapped": unsnapped,
             "snap_rate": round(snapped / total, 4) if total > 0 else None,
             "n_snap_distances": len(distances),
+            # D3: snap_rate is a coverage metric, NOT precision. Precision
+            # measured AFTER snapping is circular (=1.0 by construction, since
+            # snapped PAS sit on atlas sites). Do not present this as validation;
+            # a fair precision benchmark uses the UNSNAPPED called PAS vs atlas.
+            "caveat": (
+                "snap_rate is coverage, not precision; post-snap precision is "
+                "circular (=1.0). Benchmark the unsnapped set for a fair estimate."
+            ),
         })
         return paths

@@ -55,6 +55,8 @@ class OutputManager:
 
     def __init__(self, base_dir: str = "emaout") -> None:
         self.base_dir = base_dir
+        # E2: registered artifacts for run_manifest.json.
+        self._artifacts: list[dict] = []
         self.dirs = {
             "peak_calling": os.path.join(base_dir, "01_peak_calling"),
             "cb_filter": os.path.join(base_dir, "02_cb_filter"),
@@ -65,6 +67,11 @@ class OutputManager:
             "clustering": os.path.join(base_dir, "07_clustering"),
             "differential": os.path.join(base_dir, "08_differential"),
             "gtf_cache": os.path.join(base_dir, "gtf_cache"),
+            # D9: atlas-snap stats (n_atlas_matched/n_atlas_unmatched/...)
+            # land alongside the other atlas-snap outputs (atlas_mapping.tsv,
+            # atlas_status.tsv, ...) under unified/, the multi-sample-path
+            # merge/atlas output dir -- not a new numbered stage dir.
+            "atlas_snap": os.path.join(base_dir, "unified"),
         }
 
     def setup(self) -> None:
@@ -83,11 +90,285 @@ class OutputManager:
             json.dump(stats, f, indent=2)
 
     def save_run_config(self, args_dict: dict) -> None:
-        """Persist the resolved run configuration at the run root."""
+        """Persist the resolved run configuration at the run root.
+
+        ``args_dict`` should be the *resolved* configuration — see
+        :func:`build_resolved_run_config`, which reconciles the argparse
+        namespace with the resolved ``directory_config`` / ``variable_config`` /
+        ``filter_config`` singletons the pipeline body actually reads. Passing a
+        bare ``vars(args)`` here reintroduces bug B0 (records argparse defaults;
+        e.g. ``atlas`` shows ``null`` on runs that snapped).
+        """
         config = {"timestamp": datetime.now().isoformat(), **args_dict}
         path = os.path.join(self.base_dir, "run_config.json")
         with open(path, "w") as f:
-            json.dump(config, f, indent=2)
+            json.dump(config, f, indent=2, default=str)
+
+    # ------------------------------------------------------------------ #
+    # E2: run_manifest.json — the contract artifact the hub indexes.     #
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _content_hash(abs_path) -> str | None:
+        """sha256 of an artifact file as ``"sha256:<hex>"`` (None if unreadable).
+
+        Lets any manifest consumer detect a stale index when a REFERENCED
+        artifact (ledger/parquet/h5ad) changes but the manifest bytes don't —
+        hashing only the manifest sha256 misses that. Streamed so large h5ads
+        don't blow memory. The contract Artifact model doesn't yet field this,
+        so it rides as an extra key (ignored on validate); consuming it needs a
+        contract bump (flagged for hub-team in HANDOFF.md).
+        """
+        import hashlib
+
+        try:
+            p = Path(abs_path)
+            if not p.is_file():
+                return None
+            h = hashlib.sha256()
+            with p.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            return f"sha256:{h.hexdigest()}"
+        except OSError:
+            return None
+
+    def register_artifact(
+        self,
+        path: str,
+        *,
+        stage: str,
+        fmt: str,
+        schema_name: str,
+        schema_version: str = "0.1.0",
+        entity_counts: dict | None = None,
+    ) -> None:
+        """Register one produced artifact for the run manifest (E2).
+
+        Fields conform to peakatail_contract.models.Artifact:
+        ``path, stage, format, schema_name, schema_version, entity_counts``
+        (plus an extra ``content_hash`` the contract ignores on validate).
+        ``path`` is stored relative to the run root when possible so the
+        manifest is relocatable.
+        """
+        try:
+            rel = os.path.relpath(path, self.base_dir)
+        except ValueError:
+            rel = str(path)
+        self._artifacts.append(
+            {
+                "path": rel,
+                "stage": stage,
+                "format": fmt,
+                "schema_name": schema_name,
+                "schema_version": schema_version,
+                "entity_counts": entity_counts or {},
+                "content_hash": self._content_hash(path),
+            }
+        )
+
+    def _auto_discover_artifacts(self) -> list[dict]:
+        """Best-effort scan of the run root for standard artifacts (E2).
+
+        Complements explicit ``register_artifact`` calls so the manifest is
+        useful even where registration isn't threaded through. Emits
+        contract-conformant Artifact dicts (format is a Format enum value).
+        """
+        # (rel_path, stage, format, schema_name)
+        patterns = [
+            ("unified/pas_uid.tsv", "unified", "tsv", "pas_uid"),
+            ("unified/atlas_mapping.tsv", "atlas_snap", "tsv", "atlas_mapping"),
+            ("unified/multi_sample_pas_mapping.tsv", "pas_merge", "tsv", "pas_mapping"),
+            ("provenance/pas_ledger.tsv", "provenance", "tsv", "PasLedgerRow"),
+            ("provenance/cell_ledger.tsv", "provenance", "tsv", "CellLedgerRow"),
+            # Multi-sample runs write the reconciled per-dataset ledgers under
+            # by_dataset/ (the run-level provenance/pas_ledger.tsv only exists
+            # when a run-level, e.g. atlas-snap, drop ledger was written).
+            # Listed AFTER the run-level paths so, when both exist, the
+            # run-level one is the first manifest entry for its schema_name;
+            # on a no-atlas multi-sample run only these by_dataset entries are
+            # emitted (the run-level files don't exist, so aren't registered).
+            ("provenance/by_dataset/pas_ledger.tsv", "provenance", "tsv", "PasLedgerRow"),
+            ("provenance/by_dataset/cell_ledger.tsv", "provenance", "tsv", "CellLedgerRow"),
+            ("provenance/reconcile_summary.json", "provenance", "json", "reconcile_summary"),
+            ("run_config.json", "run", "json", "run_config"),
+        ]
+        found: list[dict] = []
+        base = Path(self.base_dir)
+        seen = {a["path"] for a in self._artifacts}
+
+        def _emit(rel, stage, fmt, schema_name):
+            if rel in seen:
+                return
+            found.append({
+                "path": rel, "stage": stage, "format": fmt,
+                "schema_name": schema_name, "schema_version": "0.1.0",
+                "entity_counts": {},
+                "content_hash": self._content_hash(base / rel),
+            })
+
+        for rel, stage, fmt, schema_name in patterns:
+            if (base / rel).exists():
+                _emit(rel, stage, fmt, schema_name)
+        # Per-dataset clustering h5ads + stage stats.
+        clustering = base / "07_clustering"
+        if clustering.exists():
+            for h5ad in sorted(clustering.glob("*/clusters.h5ad")):
+                _emit(os.path.relpath(h5ad, self.base_dir),
+                      "clustering", "h5ad", "clusters.h5ad")
+            for ss in sorted(clustering.glob("*/stage_stats.json")):
+                _emit(os.path.relpath(ss, self.base_dir),
+                      "qc", "json", "stage_stats")
+        return found
+
+    @staticmethod
+    def _datasets_from_config(resolved_config: dict) -> list[dict]:
+        """Build contract DatasetRef dicts from the resolved config (E2).
+
+        Defensive against the several dataset dict shapes the config may use
+        ({id/dataset_id/name}, {bams/bam_paths}).
+        """
+        raw = (resolved_config.get("directories", {}) or {}).get("datasets", []) or []
+        out: list[dict] = []
+        for ds in raw:
+            if isinstance(ds, dict):
+                ds_id = ds.get("id") or ds.get("dataset_id") or ds.get("name")
+                bams = ds.get("bams") or ds.get("bam_paths") or []
+                label = ds.get("label")
+                if ds_id is None:
+                    continue
+                out.append({
+                    "dataset_id": str(ds_id),
+                    "bam_paths": [str(b) for b in bams] if isinstance(bams, (list, tuple)) else [str(bams)],
+                    "label": label,
+                })
+            elif isinstance(ds, str):
+                out.append({"dataset_id": ds, "bam_paths": [], "label": None})
+        return out
+
+    def write_manifest(
+        self,
+        resolved_config: dict,
+        *,
+        run_id: str | None = None,
+        stratum_to_label: dict | None = None,
+        entity_counts: dict | None = None,
+        contract_version: str = "0.1.0",
+    ) -> str:
+        """Write ``run_manifest.json`` (E2) at the run root and return its path.
+
+        The written object conforms to ``peakatail_contract.models.RunManifest``
+        (frozen v0.1.0), i.e. it parses+validates cleanly there:
+          * ``run_id`` / ``root`` — run identity (root = absolute run dir).
+          * ``contract_version`` (semver) — the hub validates against this.
+          * ``datasets`` — DatasetRef list derived from the resolved config.
+          * ``artifacts`` — registered + auto-discovered Artifact dicts
+            (path/stage/format/schema_name/schema_version/entity_counts).
+          * ``resolved_config`` — the RESOLVED run config (B0), never argparse
+            defaults; the ONLY config surface the hub reads.
+          * ``stratum_to_label`` — full celltype labels for truncated stratum
+            dir names (fixes D10's 48-char truncation join break).
+          * ``entity_counts`` — run-level totals for the QC funnel.
+
+        ``id_grammar`` is written as an extra, informational field (ignored by
+        the contract model, which does not forbid extras).
+        """
+        base = Path(self.base_dir)
+        artifacts = list(self._artifacts) + self._auto_discover_artifacts()
+        datasets = self._datasets_from_config(resolved_config)
+        counts = dict(entity_counts or {})
+        counts.setdefault("n_datasets", len(datasets))
+        manifest = {
+            "run_id": run_id or base.name or str(base),
+            "root": str(base.resolve()),
+            "contract_version": contract_version,
+            "timestamp": datetime.now().isoformat(),
+            "datasets": datasets,
+            "artifacts": artifacts,
+            "resolved_config": resolved_config,
+            "stratum_to_label": stratum_to_label or {},
+            "entity_counts": counts,
+            # informational only (not a contract field; extras are ignored)
+            "id_grammar": {
+                "pas_uid": "chrom:pos:strand (pos = end-1 on +, start on -)",
+                "cell_uid": "{dataset_id}:{barcode}",
+                "cluster_uid": "{dataset_id}:{leiden}",
+                "canonical_cluster": "shared int across datasets (obs column)",
+                "finding_uid": "{arm}:{celltype}:{gene_id}",
+            },
+        }
+        path = os.path.join(self.base_dir, "run_manifest.json")
+        with open(path, "w") as f:
+            json.dump(manifest, f, indent=2, default=str)
+        return path
+
+
+def build_resolved_run_config() -> dict:
+    """Assemble the fully-resolved run configuration actually in effect.
+
+    Bug B0: ``run_config.json`` used to serialize ``vars(args)`` — the argparse
+    namespace — which holds *defaults* for everything supplied via YAML or
+    ``set_directory_config`` (atlas path, gtf, datasets, atlas_distance, …). So
+    a run that snapped to an atlas recorded ``atlas: null``, making the config
+    non-reproducible and misleading the data controller.
+
+    This reads the resolved module-level config singletons that the pipeline
+    body reads from, so the persisted config matches what actually ran. Values
+    are grouped by their source and JSON-safe (Paths → str via the caller's
+    ``default=str``). Robust to missing attributes.
+    """
+    from ema.config import (
+        directory_config as _dc,
+        variable_config as _vc,
+        filter_config as _fc,
+        args as _args,
+    )
+
+    def _get(obj, name, default=None):
+        try:
+            return getattr(obj, name, default)
+        except Exception:  # lazy proxies may raise on unset attrs
+            return default
+
+    resolved: dict = {}
+
+    # --- directories / inputs (set via set_directory_config, NOT on args) ---
+    resolved["directories"] = {
+        "output_dir": str(_get(_dc, "output_dir", "")),
+        "bam_dir": _get(_dc, "bam_dir"),
+        "gtf_dir": _get(_dc, "gtf_dir"),
+        "atlas": _get(_dc, "atlas"),
+        "atlas_distance": _get(_dc, "atlas_distance"),
+        "datasets": _get(_dc, "datasets", []),
+        "filenames": _get(_dc, "filenames", {}),
+    }
+
+    # --- resolved scalar knobs the pipeline body actually reads ---
+    resolved["variables"] = {
+        k: _get(_vc, k)
+        for k in (
+            "seqlen", "cb_len", "barcode_tag", "default_threshold",
+            "merge_len", "min_pas_spacing", "min_pas_prominence",
+        )
+    }
+    resolved["filters"] = {
+        k: _get(_fc, k)
+        for k in ("min_read", "min_cells", "min_genes", "min_pas_per_cell")
+    }
+
+    # --- remaining argparse fields (strategy, thresholds, tiles, …) ---
+    # Kept for completeness, but under a namespaced key so the resolved
+    # directory/variable/filter values above are unambiguous. Filter out
+    # private/callable entries.
+    try:
+        ns = vars(_args._get()) if hasattr(_args, "_get") else vars(_args)
+    except Exception:
+        ns = {}
+    resolved["args"] = {
+        k: v for k, v in ns.items()
+        if not k.startswith("_") and not callable(v)
+    }
+
+    return resolved
 
 
 def _concat_beds(srcs: Iterable[Path | str], dst: Path) -> None:
@@ -100,9 +381,12 @@ def _concat_beds(srcs: Iterable[Path | str], dst: Path) -> None:
     with open(dst, "w") as out:
         for src in srcs:
             with open(src) as f:
-                for line in f:
-                    if line.strip():
-                        out.write(line)
+                # Bulk read + filter + a single writelines() call per file
+                # instead of one out.write() per line — same bytes (each
+                # surviving line, including its own original line ending,
+                # is passed through unmodified), fewer Python-level I/O
+                # calls on files with many peak rows.
+                out.writelines(line for line in f if line.strip())
 
 
 def write_raw_peak_outputs(
@@ -278,6 +562,9 @@ def write_pas_gene_artifacts(
     dataset_id: str,
     pas_ids,
     gene_ids,
+    *,
+    atlas_of: dict | None = None,
+    ip_of: dict | None = None,
 ) -> tuple[Path, Path]:
     """Write ``pas_gene.tsv`` and ``annotatedpas.bed`` for one dataset.
 
@@ -286,15 +573,30 @@ def write_pas_gene_artifacts(
     to read the full AnnData.
 
     ``annotatedpas.bed`` extends ``pasbed.bed`` with a trailing gene_id
-    column.  It depends on ``pasbed.bed`` having been written first
-    (see :func:`write_per_dataset_beds`); if the pasbed isn't on disk
-    yet we skip the BED part and warn.
+    column, and (D9) three further trailing status columns --
+    ``atlas_match``, ``atlas_distance_bp``, ``internal_priming`` -- so the
+    "keep everything, annotate with match/no-match" atlas-snap and
+    internal-priming filters are queryable straight off the BED, not just
+    the PAS ledger. The first 6 columns stay plain BED6 so existing BED
+    consumers (bedtools, etc.) still parse the file; extra columns are
+    appended, never inserted. It depends on ``pasbed.bed`` having been
+    written first (see :func:`write_per_dataset_beds`); if the pasbed
+    isn't on disk yet we skip the BED part and warn.
 
     Args:
         output_dir: Pipeline run-root (kept for API compat; not used directly).
         dataset_id: Dataset name.
         pas_ids: Array-like of PAS IDs (parallel to ``gene_ids``).
         gene_ids: Array-like of gene IDs aligned to ``pas_ids``.
+        atlas_of: Optional ``{pas_id: (atlas_match, atlas_distance_bp)}`` --
+            see ``ema.datasets.atlas_snap.snap_beds_to_atlas``'s
+            ``atlas_status.tsv`` sidecar. PAS absent from the map (atlas
+            didn't run, or this PAS predates atlas) get ``""`` for both
+            columns.
+        ip_of: Optional ``{pas_id: internal_priming_bool}`` -- see
+            ``ema.experimental.peak_filters.apply_filters``'s
+            ``"internal_priming_flags"`` stats key. PAS absent from the
+            map get ``""``.
 
     Returns:
         ``(pas_gene_tsv_path, annotatedpas_bed_path)``.  The BED path
@@ -302,6 +604,9 @@ def write_pas_gene_artifacts(
     """
     import pandas as pd  # local import — heavy module
     from ema.config import directory_config
+
+    atlas_of = atlas_of or {}
+    ip_of = ip_of or {}
 
     pas_gene_tsv = directory_config.pas_gene_for(dataset_id)
     pas_gene_tsv.parent.mkdir(parents=True, exist_ok=True)
@@ -318,8 +623,12 @@ def write_pas_gene_artifacts(
             for line in src:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) >= 4:
-                    gid = lookup.get(parts[3], "")
-                    dst.write("\t".join(parts) + "\t" + gid + "\n")
+                    pas_id = parts[3]
+                    gid = lookup.get(pas_id, "")
+                    atlas_match, atlas_distance_bp = atlas_of.get(pas_id, ("", ""))
+                    ip_flag = ip_of.get(pas_id, "")
+                    extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag)]
+                    dst.write("\t".join(parts + extra) + "\n")
     else:
         log.warning(
             "annotatedpas.bed for %r skipped — pasbed.bed not on disk at %s",

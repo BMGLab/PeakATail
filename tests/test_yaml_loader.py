@@ -78,3 +78,26 @@ def test_invalid_merge_strategy_raises(tmp_path):
     })
     with pytest.raises(RunYamlError, match="merge_strategy"):
         load_run_yaml(p)
+
+
+def test_dataset_id_with_underscore_rejected(tmp_path):
+    """Underscore in a dataset id breaks barcode namespacing → hard error."""
+    import yaml
+    from ema.cli.yaml_loader import load_run_yaml, RunYamlError
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump({"gtf": "x.gtf", "datasets": [
+        {"id": "GSM1_StageI", "merge_strategy": "none", "bams": ["a.bam"]}]}))
+    with pytest.raises(RunYamlError, match="underscore"):
+        load_run_yaml(str(p))
+
+
+def test_duplicate_dataset_id_rejected(tmp_path):
+    """Reusing an id would collide two libraries' barcodes → hard error."""
+    import yaml
+    from ema.cli.yaml_loader import load_run_yaml, RunYamlError
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump({"gtf": "x.gtf", "datasets": [
+        {"id": "GSM1-A", "bams": ["a.bam"]},
+        {"id": "GSM1-A", "bams": ["b.bam"]}]}))
+    with pytest.raises(RunYamlError, match="duplicate"):
+        load_run_yaml(str(p))

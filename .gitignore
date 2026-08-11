@@ -109,3 +109,4 @@ coverage.xml
 Thumbs.db
 *~
 *.swp
+.gstack/

@@ -316,12 +316,18 @@ class ClassicPDUIStrategy(PDUIStrategy):
             def _gene_per_isoform(gid: str) -> list[dict[str, Any]]:
                 gene_entries = info_df[info_df["gene_id"] == gid]
                 # transcript_id -> [(pas_id, rank), ...]
-                t_pas: dict[str, list[tuple[int, int]]] = {}
-                for _, row in gene_entries.iterrows():
-                    tid = row["transcript_id"]
-                    t_pas.setdefault(tid, []).append(
-                        (int(row["pas_id"]), int(row["rank"]))
-                    )
+                # Vectorized equivalent of the per-row iterrows() loop:
+                # groupby(sort=False) preserves BOTH the transcript_id
+                # first-appearance order (dict insertion order downstream
+                # drives _pdui_per_gene_isoform_level's output row order)
+                # AND each group's original within-gene row order (which
+                # matters because _pdui_per_gene_isoform_level does a
+                # *stable* `sorted(ranked_pairs, key=lambda x: x[1])` --
+                # ties on `rank` must keep their original relative order).
+                t_pas: dict[str, list[tuple[int, int]]] = {
+                    tid: list(zip(g["pas_id"].astype(int), g["rank"].astype(int)))
+                    for tid, g in gene_entries.groupby("transcript_id", sort=False)
+                }
                 return _pdui_per_gene_isoform_level(
                     gid, t_pas, count_matrix, pseudocount
                 )

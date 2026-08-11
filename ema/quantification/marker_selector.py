@@ -42,6 +42,15 @@ def select_marker_pas(
     if cluster_key not in adata.obs:
         raise ValueError(f"adata.obs has no column '{cluster_key}'")
 
+    # scanpy's rank_genes_groups reads ``adata.obs[groupby].cat.categories``
+    # internally, so the groupby column MUST be categorical. canonical_cluster
+    # (and other real cluster keys) arrive as int/object from clusters.h5ad,
+    # which crashes with "Can only use .cat accessor with a 'category' dtype"
+    # on pandas >=2. Coerce here (idempotent — a no-op if already categorical).
+    import pandas as pd
+    if not isinstance(adata.obs[cluster_key].dtype, pd.CategoricalDtype):
+        adata.obs[cluster_key] = adata.obs[cluster_key].astype("category")
+
     sc.tl.rank_genes_groups(
         adata,
         groupby=cluster_key,

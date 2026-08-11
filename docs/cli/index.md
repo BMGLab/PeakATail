@@ -9,10 +9,20 @@ Run any subcommand with `--help` to see its full flag list.
 | Command | Purpose |
 |---|---|
 | [`ema run`](run.md) | Run the full pipeline: BAM input → peak calling → clustering → cluster matching |
-| [`ema switch diff`](switch-diff.md) | Differential APA test (Fisher or NB regression) across cluster pairs |
-| [`ema switch length`](switch-length.md) | 3' UTR shortening/lengthening quantification (PDUI, proportion, entropy) |
+| [`ema reannotate`](reannotate.md) | Branch a finished run into a new trim/filter/clustering variant **without re-peak-calling** |
+| [`ema switch diff`](switch-diff.md) | Differential APA test (Fisher or NB regression) across cluster **pairs** (use `--cluster-pairs` for meaningful contrasts) |
+| [`ema switch length`](switch-length.md) | Per-cluster 3' UTR shortening/lengthening (PDUI, proportion, entropy) — **not** pairwise |
+| `ema switch trend` | Ordered-covariate (e.g. stage-progression) APA-length trend: slope + Spearman + direction |
+| `ema switch combine` | Stitch stage/celltype-labelled `clusters.h5ad` into one grouped h5ad for cross-group testing |
 | [`ema switch match`](switch-match.md) | Cross-dataset cluster matching (marker overlap, MNN, or Jaccard) |
 | [`ema switch geneview`](switch-geneview.md) | Gene-track visualisation: per-cluster PAS coverage panels |
+| `ema collapse` | Pool `samtools merge` RG-suffixed run tags back into per-library cells |
+
+Each `switch` command has a **distinct aim and grouping** — `diff` is pairwise
+between cluster/cell groups, `length` is a per-group absolute score, `trend` is
+across an ordered covariate (stages). Choose the command (and the cluster/cell
+groups it runs on) by the biological question, not by running all of them over
+every cluster pair.
 
 ## Pipeline flow
 

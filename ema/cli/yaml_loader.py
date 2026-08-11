@@ -68,11 +68,31 @@ def load_run_yaml(path: str | Path) -> dict[str, Any]:
     # 1. required + valid datasets
     if "datasets" not in cfg or not cfg["datasets"]:
         raise RunYamlError(f"{path}: missing required `datasets:` list")
+    _seen_ids: set[str] = set()
     for i, ds in enumerate(cfg["datasets"]):
         if not isinstance(ds, dict):
             raise RunYamlError(f"{path}: datasets[{i}] must be a mapping")
         if "id" not in ds:
             raise RunYamlError(f"{path}: datasets[{i}] missing `id`")
+        # Barcode-namespace safety: cells are keyed as "<id>_<barcode>" and the
+        # indexer splits on the FIRST '_'. An id containing '_' would swallow
+        # part of the barcode → every cell collapses to one; a duplicate id
+        # would merge two libraries' cells (same barcode = same cell) — a
+        # cross-library collision. Reject both structurally.
+        _id = ds["id"]
+        if "_" in str(_id):
+            raise RunYamlError(
+                f"{path}: datasets[{i}].id={_id!r} contains '_'. Dataset ids "
+                f"namespace cell barcodes and must not contain underscores "
+                f"(use '-', e.g. 'GSM123-StageI')."
+            )
+        if _id in _seen_ids:
+            raise RunYamlError(
+                f"{path}: duplicate dataset id {_id!r}. Each id is one library; "
+                f"reusing an id would merge distinct libraries' cells (same "
+                f"barcode would collide across libraries)."
+            )
+        _seen_ids.add(_id)
         ms = ds.get("merge_strategy", "none")
         if ms not in _VALID_MERGE_STRATEGIES:
             raise RunYamlError(

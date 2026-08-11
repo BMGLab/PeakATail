@@ -1,0 +1,416 @@
+"""Shared body for ``ema reannotate`` — branch a completed ``ema run`` into a
+new trim / clustering variant WITHOUT re-running peak calling.
+
+Peak calling (streaming the BAMs) is the expensive stage.  The "trim" —
+``find_close(max_gene_distance, utr_multiplier, include_extended)`` — and
+everything downstream of it (annotate -> preprocess -> cluster) is cheap and
+depends only on artifacts a base run already wrote to disk:
+
+    <base_run>/posbed.bed              (unified +strand PAS)
+    <base_run>/negbed.bed              (unified -strand PAS)
+    <base_run>/unified/concatenated.mtx        (PAS x cell counts)
+    <base_run>/unified/concatenated_cbs.tsv    (namespaced barcodes)
+
+:func:`reannotate_run` reuses the *exact* tested internals the pipeline uses
+(``find_close`` + the per-dataset worker ``run_one_dataset_downstream``), so a
+branch is behaviourally identical to having run ``ema run`` with those trim /
+clustering parameters — it just skips peak calling.  It mirrors the
+multi-sample downstream section of ``ema/main.py`` (the code after "Run
+find_close ONCE on the unified PAS coordinate set"), including the E3
+provenance reconcile step and the E2 ``run_manifest.json`` write, so the
+branch's ``--out`` directory is a COMPLETE, CHAINABLE run dir — structurally
+indistinguishable from a base run's downstream output.  ``ema.data.Run.
+from_dir()`` can load it directly and ``ema switch {diff,length,trend}`` can
+consume its ``07_clustering/<ds>/clusters.h5ad`` files.
+
+This module is the single implementation both callers delegate to:
+  * ``ema/cli/reannotate.py``      — the ``ema reannotate`` Click subcommand.
+  * ``scripts/reannotate_from_run.py`` — the original standalone script,
+    kept working as a thin shim over this function.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import pickle
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+__all__ = ["ReannotateError", "reannotate_run"]
+
+
+class ReannotateError(RuntimeError):
+    """Raised when the base run is missing a required artifact, or ``--out``
+    collides with ``--base-run``."""
+
+
+def _require(path: Path, what: str) -> Path:
+    if not path.exists():
+        raise ReannotateError(f"base run missing {what}: {path}")
+    return path
+
+
+def reannotate_run(
+    *,
+    base_run: str | Path,
+    out: str | Path,
+    gtf: str | Path,
+    max_gene_distance: int = 5000,
+    utr_multiplier: float = 2.0,
+    include_extended: bool = False,
+    cluster_method: str = "leiden_tfidf",
+    resolution: float = 1.0,
+    n_neighbors: int | None = None,
+    n_pcs: int = 40,
+    n_svd_components: int = 50,
+    n_top_hvg: int = 2000,
+    random_seed: int = 42,
+    tfidf_scale_factor: float = 1e4,
+    depth_corr_threshold: float = 0.75,
+    external_clusters: str | None = None,
+    min_read: int = 1500,
+    min_cells: int = 3,
+    min_pas_per_cell: int = 50,
+    threads: int | None = None,
+) -> dict[str, Any]:
+    """Branch ``base_run`` into ``out`` with new trim / filter / cluster params.
+
+    Validates the base run's artifacts exist BEFORE importing anything heavy
+    (mirrors ``scripts/reannotate_from_run.py``), then:
+
+      1. Re-derives ``gene_end.bed`` / UTR lengths from ``gtf`` (two-tier
+         cached — near-instant on repeat).
+      2. Re-runs ``find_close`` (the trim) on the base run's unified PAS set.
+      3. Re-runs ``run_one_dataset_downstream`` per dataset (annotate ->
+         preprocess -> cluster), producing a fresh
+         ``07_clustering/<ds>/clusters.h5ad`` per dataset.
+      4. Reconciles the per-dataset E3 provenance ledgers into
+         ``provenance/by_dataset/{pas,cell}_ledger.tsv`` +
+         ``reconcile_summary.json`` (same code path ``ema/main.py`` calls
+         after its per-dataset workers finish).
+      5. Writes ``run_manifest.json`` (E2) via
+         ``ema.outputs.OutputManager.write_manifest``, exactly as ``ema run``
+         does, so the branch is a complete, chainable run dir.
+
+    Args:
+        base_run: Completed ``ema run`` output dir to branch from.
+        out: Fresh output dir for this branch (must differ from ``base_run``).
+        gtf: Same GTF as the base run (or a different one, to re-annotate
+            against a new annotation without re-calling peaks).
+        max_gene_distance: TIER_3 distal cap (bp). Matters when
+            ``include_extended``.
+        utr_multiplier: TIER_2 boundary = gene UTR length x this.
+        include_extended: Keep TIER_3 (distal/novel) PAS out to
+            ``max_gene_distance``.
+        cluster_method, resolution, n_neighbors, n_pcs, n_svd_components,
+            n_top_hvg, random_seed, tfidf_scale_factor, depth_corr_threshold,
+            external_clusters: Clustering hyperparameters forwarded verbatim
+            to ``run_one_dataset_downstream`` / ``clustering()`` — every knob
+            those accept is a parameter here too, none hardcoded, so an OFAT
+            sweep can vary any of them purely via CLI flags.
+            ``tfidf_scale_factor``/``depth_corr_threshold`` only affect
+            ``leiden_tfidf``; ``n_top_hvg`` only affects ``leiden_libsize``;
+            ``external_clusters`` is the label TSV path for
+            ``--cluster-method external``.
+        min_read, min_cells, min_pas_per_cell: Cell/PAS filters. Defaults
+            MUST match ``ema run``'s schema defaults (``ema/cli/
+            config_schema.py``) so a branch with unchanged params reproduces
+            the base run's clustering.
+        threads: Absolute worker ceiling wired into the ``ResourceManager``
+            singleton (same mechanism ``ema/cli/run.py`` uses), so the
+            downstream per-dataset ``Pool`` respects it. ``None`` leaves the
+            existing/auto-detected ceiling untouched.
+
+    Returns:
+        The branch manifest dict written to ``<out>/branch_manifest.json``
+        (also embeds ``manifest_path`` — the E2 ``run_manifest.json`` path —
+        and ``reconcile_summary``).
+
+    Raises:
+        ReannotateError: ``out == base_run``, or a required base-run artifact
+            is missing.
+    """
+    base = Path(base_run).resolve()
+    out = Path(out).resolve()
+    if base == out:
+        raise ReannotateError(
+            "--out must differ from --base-run (would overwrite peaks)."
+        )
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Locate + validate the base artifacts before importing anything heavy.
+    posbed = _require(base / "posbed.bed", "posbed.bed")
+    negbed = _require(base / "negbed.bed", "negbed.bed")
+    unified_mtx = _require(base / "unified" / "concatenated.mtx", "unified/concatenated.mtx")
+    unified_cbs = _require(base / "unified" / "concatenated_cbs.tsv", "unified/concatenated_cbs.tsv")
+
+    gtf = Path(gtf)
+
+    # Heavy imports (need the peakatail venv on PYTHONPATH).
+    from ema.config import set_directory_config, directory_config, filter_config
+    from ema.annotate.gtf_cache import process_gtf_cached
+    from ema.annotate.find_close import find_close
+    from ema.downstream_runner import run_one_dataset_downstream, downstream_worker_star
+    from ema.outputs import OutputManager, build_resolved_run_config
+    from ema.provenance import reconcile_dataset_ledgers
+    from ema.utils import get_resource_manager
+
+    # Wire --threads into the ResourceManager the same way `ema run` does
+    # (ema/cli/run.py), so the downstream per-dataset Pool respects it.
+    if threads is not None:
+        from ema.utils import reset_resource_manager
+        from ema.utils.resource_manager import ResourceManager
+        import ema.utils as _utils_mod
+        reset_resource_manager()
+        _utils_mod._RM_INSTANCE = ResourceManager(user_max_threads=threads)
+
+    # Point the pipeline globals at the OUT dir (downstream writes go there).
+    # output_dir MUST be a Path — DirectoryConfig stores it verbatim and every
+    # path property does `self.output_dir / <name>`; a str would TypeError.
+    set_directory_config(output_dir=out, gtf_dir=str(gtf))
+    filter_config.min_read = min_read
+    filter_config.min_cells = min_cells
+    filter_config.min_genes = min_pas_per_cell  # min_pas_per_cell bridges to min_genes
+
+    # 1. GTF -> gene_end.bed + utr_lengths (two-tier cached; fast on repeat).
+    log.info("processing GTF (cached) -> gene_end.bed + utr_lengths")
+    utr_lengths = process_gtf_cached(
+        gtf_path=str(gtf),
+        output_dir=str(out),
+        endbed_path=str(directory_config.endbed),
+        features_path=str(directory_config.raw_features),
+    )
+    log.info("utr_lengths: %d genes", len(utr_lengths))
+
+    # 2. THE TRIM — re-run find_close on the base run's unified PAS set.
+    log.info(
+        "find_close: max_distance=%d utr_multiplier=%.2f include_extended=%s",
+        max_gene_distance, utr_multiplier, include_extended,
+    )
+    genes = find_close(
+        posbed_dir=str(posbed),
+        negbed_dir=str(negbed),
+        genomebed_dir=str(directory_config.endbed),
+        annotatedbed_dir=str(directory_config.annotatedbed),  # -> OUT
+        mergebed=str(directory_config.pasbed),                # -> OUT
+        utr_lengths=utr_lengths,
+        max_distance=max_gene_distance,
+        utr_multiplier=utr_multiplier,
+        include_extended=include_extended,
+    )
+    log.info("find_close assigned %d PAS->gene rows", len(genes))
+    genes_pkl = pickle.dumps(genes)
+
+    # 3. Derive datasets from the namespaced barcodes.  cb = "<ds_id>_<barcode>"
+    #    and ds_id contains no underscore (hyphenated ids), so split on first '_'.
+    all_cbs = [ln.strip() for ln in unified_cbs.read_text().splitlines() if ln.strip()]
+    unique_ds_ids: list[str] = list(dict.fromkeys(cb.split("_", 1)[0] for cb in all_cbs))
+    log.info("branching %d datasets: %s", len(unique_ds_ids), ", ".join(unique_ds_ids))
+
+    # Record the dataset list on directory_config so the run manifest (E2)
+    # carries DatasetRef entries for the branch, mirroring `ema run`.
+    set_directory_config(datasets=[{"id": ds_id} for ds_id in unique_ds_ids])
+
+    # write_pas_gene_artifacts() (called inside run_one_dataset_downstream)
+    # extends <ds>/pasbed.bed with the gene_id column to build
+    # annotatedpas.bed -- but that per-dataset pasbed.bed is normally written
+    # by peak calling (ema.outputs.write_per_dataset_beds, called from
+    # ema/main.py BEFORE the downstream section), the exact stage reannotate
+    # skips.  Reuse the base run's own copy of that artifact (same peak-call
+    # coordinates/pas_id namespace this branch's unified PAS set was built
+    # from) so annotatedpas.bed still gets written for each dataset.
+    for ds_id in unique_ds_ids:
+        src_pasbed = base / "01_peak_calling" / ds_id / "pasbed.bed"
+        if src_pasbed.exists():
+            dst_pasbed = directory_config.pasbed_for(ds_id)
+            dst_pasbed.parent.mkdir(parents=True, exist_ok=True)
+            dst_pasbed.write_bytes(src_pasbed.read_bytes())
+        else:
+            log.warning(
+                "base run has no 01_peak_calling/%s/pasbed.bed -- "
+                "annotatedpas.bed will be skipped for this dataset", ds_id,
+            )
+
+    # Every run_one_dataset_downstream/clustering() knob is forwarded
+    # verbatim from a reannotate_run() parameter -- nothing hardcoded here,
+    # so an OFAT sweep can vary any of them purely via CLI flags.
+    cluster_kwargs = dict(
+        cluster_method=cluster_method,
+        cluster_resolution=resolution,
+        cluster_n_pcs=n_pcs,
+        cluster_random_seed=random_seed,
+        cluster_external_clusters=external_clusters,
+        cluster_n_neighbors=n_neighbors,
+        cluster_tfidf_scale_factor=tfidf_scale_factor,
+        cluster_depth_corr_threshold=depth_corr_threshold,
+        cluster_n_svd_components=n_svd_components,
+        cluster_n_top_hvg=n_top_hvg,
+    )
+
+    # 4. Run the tested per-dataset downstream worker for each dataset.
+    worker_specs: list[tuple[str, list[int], list[str]]] = []
+    for ds_id in unique_ds_ids:
+        sub_indices = [i for i, cb in enumerate(all_cbs) if cb.startswith(f"{ds_id}_")]
+        if not sub_indices:
+            log.warning("no cells for '%s' — skipping", ds_id)
+            continue
+        sub_cbs = [all_cbs[i] for i in sub_indices]
+        worker_specs.append((ds_id, sub_indices, sub_cbs))
+
+    n_datasets = len(worker_specs)
+    n_workers = (
+        min(n_datasets, get_resource_manager().get_n_jobs(per_worker_mb=500, stage="downstream"))
+        if n_datasets else 0
+    )
+
+    results: list[dict] = []
+    if n_workers <= 1 or n_datasets <= 1:
+        # Inline path: no spawn overhead, matches scripts/reannotate_from_run.py.
+        for ds_id, sub_indices, sub_cbs in worker_specs:
+            log.info("  [%s] %d cells -> downstream", ds_id, len(sub_indices))
+            stats = run_one_dataset_downstream(
+                ds_id, sub_indices, sub_cbs,
+                str(unified_mtx), str(out), genes_pkl,
+                min_read, min_cells, min_pas_per_cell,
+                **cluster_kwargs,
+            )
+            results.append(stats)
+    else:
+        import multiprocessing
+
+        log.info("Per-dataset downstream: %d datasets, n_workers=%d", n_datasets, n_workers)
+        ctx = multiprocessing.get_context("spawn")
+        worker_args = [
+            (
+                ds_id, sub_indices, sub_cbs,
+                str(unified_mtx), str(out), genes_pkl,
+                min_read, min_cells, min_pas_per_cell,
+                None, None, cluster_kwargs,  # log_queue, progress_client, cluster_kwargs
+            )
+            for ds_id, sub_indices, sub_cbs in worker_specs
+        ]
+        with ctx.Pool(processes=n_workers) as pool:
+            for stats in pool.imap_unordered(downstream_worker_star, worker_args, chunksize=1):
+                if isinstance(stats, dict):
+                    results.append(stats)
+
+    # 5. E3 sidecar-then-reconcile — same code path ema/main.py runs after its
+    #    per-dataset pool joins: each worker already wrote its own ledger
+    #    sidecar (no shared mutable state); reconcile concatenates them into
+    #    the cohort ledger and self-checks surviving PAS == n_vars(h5ad).
+    reconcile_summary: dict | None = None
+    try:
+        recon_inputs = []
+        for st in results:
+            ds = st.get("dataset_id")
+            if ds is None:
+                continue
+            sidecar = directory_config.clusters_h5ad_for(ds).parent / "provenance"
+            recon_inputs.append((ds, sidecar, int(st.get("final_pas", 0))))
+        if recon_inputs:
+            cohort_dir = out / "provenance" / "by_dataset"
+            reconcile_summary = reconcile_dataset_ledgers(recon_inputs, cohort_dir=cohort_dir)
+            (out / "provenance").mkdir(parents=True, exist_ok=True)
+            (out / "provenance" / "reconcile_summary.json").write_text(
+                json.dumps(reconcile_summary, indent=2)
+            )
+            bad = [d["ds_id"] for d in reconcile_summary["datasets"] if not d["invariant_ok"]]
+            if bad:
+                log.warning(
+                    "provenance reconcile: invariant OFF for %d/%d dataset(s): %s "
+                    "(pas_ledger accounting incomplete)",
+                    len(bad), reconcile_summary["n_datasets"], bad,
+                )
+            else:
+                log.info(
+                    "provenance reconcile: invariant OK for all %d dataset(s) "
+                    "(surviving PAS == n_vars)", reconcile_summary["n_datasets"],
+                )
+    except Exception as e:  # provenance is auxiliary — never fail the branch over it
+        log.warning("provenance reconcile step failed (non-fatal): %s", e)
+
+    # 5b. Cross-dataset cluster matching (only meaningful if >1 dataset) —
+    #     mirrors ema/main.py's post-downstream block so a multi-dataset
+    #     branch also gets `canonical_cluster` written into each dataset's
+    #     obs, letting `ema switch diff --cluster-key canonical_cluster`
+    #     compare clusters across datasets the same way it would for a base
+    #     `ema run`. Best-effort / non-fatal, same narrow exception set as
+    #     the code it mirrors.
+    if len(unique_ds_ids) > 1:
+        h5ad_paths = [directory_config.clusters_h5ad_for(ds) for ds in unique_ds_ids]
+        existing = [(p, ds) for p, ds in zip(h5ad_paths, unique_ds_ids) if p.exists()]
+        if len(existing) > 1:
+            try:
+                from ema.clustering.cross_dataset import get_match_strategy
+                match_strategy = get_match_strategy("marker_overlap")
+                match_df = match_strategy.match(
+                    h5ad_paths=[p for p, _ in existing],
+                    dataset_ids=[ds for _, ds in existing],
+                )
+                cross_dir = out / "cross_dataset"
+                cross_dir.mkdir(exist_ok=True)
+                match_df.to_csv(cross_dir / "canonical_cluster_map.tsv", sep="\t", index=False)
+                n_canonical = (
+                    match_df["canonical_cluster"].nunique()
+                    if "canonical_cluster" in match_df.columns else 0
+                )
+                log.info(
+                    "Cross-dataset matching: %d cluster entries -> %d canonical clusters",
+                    len(match_df), n_canonical,
+                )
+                from ema.clustering.cross_dataset.roundtrip import write_canonical_clusters
+                try:
+                    write_canonical_clusters(match_df, existing)
+                except (KeyError, OSError, ValueError) as e:
+                    log.warning(
+                        "canonical_cluster round-trip into obs skipped (%s): %s",
+                        type(e).__name__, e,
+                    )
+            except (FileNotFoundError, KeyError, ValueError, OSError) as e:
+                log.warning("Cross-dataset matching skipped (%s): %s", type(e).__name__, e)
+
+    # 6. E2 run manifest — exactly as `ema run` does (ema/main.py), so the
+    #    branch is a COMPLETE, CHAINABLE run dir: `ema.data.Run.from_dir(out)`
+    #    loads it and `ema switch {diff,length,trend}` can consume its
+    #    07_clustering/<ds>/clusters.h5ad files directly.
+    entity_counts = {
+        "n_datasets": len(results),
+        "final_cells_total": sum(int(r.get("final_cells", 0)) for r in results),
+        "final_pas_total": sum(int(r.get("final_pas", 0)) for r in results),
+    }
+    mgr = OutputManager(base_dir=str(directory_config.output_dir))
+    manifest_path = mgr.write_manifest(build_resolved_run_config(), entity_counts=entity_counts)
+
+    # 7. Branch manifest — human-readable trim/filter/cluster provenance for
+    #    this specific branch (kept for scripts/reannotate_from_run.py
+    #    backward compatibility; the E2 run_manifest.json above is what the
+    #    hub / ema.data.Run actually read).
+    branch_manifest = {
+        "base_run": str(base),
+        "gtf": str(gtf),
+        "trim": {
+            "max_gene_distance": max_gene_distance,
+            "utr_multiplier": utr_multiplier,
+            "include_extended": include_extended,
+        },
+        "clustering": {
+            "method": cluster_method,
+            "resolution": resolution,
+            "n_neighbors": n_neighbors,
+        },
+        "filters": {
+            "min_read": min_read,
+            "min_cells": min_cells,
+            "min_pas_per_cell": min_pas_per_cell,
+        },
+        "datasets": results,
+        "manifest_path": manifest_path,
+        "reconcile_summary": reconcile_summary,
+    }
+    (out / "branch_manifest.json").write_text(
+        json.dumps(branch_manifest, indent=2, default=str)
+    )
+    log.info("DONE — %d datasets clustered under %s", len(results), out)
+    return branch_manifest

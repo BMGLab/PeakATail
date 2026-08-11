@@ -68,6 +68,8 @@ def run_one_dataset_downstream(
     cluster_depth_corr_threshold: float = 0.75,
     cluster_n_svd_components: int = 50,
     cluster_n_top_hvg: int = 2000,
+    atlas_of: dict | None = None,
+    ip_of: dict | None = None,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -97,6 +99,13 @@ def run_one_dataset_downstream(
             (passed to ``preprocessing``).
         filter_min_genes: Minimum number of PAS a cell must have
             (passed to ``preprocessing``).
+        atlas_of: (D9) Optional ``{pas_id: (atlas_match, atlas_distance_bp)}``
+            map, forwarded to ``write_pas_gene_artifacts`` /
+            ``record_pas_drops`` to populate the atlas-snap status columns.
+            ``{}`` (default) when atlas snapping is disabled.
+        ip_of: (D9) Optional ``{pas_id: internal_priming_bool}`` map, same
+            plumbing as ``atlas_of``. ``{}`` (default) when the
+            internal-priming filter is disabled.
 
     Returns:
         A stats dictionary with keys ``dataset_id``, ``final_cells``,
@@ -169,13 +178,23 @@ def run_one_dataset_downstream(
 
     # Persist the kept barcode list for this dataset (canonical name +
     # min_read header for traceability).  See ema/outputs.py.
+    # B3: ALWAYS write it — never gate on .exists(), which silently left
+    # 02_cb_filter/<ds>/ with only the stats JSON.
     from ema.outputs import write_filtered_cb
     if filtered_cb_path.exists():
-        write_filtered_cb(
-            Path(output_dir), ds_id,
-            [b.strip() for b in filtered_cb_path.read_text().splitlines() if b.strip()],
-            min_read,
+        _kept_cbs = [
+            b.strip()
+            for b in filtered_cb_path.read_text().splitlines()
+            if b.strip()
+        ]
+    else:
+        _kept_cbs = []
+        log.warning(
+            "%s cb_filter produced no filtered_cb.tsv at %s; writing an empty "
+            "per-dataset filtered_cb.tsv (header only) for traceability.",
+            prefix, filtered_cb_path,
         )
+    write_filtered_cb(Path(output_dir), ds_id, _kept_cbs, min_read)
 
     if progress_client is not None:
         progress_client.advance(1)  # tick 2/6: filter
@@ -208,6 +227,7 @@ def run_one_dataset_downstream(
     write_pas_gene_artifacts(
         Path(output_dir), ds_id,
         result.pas_ids, result.gene_ids,
+        atlas_of=atlas_of, ip_of=ip_of,
     )
     write_annotated_matrix(
         Path(output_dir), ds_id,
@@ -277,6 +297,89 @@ def run_one_dataset_downstream(
     with open(cluster_h5ad.parent / "clustering_stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
 
+    # B5: multi-sample runs previously emitted NO per-dataset stage funnel (the
+    # single-sample branch of main.py did, via output_mgr.save_stats). Write the
+    # per-dataset cell/PAS drop funnel so multi-sample cohort runs are auditable.
+    stage_stats: dict[str, Any] = {
+        "dataset_id": ds_id,
+        "cb_filter": {
+            "min_read": int(min_read),
+            "cells_kept": len(_kept_cbs),
+        },
+        "input_matrix": {
+            "input_pas": int(len(pas_ids)),
+            "cells": int(len(collist)),
+        },
+        "annotated": {
+            "annotated_pas": int(len(result.pas_ids)),
+            "cells": int(len(result.collist)),
+        },
+        "preprocessing": {
+            "final_cells": int(adata.n_obs),
+            "final_pas": int(adata.n_vars),
+            "min_cells": int(filter_min_cells),
+            "min_genes": int(filter_min_genes),
+        },
+    }
+    stage_stats_path = cluster_h5ad.parent / "stage_stats.json"
+    with open(stage_stats_path, "w") as fh:
+        json.dump(stage_stats, fh, indent=2)
+    log.info("%s per-dataset stage funnel -> %s", prefix, stage_stats_path)
+
+    # ------------------------------------------------------------------ #
+    # 8. E3 provenance: record PAS/cell drops at the per-dataset drop     #
+    #    sites (pas_gene, preprocess, cb_filter) and self-check the       #
+    #    integrity invariant  surviving PAS == n_vars(clusters.h5ad).     #
+    #    Each worker owns its OWN per-dataset ledger dir (no cross-process #
+    #    sharing); atlas-snap drops live in the run-level ledger.         #
+    # ------------------------------------------------------------------ #
+    try:
+        from ema.provenance import (
+            ProvenanceLedger,
+            check_survivor_invariant,
+            record_cell_drops,
+            record_pas_drops,
+        )
+
+        final_pas = [str(v) for v in adata.var_names]
+        input_pas = [str(p) for p in pas_ids]
+        annotated_pas = [str(p) for p in result.pas_ids]
+        gene_of = {str(p): str(g) for p, g in zip(result.pas_ids, result.gene_ids)}
+
+        led = ProvenanceLedger(cluster_h5ad.parent)
+        surviving_pas = record_pas_drops(
+            led,
+            input_pas_ids=input_pas,
+            annotated_pas_ids=annotated_pas,
+            final_pas_ids=final_pas,
+            dataset_id=ds_id,
+            gene_of=gene_of,
+            atlas_of=atlas_of,
+            ip_of=ip_of,
+        )
+        record_cell_drops(
+            led,
+            input_cbs=[str(c) for c in sub_cbs],
+            kept_cbs=[str(c) for c in _kept_cbs],
+            final_cbs=[str(c) for c in adata.obs_names],
+            dataset_id=ds_id,
+        )
+        led.flush()
+        # Self-check: surviving PAS must equal the clustered matrix var count.
+        # raise_on_fail=False → log a warning rather than kill a cohort worker;
+        # a violation means the drop accounting missed a site (bug), not bad data.
+        if not check_survivor_invariant(surviving_pas, int(adata.n_vars), raise_on_fail=False):
+            log.warning(
+                "%s provenance invariant OFF: surviving PAS=%d != n_vars=%d "
+                "(pas_ledger accounting incomplete)",
+                prefix, surviving_pas, int(adata.n_vars),
+            )
+        else:
+            log.info("%s provenance invariant OK: %d surviving PAS == n_vars",
+                     prefix, surviving_pas)
+    except Exception:  # provenance is auxiliary — never fail the run over it
+        log.warning("%s provenance ledger step failed (non-fatal)", prefix, exc_info=True)
+
     log.info("%s done — %d cells, %d PAS -> %s", prefix, adata.n_obs, adata.n_vars, cluster_h5ad)
     return stats
 
@@ -301,10 +404,28 @@ def downstream_worker_star(args: tuple) -> dict:
               YAML/CLI wiring fix.  ``cluster_kwargs_dict`` keys map to
               the ``cluster_*`` keyword args of
               :func:`run_one_dataset_downstream`.
+            - 14 elements: ``(*pos_args[9], log_queue, progress_client,
+              cluster_kwargs_dict, plot_engines, prov_kwargs_dict)`` (D9) —
+              ``prov_kwargs_dict`` carries ``atlas_of``/``ip_of``, the
+              per-unified-PAS atlas-match/internal-priming status maps.
 
     Returns:
         The stats dict returned by ``run_one_dataset_downstream``.
     """
+    if len(args) == 14:
+        # D9: atlas_of/ip_of (per-unified-PAS status maps) added as a single
+        # trailing dict, mirroring the cluster_kwargs pattern, so
+        # record_pas_drops() / write_pas_gene_artifacts() can populate the
+        # ledger + annotatedpas.bed status columns per worker.
+        *pos_args, log_queue, progress_client, cluster_kwargs, plot_engines, prov_kwargs = args
+        return run_one_dataset_downstream(
+            *pos_args,
+            log_queue=log_queue,
+            progress_client=progress_client,
+            plot_engines=plot_engines,
+            **(cluster_kwargs or {}),
+            **(prov_kwargs or {}),
+        )
     if len(args) == 13:
         *pos_args, log_queue, progress_client, cluster_kwargs, plot_engines = args
         return run_one_dataset_downstream(
