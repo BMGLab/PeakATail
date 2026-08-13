@@ -1,0 +1,6 @@
+rank,run,peak_strategy,atlas_mode,ip_mode,n_pas,n_reference,precision_50,recall_50,f1_50,precision_100,recall_100,f1_100,precision_500,recall_500,f1_500,precision_1000,recall_1000,f1_1000,atlas_match_rate,n_atlas_matched
+1,si_annotate,sierra_iterative,annotate,annotate,43035,18432135,0.9964,0.0448,0.0857,0.9981,0.0501,0.0954,0.9991,0.0789,0.1463,0.9994,0.1089,0.1964,0.7791,262140
+2,lg_annotate,lambda_gradient,annotate,annotate,22633,18432135,0.9974,0.0298,0.0579,0.9986,0.0326,0.0632,0.9993,0.049,0.0934,0.9997,0.0669,0.1254,0.8199,171968
+3,lg_ip_off,lambda_gradient,annotate,off,22633,18432135,0.9974,0.0298,0.0579,0.9986,0.0326,0.0632,0.9993,0.049,0.0934,0.9997,0.0669,0.1254,0.8199,171968
+4,lg_ip_filter,lambda_gradient,annotate,filter,20609,18432135,0.9972,0.027,0.0527,0.9985,0.0296,0.0575,0.9993,0.0447,0.0855,0.9997,0.0613,0.1155,0.8199,171968
+5,lp_annotate,lambda_poisson,annotate,annotate,21474,18432135,0.9959,0.0172,0.0338,0.998,0.0201,0.0393,0.9992,0.0376,0.0724,0.9997,0.0562,0.1064,0.843,189727
