@@ -1162,16 +1162,37 @@ distinct values (0.328633, 0.328320, 0.278112), corresponding to mean
 PAS-per-gene of 3.043, 3.046 and 3.596. By comparison \texttt{classic} and
 \texttt{shannon} vary across stages within a cell type by up to 0.033 and 0.014.
 
+\textbf{The direct cause is uniform padding, and it is verified.} In a sample of
+8.0M rows from the epithelial table, 7,858,254 carry \texttt{reads\_at\_pas = 0},
+and \textbf{100.0000\% of them have \texttt{proportion} exactly equal to
+$1/n_{\text{PAS}}$}. Uncovered (gene, cell) pairs are not omitted and not marked
+missing --- they are emitted with a uniform prior, so \textbf{98.2\% of the table
+is synthetic}. Only 141,745 rows (1.8\%) carry any reads.
+
+Two column-level defects follow, and they block the obvious workarounds.
+\texttt{total\_reads\_gene} is not a read count on padded rows: for 99.97\% of
+zero-coverage pairs it holds the \emph{number of PAS} instead, so filtering on it
+does not select covered rows --- which is why the coverage-conditioned mean for
+\texttt{proportion} is identical to the unconditional one while \texttt{classic}
+and \texttt{shannon} both move. And \texttt{rank} is never populated: it is 1 for
+every one of $\sim$20M rows inspected, so it cannot order PAS from proximal to
+distal. On the 1.8\% of rows that do carry reads the mean proportion is
+\textbf{0.5627}, not 0.3286 --- the padding moves the summary by a factor of 1.7
+and pins it to a constant.
+
 This retroactively explains the previous report's own result, which recorded that
 ``only 47 genes showed inter-cluster proportion shift $>0.1$ (by the
 mean-across-PAS metric)'' and read it as consistent with a smooth usage
 distribution. A statistic that cannot vary produced almost no variation; the
 near-null was structural.
 
-\textbf{Use rank-stratified proportions instead}: rank 1 is the proximal-most
-site, higher ranks progressively distal, and read share moving from high to low
-ranks across stages is what shortening looks like in this metric. Unlike the mean,
-it is free to vary.
+\textbf{What a usable summary would require.} Keeping the PAS axis is the right
+idea, but it cannot be done from this output as written: \texttt{rank} is
+constant, so PAS order would have to be reconstructed from the coordinate columns,
+and rows selected on \texttt{reads\_at\_pas} rather than
+\texttt{total\_reads\_gene}. Until both column defects are fixed,
+\texttt{proportion} should not be used for cross-condition comparison at all, by
+any summary.
 \end{quote}
 
 \subsection{Proportion per Isoform}

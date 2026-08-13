@@ -589,17 +589,43 @@ This produces a vector of proportions summing to 1.0 per (gene, cell). In the lo
 > PAS-per-gene of 3.043, 3.046 and 3.596. For comparison, `classic` and `shannon`
 > vary across stages within a cell type by up to 0.033 and 0.014 respectively.
 >
+> **The direct cause is uniform padding, and it is verified.** In a sample of
+> 8.0M rows from the epithelial table, **7,858,254 rows carry `reads_at_pas = 0`,
+> and 100.0000% of them have `proportion` exactly equal to `1/n_PAS`.** Uncovered
+> (gene, cell) pairs are not omitted and not marked missing — they are emitted with
+> a uniform prior. **98.2% of the table is synthetic.** Only 141,745 rows (1.8%)
+> carry any reads, and 99.5% of (gene, cell) pairs — 2,604,936 of 2,727,582 — have
+> zero total coverage.
+>
+> **Two column-level defects follow, and they block the obvious workarounds:**
+>
+> - **`total_reads_gene` is not a read count on padded rows.** For 99.97% of
+>   zero-coverage pairs it holds the *number of PAS* instead (2,604,113 of
+>   2,604,936). Filtering on it therefore does not select covered rows — which is
+>   why the coverage-conditioned mean for `proportion` comes out identical to the
+>   unconditional one, while `classic` and `shannon` both move substantially.
+>   Filter on `reads_at_pas` instead.
+> - **`rank` is never populated.** It is `1` for every one of ~20M rows inspected,
+>   so it cannot order PAS from proximal to distal. The field is dead.
+>
+> On the 1.8% of rows that do carry reads, the mean proportion is **0.5627** — not
+> 0.3286. The padding does not merely add noise; it moves the summary by a factor
+> of 1.7 and pins it to a constant.
+>
 > **This retroactively explains the previous report's own result.** It recorded
 > that "only 47 genes showed inter-cluster proportion shift > 0.1 (by the
 > mean-across-PAS metric)" and read that as "consistent with the smooth
 > distribution of usage." It was not: a statistic that cannot vary produced almost
 > no variation. The near-null was structural, not biological.
 
-**Use rank-stratified proportions instead.** The informative summary keeps the
-PAS axis: rank 1 is the proximal-most site, higher ranks progressively distal, and
-read share moving from high ranks to low ranks across stages is what
-3′UTR shortening looks like in this metric. Unlike the mean, it is free to vary.
-See §9.1 and Figure C13.
+**What a usable summary would require.** Keeping the PAS axis is the right idea —
+read share moving from distal to proximal sites across stages is what shortening
+looks like in this metric — but it cannot be done from this output as written: the
+`rank` field is constant, so PAS order would have to be reconstructed from the
+`chrom/start/end/strand` columns, and rows would have to be selected on
+`reads_at_pas > 0` rather than on `total_reads_gene`. Until the two column defects
+above are fixed, **`proportion` should not be used for cross-condition comparison
+at all**, by any summary.
 
 The superseded v9 numbers (8,800 genes, mean proportion 0.21 ± 0.39) are withdrawn
 along with the rest of that run.
