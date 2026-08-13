@@ -88,7 +88,7 @@ so the result reads as a test rather than a description.
 | **09** | `09_recurrence.png/.svg` | Cell types per trending gene (a); 25 most recurrent genes (b); effect size, recurrent vs private (c). | **Recurrence tracks testability, not shared regulation** — private genes have *larger* mean \|slope\| (0.0137 vs 0.0104, MWU p=0.029). |
 | **11** | `11_gene_sets.png/.svg` | Cancer-gene membership rates (a); crude vs detectability-adjusted odds ratios (b); Hallmark enrichment (c). | **No cancer-gene or pathway signal survives adjustment.** COSMIC CGC crude OR 1.99 (p=6.7e−09) → adjusted **1.22 (p=0.28)**; 0/50 Hallmark sets at FDR<0.05. |
 | **10** | `10_lost_distal_elements.png/.svg` | Element density lost vs length-matched control (a); ARE density vs AT content (b); lost-segment length distribution (c). | **The miRNA/ARE de-repression mechanism is unsupported.** Seed density 0.510/kb vs 0.520/kb (p=0.058, wrong sign). **Median lost interval 10,779 bp, 80% >3 kb** — the PDUI layer pairs PAS too far apart to be a tandem 3′UTR pair. A *pipeline* finding. |
-| **14** | `14_gene_walk.png/.svg` | Per-gene PAS usage by stage (EZR, DPYD, PHACTR1), read share within stage, pooled over cell types. | Replaces the two withdrawn `gene_walk_*` panels. DPYD's 148 PAS are capped to the top 12 with an explicit "other" bar carrying its remaining ~60% of reads. ⚠ **Provisional** — see status below. |
+| **14** | `14_gene_walk.png/.svg` | Per-gene PAS usage by stage (EZR, DPYD, PHACTR1), read share within stage, pooled over cell types. | Replaces the two withdrawn `gene_walk_*` panels. DPYD's 148 PAS are capped to the top 12 with an explicit "other" bar carrying its remaining ~60% of reads — load-bearing, do not truncate. **FINAL** (full coverage, 4,795 rows). |
 
 ---
 
