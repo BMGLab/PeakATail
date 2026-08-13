@@ -1,0 +1,942 @@
+{
+  "run_id": "B1_cohort_full",
+  "root": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed/runs/B1_cohort_full",
+  "contract_version": "0.1.0",
+  "timestamp": "2026-08-12T14:29:54.376778",
+  "datasets": [
+    {
+      "dataset_id": "GSM3516662-StageIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325947_STAR/SRR8325947_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325948_STAR/SRR8325948_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325949_STAR/SRR8325949_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325950_STAR/SRR8325950_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325951_STAR/SRR8325951_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325952_STAR/SRR8325952_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325953_STAR/SRR8325953_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325954_STAR/SRR8325954_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516663-StageIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325955_STAR/SRR8325955_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325956_STAR/SRR8325956_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325957_STAR/SRR8325957_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325958_STAR/SRR8325958_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325959_STAR/SRR8325959_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325960_STAR/SRR8325960_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325961_STAR/SRR8325961_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325962_STAR/SRR8325962_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516664-MetBone",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325963_STAR/SRR8325963_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325964_STAR/SRR8325964_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325965_STAR/SRR8325965_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325966_STAR/SRR8325966_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325967_STAR/SRR8325967_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325968_STAR/SRR8325968_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325969_STAR/SRR8325969_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325970_STAR/SRR8325970_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516665-StageIVprimary",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325971_STAR/SRR8325971_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325972_STAR/SRR8325972_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325973_STAR/SRR8325973_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325974_STAR/SRR8325974_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325975_STAR/SRR8325975_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325976_STAR/SRR8325976_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325977_STAR/SRR8325977_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325978_STAR/SRR8325978_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516666-Normal",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325979_STAR/SRR8325979_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325980_STAR/SRR8325980_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325981_STAR/SRR8325981_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325982_STAR/SRR8325982_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325983_STAR/SRR8325983_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325984_STAR/SRR8325984_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325985_STAR/SRR8325985_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325986_STAR/SRR8325986_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516667-StageIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325987_STAR/SRR8325987_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325988_STAR/SRR8325988_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325989_STAR/SRR8325989_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325990_STAR/SRR8325990_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325991_STAR/SRR8325991_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325992_STAR/SRR8325992_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325993_STAR/SRR8325993_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325994_STAR/SRR8325994_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516668-MetBrain",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325995_STAR/SRR8325995_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325996_STAR/SRR8325996_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325997_STAR/SRR8325997_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325998_STAR/SRR8325998_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325999_STAR/SRR8325999_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326000_STAR/SRR8326000_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326001_STAR/SRR8326001_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326002_STAR/SRR8326002_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516669-StageIIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326003_STAR/SRR8326003_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326004_STAR/SRR8326004_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326005_STAR/SRR8326005_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326006_STAR/SRR8326006_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326007_STAR/SRR8326007_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326008_STAR/SRR8326008_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326009_STAR/SRR8326009_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326010_STAR/SRR8326010_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516670-StageIB",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326011_STAR/SRR8326011_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326012_STAR/SRR8326012_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326013_STAR/SRR8326013_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326014_STAR/SRR8326014_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326015_STAR/SRR8326015_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326016_STAR/SRR8326016_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326017_STAR/SRR8326017_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326018_STAR/SRR8326018_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516671-MetBrain",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326019_STAR/SRR8326019_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326020_STAR/SRR8326020_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326021_STAR/SRR8326021_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326022_STAR/SRR8326022_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326023_STAR/SRR8326023_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326024_STAR/SRR8326024_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326025_STAR/SRR8326025_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326026_STAR/SRR8326026_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516672-StageIB",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326027_STAR/SRR8326027_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326028_STAR/SRR8326028_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326029_STAR/SRR8326029_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326030_STAR/SRR8326030_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326031_STAR/SRR8326031_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326032_STAR/SRR8326032_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326033_STAR/SRR8326033_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326034_STAR/SRR8326034_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516673-Normal",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326035_STAR/SRR8326035_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326036_STAR/SRR8326036_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326037_STAR/SRR8326037_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326038_STAR/SRR8326038_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326039_STAR/SRR8326039_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326040_STAR/SRR8326040_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326041_STAR/SRR8326041_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326042_STAR/SRR8326042_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516674-StageIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326043_STAR/SRR8326043_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326044_STAR/SRR8326044_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326045_STAR/SRR8326045_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326046_STAR/SRR8326046_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326047_STAR/SRR8326047_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326048_STAR/SRR8326048_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326049_STAR/SRR8326049_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326050_STAR/SRR8326050_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516675-Normal",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326051_STAR/SRR8326051_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326052_STAR/SRR8326052_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326053_STAR/SRR8326053_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326054_STAR/SRR8326054_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326055_STAR/SRR8326055_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326056_STAR/SRR8326056_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326057_STAR/SRR8326057_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326058_STAR/SRR8326058_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516676-Normal",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326059_STAR/SRR8326059_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326060_STAR/SRR8326060_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326061_STAR/SRR8326061_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326062_STAR/SRR8326062_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326063_STAR/SRR8326063_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326064_STAR/SRR8326064_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326065_STAR/SRR8326065_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326066_STAR/SRR8326066_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516677-MetAdrenal",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326067_STAR/SRR8326067_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516678-MetBrain",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326068_STAR/SRR8326068_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "unified/pas_uid.tsv",
+      "stage": "unified",
+      "format": "tsv",
+      "schema_name": "pas_uid",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:61bcbfe9a6254ea5e9c279dd05e68c54b825ca7afdcbb399aa5910d91d90c6c7"
+    },
+    {
+      "path": "unified/multi_sample_pas_mapping.tsv",
+      "stage": "pas_merge",
+      "format": "tsv",
+      "schema_name": "pas_mapping",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:8d12939aee3b939ac1ce53cae36b3bf5caf5c97baaa537c197d9a43c197bcc66"
+    },
+    {
+      "path": "provenance/by_dataset/pas_ledger.tsv",
+      "stage": "provenance",
+      "format": "tsv",
+      "schema_name": "PasLedgerRow",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:6ab3be8a71f3292399f5e42d013c06706e21faf98dd008e14a68d7ee04da4d98"
+    },
+    {
+      "path": "provenance/by_dataset/cell_ledger.tsv",
+      "stage": "provenance",
+      "format": "tsv",
+      "schema_name": "CellLedgerRow",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:0c14d233a25cd0f30583e909cdb52a74f4188716a291225a93c9685d2cf75fab"
+    },
+    {
+      "path": "provenance/reconcile_summary.json",
+      "stage": "provenance",
+      "format": "json",
+      "schema_name": "reconcile_summary",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:9f6ca02f3cd6d0b32670838817928ef7801cb33aa599a433e4c52d8a2bedc328"
+    },
+    {
+      "path": "run_config.json",
+      "stage": "run",
+      "format": "json",
+      "schema_name": "run_config",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:035f0bdf1bb70f61e53eab8ccbbadad0871fddcbcbf84b0b124b489c72e9e2f4"
+    },
+    {
+      "path": "07_clustering/GSM3516662-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:2231ed9fc470a400e966037b558c79bc1da8cae8fcb27b3bf5e04b3951661e39"
+    },
+    {
+      "path": "07_clustering/GSM3516663-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:480c26633a74b6648cc85c1134aa7c1639da90f4ebd34ab0799c163a915b42ab"
+    },
+    {
+      "path": "07_clustering/GSM3516664-MetBone/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:d8e827a218f5805fc5837b9ef66698c36b3664a1e25867a5c16b6c03309c1ed0"
+    },
+    {
+      "path": "07_clustering/GSM3516665-StageIVprimary/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:6ca7ed293ce84d3b3ec396a4192a0eb02903efc46d89461f7f6223e3bf267c4a"
+    },
+    {
+      "path": "07_clustering/GSM3516666-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:8c6da7deeeb1496e1a4d45900dee56f7111709396265ecc3b7cdc71eef906f00"
+    },
+    {
+      "path": "07_clustering/GSM3516667-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:fbe142f8d2b956f2ac716cf30e8ed2285e5e2f1774d533c5ef85c77f8f1e1948"
+    },
+    {
+      "path": "07_clustering/GSM3516668-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:61b7ccc9ba5b3409908d627c01b3af61257bbc37f820ee093b6024d39fb7706b"
+    },
+    {
+      "path": "07_clustering/GSM3516669-StageIIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:370ae47b036f8b70c6cdf5b42cfc2e8920564b76db509f53b664981b70e49cb9"
+    },
+    {
+      "path": "07_clustering/GSM3516670-StageIB/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:5d430b340add8aa368021779f371cb3bc8e540c5e43da940f62ba28851d7ee7d"
+    },
+    {
+      "path": "07_clustering/GSM3516671-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:6035b11ae3afd11421c20340e4b8c64c41093f21b4e47042d51606a969c1f41d"
+    },
+    {
+      "path": "07_clustering/GSM3516672-StageIB/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:f3616f5df906beca8707a31144e086f12ec52671d0980b821faffe6cc215f470"
+    },
+    {
+      "path": "07_clustering/GSM3516673-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:affc17f90c74e1847fe6a6b2d730c3e331acaf094b5c85409d84ded9451d50aa"
+    },
+    {
+      "path": "07_clustering/GSM3516674-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:631ee4dca3032c59ae93738f942d3f5a01456aa6e9999d4a66597700a5d16268"
+    },
+    {
+      "path": "07_clustering/GSM3516675-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:c863329592d33ca327b1507657350e1f8620cd1a04f5224d5bfc45745540752a"
+    },
+    {
+      "path": "07_clustering/GSM3516676-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:06455a37646cc7cb38f8b7becf9fb8502c1bb056edcaaaec3bf9d64f504c77ab"
+    },
+    {
+      "path": "07_clustering/GSM3516677-MetAdrenal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:5afc05cb7c2de57ae4f0404a1cec9327321d75b958130b7ad94f14c801aa07f6"
+    },
+    {
+      "path": "07_clustering/GSM3516678-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:fd21949435ebd7cfc859d36cb37112f4d1733331b9564d79e3e83eb4a44285b6"
+    },
+    {
+      "path": "07_clustering/GSM3516662-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:9cee98711a71dc929bf1c12030f744c5653d99b8b9e5cd7a1fed8ae6c9291bad"
+    },
+    {
+      "path": "07_clustering/GSM3516663-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:ed2dd4ee579145abaa440559275d6e8e43c1a247d3cc1d8380a17e593a2c63b5"
+    },
+    {
+      "path": "07_clustering/GSM3516664-MetBone/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:079407f4c4b276aa446f2a23b92361eecdaa967c04b06d882d1d25be79b01649"
+    },
+    {
+      "path": "07_clustering/GSM3516665-StageIVprimary/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:be5455d1cd12f5a15224ee69a0ecf3cc98d8d16e6dc0ac2f9838a546f0dffae6"
+    },
+    {
+      "path": "07_clustering/GSM3516666-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:1867c7685bf0f69ab901ba935f3dd6a90343575914f9216e6a30cf4225012156"
+    },
+    {
+      "path": "07_clustering/GSM3516667-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:711446f33c813d606cbcc78de83132ea71b120599af280fe90f3f38f4089c0e0"
+    },
+    {
+      "path": "07_clustering/GSM3516668-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:b63042fc2c74ac7bf6cac79c6e9c6949214404d2ddc8019a0857d782d74c9968"
+    },
+    {
+      "path": "07_clustering/GSM3516669-StageIIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:09d644d7f7d88e2d7b45badafd601649092838c2a856a5c2bc8f2b3a4ba78d49"
+    },
+    {
+      "path": "07_clustering/GSM3516670-StageIB/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:55807dd84089a83ba1950ef3a63662916815171c5dd7a93eaaaff952c133ea9d"
+    },
+    {
+      "path": "07_clustering/GSM3516671-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:c12436bebe1263604265b487e3f0dc48ccc6dc185c971e98c6a7de9fa646222d"
+    },
+    {
+      "path": "07_clustering/GSM3516672-StageIB/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:50c522cc02c0980d76a198ceaedef78afbb5f88476063e050c910f6eaa247f52"
+    },
+    {
+      "path": "07_clustering/GSM3516673-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:d16d0e59fa6a1c19413445ef8e1b95722889a0bea3beb34f22a4d2a91db81043"
+    },
+    {
+      "path": "07_clustering/GSM3516674-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:b522192be5e2b452c01714822c92399200efa9dfde04453624187a84fee2cd21"
+    },
+    {
+      "path": "07_clustering/GSM3516675-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:ca342311cc6cda203bfff100f265877f1cec6578d94479d2dc4c486926acf839"
+    },
+    {
+      "path": "07_clustering/GSM3516676-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:9f35585d080cab3245f928777a559c1c6e16b2abf07e991e0aae7d7c9a2da8a8"
+    },
+    {
+      "path": "07_clustering/GSM3516677-MetAdrenal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:3a691b4083fd415c90923f25b374efc34fbfe8273ee0027978fa59d2c8533f7a"
+    },
+    {
+      "path": "07_clustering/GSM3516678-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:3d1fe10af613c496e69bda98996b3ce645da24154d591ddbba860091e5ad4fe1"
+    }
+  ],
+  "resolved_config": {
+    "directories": {
+      "output_dir": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed/runs/B1_cohort_full",
+      "bam_dir": null,
+      "gtf_dir": "/home/sharedFolder/humanSTARindex/Homo_sapiens.GRCh38.99.gtf",
+      "atlas": "/mnt/ssd2/Laugney_Aligned/refs/polyasite_3.0_GRCh38_ensembl_sorted.bed",
+      "atlas_distance": 50,
+      "datasets": [
+        {
+          "id": "GSM3516662-StageIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325947_STAR/SRR8325947_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325948_STAR/SRR8325948_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325949_STAR/SRR8325949_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325950_STAR/SRR8325950_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325951_STAR/SRR8325951_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325952_STAR/SRR8325952_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325953_STAR/SRR8325953_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325954_STAR/SRR8325954_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516663-StageIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325955_STAR/SRR8325955_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325956_STAR/SRR8325956_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325957_STAR/SRR8325957_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325958_STAR/SRR8325958_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325959_STAR/SRR8325959_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325960_STAR/SRR8325960_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325961_STAR/SRR8325961_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325962_STAR/SRR8325962_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516664-MetBone",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325963_STAR/SRR8325963_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325964_STAR/SRR8325964_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325965_STAR/SRR8325965_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325966_STAR/SRR8325966_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325967_STAR/SRR8325967_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325968_STAR/SRR8325968_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325969_STAR/SRR8325969_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325970_STAR/SRR8325970_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516665-StageIVprimary",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325971_STAR/SRR8325971_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325972_STAR/SRR8325972_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325973_STAR/SRR8325973_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325974_STAR/SRR8325974_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325975_STAR/SRR8325975_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325976_STAR/SRR8325976_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325977_STAR/SRR8325977_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325978_STAR/SRR8325978_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516666-Normal",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325979_STAR/SRR8325979_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325980_STAR/SRR8325980_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325981_STAR/SRR8325981_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325982_STAR/SRR8325982_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325983_STAR/SRR8325983_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325984_STAR/SRR8325984_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325985_STAR/SRR8325985_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325986_STAR/SRR8325986_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516667-StageIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325987_STAR/SRR8325987_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325988_STAR/SRR8325988_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325989_STAR/SRR8325989_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325990_STAR/SRR8325990_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325991_STAR/SRR8325991_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325992_STAR/SRR8325992_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325993_STAR/SRR8325993_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325994_STAR/SRR8325994_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516668-MetBrain",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325995_STAR/SRR8325995_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325996_STAR/SRR8325996_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325997_STAR/SRR8325997_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325998_STAR/SRR8325998_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325999_STAR/SRR8325999_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326000_STAR/SRR8326000_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326001_STAR/SRR8326001_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326002_STAR/SRR8326002_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516669-StageIIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326003_STAR/SRR8326003_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326004_STAR/SRR8326004_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326005_STAR/SRR8326005_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326006_STAR/SRR8326006_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326007_STAR/SRR8326007_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326008_STAR/SRR8326008_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326009_STAR/SRR8326009_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326010_STAR/SRR8326010_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516670-StageIB",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326011_STAR/SRR8326011_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326012_STAR/SRR8326012_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326013_STAR/SRR8326013_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326014_STAR/SRR8326014_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326015_STAR/SRR8326015_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326016_STAR/SRR8326016_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326017_STAR/SRR8326017_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326018_STAR/SRR8326018_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516671-MetBrain",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326019_STAR/SRR8326019_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326020_STAR/SRR8326020_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326021_STAR/SRR8326021_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326022_STAR/SRR8326022_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326023_STAR/SRR8326023_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326024_STAR/SRR8326024_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326025_STAR/SRR8326025_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326026_STAR/SRR8326026_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516672-StageIB",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326027_STAR/SRR8326027_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326028_STAR/SRR8326028_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326029_STAR/SRR8326029_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326030_STAR/SRR8326030_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326031_STAR/SRR8326031_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326032_STAR/SRR8326032_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326033_STAR/SRR8326033_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326034_STAR/SRR8326034_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516673-Normal",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326035_STAR/SRR8326035_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326036_STAR/SRR8326036_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326037_STAR/SRR8326037_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326038_STAR/SRR8326038_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326039_STAR/SRR8326039_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326040_STAR/SRR8326040_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326041_STAR/SRR8326041_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326042_STAR/SRR8326042_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516674-StageIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326043_STAR/SRR8326043_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326044_STAR/SRR8326044_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326045_STAR/SRR8326045_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326046_STAR/SRR8326046_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326047_STAR/SRR8326047_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326048_STAR/SRR8326048_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326049_STAR/SRR8326049_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326050_STAR/SRR8326050_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516675-Normal",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326051_STAR/SRR8326051_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326052_STAR/SRR8326052_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326053_STAR/SRR8326053_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326054_STAR/SRR8326054_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326055_STAR/SRR8326055_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326056_STAR/SRR8326056_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326057_STAR/SRR8326057_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326058_STAR/SRR8326058_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516676-Normal",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326059_STAR/SRR8326059_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326060_STAR/SRR8326060_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326061_STAR/SRR8326061_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326062_STAR/SRR8326062_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326063_STAR/SRR8326063_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326064_STAR/SRR8326064_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326065_STAR/SRR8326065_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326066_STAR/SRR8326066_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516677-MetAdrenal",
+          "merge_strategy": "none",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326067_STAR/SRR8326067_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516678-MetBrain",
+          "merge_strategy": "none",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326068_STAR/SRR8326068_Aligned.sortedByCoord.out.bam"
+          ]
+        }
+      ],
+      "filenames": {}
+    },
+    "variables": {
+      "seqlen": 98,
+      "cb_len": 16,
+      "barcode_tag": "CB",
+      "default_threshold": 5,
+      "merge_len": 100,
+      "min_pas_spacing": -1,
+      "min_pas_prominence": 5.0
+    },
+    "filters": {
+      "min_read": 1500,
+      "min_cells": 3,
+      "min_genes": 50,
+      "min_pas_per_cell": 50
+    },
+    "args": {
+      "config": null,
+      "output": "emaout",
+      "bam_dir": null,
+      "bam_files": null,
+      "gtf": null,
+      "atlas": null,
+      "atlas_distance": 50,
+      "atlas_mode": "annotate",
+      "filenames": null,
+      "seq_len": null,
+      "cb_len": null,
+      "barcode_tag": null,
+      "default_threshold": 5,
+      "merge_len": 100,
+      "ignore_chro": "MT,mt",
+      "threads": null,
+      "bam_threads": 4,
+      "pipeline": false,
+      "batch_size": 10000,
+      "tiles": false,
+      "tile_size": null,
+      "tile_overlap": 10000,
+      "strategy": "lambda_gradient",
+      "lambda_window": 5000,
+      "lambda_method": "median",
+      "lambda_fold_change": 2.0,
+      "max_pas": 5,
+      "smoothing_window": 50,
+      "min_prominence": 5.0,
+      "dynamic_threshold": false,
+      "floor_threshold": 3,
+      "pas_gap": 100,
+      "min_pas_spacing": -1,
+      "min_pas_prominence": 5.0,
+      "ip_filter": true,
+      "genome_fasta": "/home/sharedFolder/humanSTARindex/Homo_sapiens.GRCh38.dna.primary_assembly.fa",
+      "ip_filter_mode": "annotate",
+      "annot_filter": false,
+      "annotation_bed": null,
+      "ip_a_stretch": 6,
+      "ip_a_fraction": 0.7,
+      "ip_window_left": 10,
+      "ip_window_right": 30,
+      "min_pas_per_cell": 50,
+      "min_read": 1500,
+      "min_cells": 3,
+      "max_gene_distance": 5000,
+      "utr_multiplier": 2.0,
+      "include_extended": false,
+      "clustering_method": "leiden_tfidf",
+      "resolution": 1.0,
+      "n_pcs": 40,
+      "external_clusters": null,
+      "random_seed": 42,
+      "cluster_match_method": "marker_overlap",
+      "n_top_markers": 50,
+      "marker_top_n": 200,
+      "marker_method": "wilcoxon",
+      "fdr": 0.05,
+      "per_worker_mb": 300,
+      "isoform_agg": "per_gene",
+      "isoform_collapse": "none",
+      "pdui_pseudocount": 0.0,
+      "log2fc_thresh": 1.0,
+      "min_cells_per_group": 10,
+      "mnn_components": 30,
+      "mnn_k_neighbors": 10,
+      "n_neighbors": 30,
+      "tfidf_scale_factor": 10000.0,
+      "depth_corr_threshold": 0.75,
+      "n_svd_components": 50,
+      "n_top_hvg": 2000,
+      "benchmark": false,
+      "validate_db": null,
+      "log_level": null,
+      "no_log_file": false,
+      "no_progress": false,
+      "verbose": 0,
+      "quiet": false,
+      "datasets": [],
+      "gtf_dir": null,
+      "seqlen": null
+    }
+  },
+  "stratum_to_label": {},
+  "entity_counts": {
+    "n_ip_flagged": 24568,
+    "ip_flag_rate": 0.0814,
+    "n_datasets": 17
+  },
+  "id_grammar": {
+    "pas_uid": "chrom:pos:strand (pos = end-1 on +, start on -)",
+    "cell_uid": "{dataset_id}:{barcode}",
+    "cluster_uid": "{dataset_id}:{leiden}",
+    "canonical_cluster": "shared int across datasets (obs column)",
+    "finding_uid": "{arm}:{celltype}:{gene_id}"
+  }
+}

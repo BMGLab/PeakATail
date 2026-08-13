@@ -1,0 +1,603 @@
+{
+  "run_id": "A2_trim_d3000_ext",
+  "root": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed/runs/reannotate/A2_trim_d3000_ext",
+  "contract_version": "0.1.0",
+  "timestamp": "2026-08-12T14:44:49.843653",
+  "datasets": [
+    {
+      "dataset_id": "GSM3516662-StageIA",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516663-StageIA",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516664-MetBone",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516665-StageIVprimary",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516666-Normal",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516667-StageIA",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516668-MetBrain",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516669-StageIIA",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516670-StageIB",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516671-MetBrain",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516672-StageIB",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516673-Normal",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516674-StageIA",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516675-Normal",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516676-Normal",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516677-MetAdrenal",
+      "bam_paths": [],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516678-MetBrain",
+      "bam_paths": [],
+      "label": null
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "provenance/by_dataset/pas_ledger.tsv",
+      "stage": "provenance",
+      "format": "tsv",
+      "schema_name": "PasLedgerRow",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:0f46e9826e92bfd2a5c86f7684e3555616c4adf82d1350d08385eb1d318d7069"
+    },
+    {
+      "path": "provenance/by_dataset/cell_ledger.tsv",
+      "stage": "provenance",
+      "format": "tsv",
+      "schema_name": "CellLedgerRow",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:a65a0847b21cc23d97976eefc83113e8b62b5ef82e338cce637601e956604b54"
+    },
+    {
+      "path": "provenance/reconcile_summary.json",
+      "stage": "provenance",
+      "format": "json",
+      "schema_name": "reconcile_summary",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:0b7912725fd3577e0f0f7c2b523886d310f5c54a0a315e49a825555215bb0486"
+    },
+    {
+      "path": "07_clustering/GSM3516662-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:28a682fe38a619936adea0bcb07baff446c96f330d5f6b682c0f4e2a0d43dfbe"
+    },
+    {
+      "path": "07_clustering/GSM3516663-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:a197b69f4df4fe2f66eae69f5108fc251ae20b9505c6b97b8958fa9d23e15686"
+    },
+    {
+      "path": "07_clustering/GSM3516664-MetBone/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:1c6ee6ca92791e46aaf287bd1ec99362f565daa82034bc178f1a0a05c0f10284"
+    },
+    {
+      "path": "07_clustering/GSM3516665-StageIVprimary/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:60de8fe902f0759be2ba8759c21ec3f6883fd7247fbbdbed2fb8bdbf2fdbf13d"
+    },
+    {
+      "path": "07_clustering/GSM3516666-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:29df4ab28533d1454eebd7762733f1d1a35301f910850f02907566e2477776d4"
+    },
+    {
+      "path": "07_clustering/GSM3516667-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:b6988e91c98b75b14a358af79b0c0287e5a458fcd1fe1c5a2089a11ce74c7dba"
+    },
+    {
+      "path": "07_clustering/GSM3516668-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:dc6c1cc860bdc39d3f52e91e8737ac2dea058c0d744419535cf9c4ded3f3b30f"
+    },
+    {
+      "path": "07_clustering/GSM3516669-StageIIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:43652dcc6439f781b826b8db945961bf200e3bb09aac727074d844a874723daa"
+    },
+    {
+      "path": "07_clustering/GSM3516670-StageIB/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:9454ebde2ae9022242231eca2151deee9f11d9ba321a4b5e8274368eec45ca60"
+    },
+    {
+      "path": "07_clustering/GSM3516671-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:64486322c7a66ec9770e6eb16c42e3bba7b4dcac41ada9aef71f0df3ae5eb901"
+    },
+    {
+      "path": "07_clustering/GSM3516672-StageIB/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:5a04fce95fc01267df7973591ccbd0b0d25b94ea08b647db4c74714669e7a1bd"
+    },
+    {
+      "path": "07_clustering/GSM3516673-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:79e1e1203e3d534d8acd9788f263a09767378abea024a48ba8795bd2d93ef94b"
+    },
+    {
+      "path": "07_clustering/GSM3516674-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:77b275f77d8f3143db71eb39c70214402b810c8a9aeeacabd1148a4e27dcbf74"
+    },
+    {
+      "path": "07_clustering/GSM3516675-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:00a68826d2109ed99b5b0df3868bc6315f3df8b95f38392bedbe58ec5438b1dd"
+    },
+    {
+      "path": "07_clustering/GSM3516676-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:22870e61abca96576586d7a635cfb9a386d3c7d224003def1aaf5e8d42570685"
+    },
+    {
+      "path": "07_clustering/GSM3516677-MetAdrenal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:87b08bce327cdfefae95d57c2e5068147cf893bb83b832fe526739d071a4d3aa"
+    },
+    {
+      "path": "07_clustering/GSM3516678-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:45f27f444bd2e9fbfea8d1f56515a599965ea12933b9ff3fbafb4f9cc843e202"
+    },
+    {
+      "path": "07_clustering/GSM3516662-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:a833a9e91d7fc12e5f2d933c59dcdb31d2dec2df21e0f2a7f2f2ad0af642403f"
+    },
+    {
+      "path": "07_clustering/GSM3516663-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:d4adceb6f463eeb0c57a51b914f1d16431e7597371eeb49327bbd44fa33720fe"
+    },
+    {
+      "path": "07_clustering/GSM3516664-MetBone/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:3be7992b145dbac808de2f89b7a4e3d5b9519eb591c054b4fc2e3d7a88d6c2ed"
+    },
+    {
+      "path": "07_clustering/GSM3516665-StageIVprimary/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:bfde9cb6fe8a127619ce4f628e8ddd65a46e196c28034e83c02cf4bae60f1796"
+    },
+    {
+      "path": "07_clustering/GSM3516666-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:ed91dd5f14fc0577d9fc7ae9b247a93d376a0f97a5682b7f067b145b938faa83"
+    },
+    {
+      "path": "07_clustering/GSM3516667-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:808ae9d0d2f0fa5ce8dd7cd274ca2eef66326124514594f2098902e9751be0cf"
+    },
+    {
+      "path": "07_clustering/GSM3516668-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:d228fce11d195afd96c8d9afb4f3e9262073ad6532cd1f2b38e68e79c3dfbf02"
+    },
+    {
+      "path": "07_clustering/GSM3516669-StageIIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:67c35b2871a0dce265be61952990d593af1f6cdad5cd15e918f2130ccf5cf273"
+    },
+    {
+      "path": "07_clustering/GSM3516670-StageIB/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:480fa6e791c26a0322c36670f5533899d7fb9e78e63242433d31b03e0cf7d218"
+    },
+    {
+      "path": "07_clustering/GSM3516671-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:be44cee7e85970aab1736071c36c3fec26a7ec62e7e15ce2ebac6c4a573a1bd2"
+    },
+    {
+      "path": "07_clustering/GSM3516672-StageIB/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:31a4e313100eb712594c347f0de9da36aac41fe25a93bdf5d098a5bb70ea4d9b"
+    },
+    {
+      "path": "07_clustering/GSM3516673-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:73a5fad1bf8bb3ef29bbbaa208776dc7c776ae8646cd6d91b1075775b7a9293d"
+    },
+    {
+      "path": "07_clustering/GSM3516674-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:c7ad59be244646d753341de8f08cf2c1591f7630a362ad1c1dcd7369b016a307"
+    },
+    {
+      "path": "07_clustering/GSM3516675-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:ee9d04980503a26d55f48392b84b6b77988472dc27d2e443aafeafba8c37a701"
+    },
+    {
+      "path": "07_clustering/GSM3516676-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:a29ce4b19bbb1e5af6d1f27eeecd4784838f712e978d09f244f7c60f5e6dcd6f"
+    },
+    {
+      "path": "07_clustering/GSM3516677-MetAdrenal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:301704d971f189ac8424b2c5249b6d60b86fc477af5a421e580e8fa9d377b8b3"
+    },
+    {
+      "path": "07_clustering/GSM3516678-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:b1ae652a5ea8c5654e7d52243ee57b9d6adf98d07b3b5a4969d34538c89e6221"
+    }
+  ],
+  "resolved_config": {
+    "directories": {
+      "output_dir": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed/runs/reannotate/A2_trim_d3000_ext",
+      "bam_dir": null,
+      "gtf_dir": "/home/sharedFolder/humanSTARindex/Homo_sapiens.GRCh38.99.gtf",
+      "atlas": null,
+      "atlas_distance": 50,
+      "datasets": [
+        {
+          "id": "GSM3516662-StageIA"
+        },
+        {
+          "id": "GSM3516663-StageIA"
+        },
+        {
+          "id": "GSM3516664-MetBone"
+        },
+        {
+          "id": "GSM3516665-StageIVprimary"
+        },
+        {
+          "id": "GSM3516666-Normal"
+        },
+        {
+          "id": "GSM3516667-StageIA"
+        },
+        {
+          "id": "GSM3516668-MetBrain"
+        },
+        {
+          "id": "GSM3516669-StageIIA"
+        },
+        {
+          "id": "GSM3516670-StageIB"
+        },
+        {
+          "id": "GSM3516671-MetBrain"
+        },
+        {
+          "id": "GSM3516672-StageIB"
+        },
+        {
+          "id": "GSM3516673-Normal"
+        },
+        {
+          "id": "GSM3516674-StageIA"
+        },
+        {
+          "id": "GSM3516675-Normal"
+        },
+        {
+          "id": "GSM3516676-Normal"
+        },
+        {
+          "id": "GSM3516677-MetAdrenal"
+        },
+        {
+          "id": "GSM3516678-MetBrain"
+        }
+      ],
+      "filenames": {}
+    },
+    "variables": {
+      "seqlen": null,
+      "cb_len": null,
+      "barcode_tag": null,
+      "default_threshold": 5,
+      "merge_len": 100,
+      "min_pas_spacing": -1,
+      "min_pas_prominence": 5.0
+    },
+    "filters": {
+      "min_read": 1500,
+      "min_cells": 3,
+      "min_genes": 50,
+      "min_pas_per_cell": 50
+    },
+    "args": {
+      "config": null,
+      "output": "emaout",
+      "bam_dir": null,
+      "bam_files": null,
+      "gtf": null,
+      "atlas": null,
+      "atlas_distance": 50,
+      "atlas_mode": "annotate",
+      "filenames": null,
+      "seq_len": null,
+      "cb_len": null,
+      "barcode_tag": null,
+      "default_threshold": 5,
+      "merge_len": 100,
+      "ignore_chro": "MT,mt",
+      "threads": null,
+      "bam_threads": 4,
+      "pipeline": false,
+      "batch_size": 10000,
+      "tiles": false,
+      "tile_size": null,
+      "tile_overlap": 10000,
+      "strategy": "lambda_gradient",
+      "lambda_window": 5000,
+      "lambda_method": "median",
+      "lambda_fold_change": 2.0,
+      "max_pas": 5,
+      "smoothing_window": 50,
+      "min_prominence": 5.0,
+      "dynamic_threshold": false,
+      "floor_threshold": 3,
+      "pas_gap": 100,
+      "min_pas_spacing": -1,
+      "min_pas_prominence": 5.0,
+      "ip_filter": false,
+      "genome_fasta": null,
+      "ip_filter_mode": "annotate",
+      "annot_filter": false,
+      "annotation_bed": null,
+      "ip_a_stretch": 6,
+      "ip_a_fraction": 0.7,
+      "ip_window_left": 10,
+      "ip_window_right": 30,
+      "min_pas_per_cell": 50,
+      "min_read": 1500,
+      "min_cells": 3,
+      "max_gene_distance": 5000,
+      "utr_multiplier": 2.0,
+      "include_extended": false,
+      "clustering_method": "leiden_tfidf",
+      "resolution": 1.0,
+      "n_pcs": 40,
+      "external_clusters": null,
+      "random_seed": 42,
+      "cluster_match_method": "marker_overlap",
+      "n_top_markers": 50,
+      "marker_top_n": 200,
+      "marker_method": "wilcoxon",
+      "fdr": 0.05,
+      "per_worker_mb": 300,
+      "isoform_agg": "per_gene",
+      "isoform_collapse": "none",
+      "pdui_pseudocount": 0.0,
+      "log2fc_thresh": 1.0,
+      "min_cells_per_group": 10,
+      "mnn_components": 30,
+      "mnn_k_neighbors": 10,
+      "n_neighbors": 30,
+      "tfidf_scale_factor": 10000.0,
+      "depth_corr_threshold": 0.75,
+      "n_svd_components": 50,
+      "n_top_hvg": 2000,
+      "benchmark": false,
+      "validate_db": null,
+      "log_level": null,
+      "no_log_file": false,
+      "no_progress": false,
+      "verbose": 0,
+      "quiet": false,
+      "datasets": [],
+      "gtf_dir": null,
+      "seqlen": null
+    }
+  },
+  "stratum_to_label": {},
+  "entity_counts": {
+    "n_datasets": 17,
+    "final_cells_total": 55676,
+    "final_pas_total": 473977
+  },
+  "id_grammar": {
+    "pas_uid": "chrom:pos:strand (pos = end-1 on +, start on -)",
+    "cell_uid": "{dataset_id}:{barcode}",
+    "cluster_uid": "{dataset_id}:{leiden}",
+    "canonical_cluster": "shared int across datasets (obs column)",
+    "finding_uid": "{arm}:{celltype}:{gene_id}"
+  }
+}
