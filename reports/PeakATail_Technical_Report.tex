@@ -70,11 +70,32 @@ regenerated end-to-end by \texttt{python reports/generate\_corrected\_figures.py
 from tables on disk; no number in the corrected set is hardcoded in a script.
 \medskip
 
-\noindent Two findings overturn earlier claims and are stated up front: the
-benchmark's F1 ranking of peak-calling strategies is a peak-\emph{count} ranking and
-cannot establish accuracy (Section~\ref{sec:validation}), and the cohort-wide
-``global 3\textquotesingle{}UTR shortening'' does not survive conditioning on read
-coverage --- it is a detection-rate artifact (Section~\ref{sec:corrected}).
+\noindent \textbf{The report is organised around the experiments, not the
+pipeline.} Section~\ref{sec:experiments} is the spine: each subsection states the
+question an experiment was run to answer, shows the view that discriminates
+between its arms, and gives the verdict. The remaining sections document the
+methods behind those numbers and the per-run detail.
+
+\medskip
+\noindent \textbf{Headline verdicts.} One result is positive and transferable:
+\emph{TF-IDF/LSI normalisation is the pipeline's most consequential design
+choice}, beating library-size normalisation by $\Delta$ARI $= 0.140$ against
+independent expression-derived cell-type labels, with every other swept parameter
+at least three times smaller (Section~\ref{sec:q_knobs}). Four are negative and
+overturn earlier claims: the benchmark's F1 ranking of peak callers is a
+peak-\emph{count} ranking and its precision is $\approx$70\% attributable to
+chance against a null (Sections~\ref{sec:validation},~\ref{sec:q_atlas}); the
+choice of peak caller does not reach the biology --- two strategies sharing only
+29\% of their PAS differ by 0.001 in cell-type agreement
+(Section~\ref{sec:q_strategy}); the cohort-wide ``global
+3\textquotesingle{}UTR shortening'' is a detection-rate artifact, with per-stage
+mean PDUI tracking per-stage sequencing depth at median $r = 0.996$
+(Sections~\ref{sec:q_shortening},~\ref{sec:corrected}); and the differential-APA
+hit lists are pseudoreplicated over reads, calling a median 43\% of tested PAS
+significant (Section~\ref{sec:q_fisher}). A reproducibility defect that
+invalidates the trim axis's PAS-yield numbers is documented in
+Section~\ref{sec:q_trim}, and the filter-effect experiment
+(Section~\ref{sec:filter_effect}) is still running.
 \end{abstract}
 
 \tableofcontents
@@ -118,6 +139,532 @@ processes reads one-by-one without loading the full BAM into memory.
     Differential APA & 2,223 multi-PAS genes & 1,165 significant PAS ($q{<}0.05$) \\
     \bottomrule
   \end{tabularx}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Experiment-Driven Findings}
+\label{sec:experiments}
+% ─────────────────────────────────────────────────────────────────────────────
+
+This section is the spine of the report. Each subsection states the
+\textbf{question} an experiment was run to answer, shows the \textbf{view that
+discriminates} between its arms, and gives a \textbf{verdict} --- including where
+the verdict is ``no effect'' or ``this metric cannot tell''. The methods that
+produced each number are documented in Sections~\ref{sec:peak_calling}--%
+\ref{sec:length}; the detailed tables are in Section~\ref{sec:corrected}.
+
+Two analyses were run independently over the same sweep and are reported
+together throughout: a per-run harvest
+(\texttt{ema.benchmark.sweep\_analysis}, Figures 01--19) and a cross-run
+comparison (\texttt{ema.benchmark.cross\_experiment}, Figures 24--36). Where they
+agree, the agreement is itself evidence; where only one can answer a question,
+that is stated.
+
+\subsection{What was run}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{llX}
+    \toprule
+    \textbf{Phase} & \textbf{Axis} & \textbf{Arms} \\
+    \midrule
+    1 & Cohort headline & 17 GSM, \texttt{lambda\_gradient}, atlas + ip in \emph{annotate} mode \\
+    2 & Peak strategy & \texttt{lambda\_gradient} / \texttt{lambda\_poisson} / \texttt{sierra\_iterative} \\
+    2 & Internal priming & \texttt{annotate} / \texttt{filter} / \texttt{off} \\
+    2 & Trim & \texttt{max\_gene\_distance} 1--10\,kb; \texttt{utr\_multiplier} 1.5--3.0; \texttt{include\_extended} \\
+    2 & Clustering & resolution 0.5/1.0/2.0; \texttt{n\_neighbors} 15/30/50; \texttt{leiden\_tfidf} vs \texttt{leiden\_libsize} \\
+    3 & Filter effect & baseline / atlas / annot-3\textquotesingle{}UTR / ip \hfill \textbf{(pending, Section~\ref{sec:filter_effect})} \\
+    1 & Switch biology & 24 cell types $\times$ 4 stages (Normal $\rightarrow$ StageI $\rightarrow$ IVprimary $\rightarrow$ Met) \\
+    \bottomrule
+  \end{tabularx}
+  \caption{The experiments behind this report. Two structural constraints govern
+    every comparison: the trim and clustering axes branch off the \emph{same}
+    saved peak-calls (so they share a PAS catalogue and differ only downstream),
+    while the strategy axis re-calls peaks; and Phase 2--3 run on a 6-GSM subset
+    against Phase 1's full 17-GSM cohort, so cross-phase numbers are confounded
+    by cohort size.}
+  \label{tab:experiment_axes}
+\end{table}
+
+% -----------------------------------------------------------------------------
+\subsection{Does the peak-calling strategy change the answer?}
+\label{sec:q_strategy}
+
+\textbf{Question.} Does the choice of peak caller change \emph{which} PAS are
+found, \emph{how good} they are, and does any of that reach the biology?
+
+\textbf{Discriminating view.} PAS-set agreement between arms
+(Figure~\ref{fig:pas_jaccard}), set against cell-type recovery
+(Figure~\ref{fig:yield_vs_ari}).
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/corrected/26_pas_set_jaccard.png}
+    \caption{}\label{fig:pas_jaccard}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.50\textwidth}
+    \includegraphics[width=\textwidth]{figures/corrected/27_yield_vs_celltype_ari.png}
+    \caption{}\label{fig:yield_vs_ari}
+  \end{subfigure}
+  \caption{(a) Pairwise PAS-set agreement (Jaccard within $\pm$50\,bp).
+    (b) PAS yield against agreement with GEX cell types; note the compressed
+    $y$-axis --- the line is flat.}
+  \label{fig:strategy_crossexp}
+\end{figure}
+
+\textbf{Verdict: strategy choice is a decision about the PAS catalogue, not
+about the biology.} \texttt{lambda\_gradient} and \texttt{lambda\_poisson} agree
+on only \textbf{29\%} of their sites (Jaccard 0.294; each recovers $\approx$44\%
+of the other) --- yet their agreement with independent GEX cell types differs by
+\textbf{0.0003 ARI} (0.4002 vs 0.4005). \texttt{sierra\_iterative} calls
+1.90$\times$ more PAS and is close to a \emph{superset}: it recovers 99.2\% of
+\texttt{lambda\_gradient}'s calls (Jaccard 0.52), matching the containment
+asymmetry in Figure~\ref{fig:count_controlled}c. Cell-type recovery across all
+five arms spans 0.4002--0.4116.
+
+Two controls confirm the axis behaved as designed: \texttt{lg\_ip\_off} is
+\textbf{byte-identical} to \texttt{lg\_annotate} (Jaccard 1.000), so
+\texttt{-{}-ip-filter-mode annotate} is a verified no-op on the PAS set; and
+\texttt{lg\_ip\_filter} is a strict subset removing 8.94\% of peaks.
+Figure~\ref{fig:sankey_strategies} shows the same invariance qualitatively: the
+cluster $\rightarrow$ cell-type flow survives the strategy swap.
+
+\textbf{Practical consequence.} Choose the caller by what you want the catalogue
+to be --- \texttt{sierra\_iterative} for completeness (2$\times$ the sites, most
+multi-PAS genes), \texttt{lambda\_poisson} for the tightest peaks (403\,bp median
+vs 640\,bp) --- not by a benchmark score, and not expecting it to move the result.
+
+% -----------------------------------------------------------------------------
+\subsection{Is ``precision \texorpdfstring{$\approx$}{~} 1.0'' evidence of accuracy?}
+\label{sec:q_atlas}
+
+\textbf{Question.} Every arm scores precision 0.996--0.999 against PolyASite v3.0.
+Is that a measurement?
+
+\textbf{Discriminating view.} A null control. Each called PAS is displaced by
+$\pm U(5\,\text{kb}, 50\,\text{kb})$ on its own chromosome --- staying in the same
+genomic neighbourhood --- and precision recomputed
+(Figure~\ref{fig:atlas_null}). This is the quantitative complement to the
+saturation shown in Figure~\ref{fig:atlas_saturation}: that figure shows
+precision \emph{cannot vary}; this one shows \emph{how much of it is free}.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/24_atlas_null_control.png}
+  \caption{Observed precision against two nulls, per arm and cutoff. At
+    $\pm$50\,bp a randomly displaced PAS already scores \textbf{0.702}.}
+  \label{fig:atlas_null}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{rrrrr}
+    \toprule
+    cutoff & observed & null (shifted) & null (uniform) & \textbf{excess} \\
+    \midrule
+    10\,bp   & 0.472 & 0.261 & 0.130 & \textbf{+0.211} \\
+    25\,bp   & 0.822 & 0.514 & 0.271 & \textbf{+0.308} \\
+    50\,bp   & 0.947 & 0.702 & 0.409 & \textbf{+0.245} \\
+    100\,bp  & 0.986 & 0.842 & 0.550 & +0.144 \\
+    200\,bp  & 0.995 & 0.923 & 0.677 & +0.072 \\
+    \bottomrule
+  \end{tabular}
+  \caption{\texttt{lg\_annotate} against PolyASite v3.0. With 18,432,135
+    single-base reference entries --- one every $\approx$168\,bp of genome --- a
+    $\pm$50\,bp window is atlas-positive for much of the genome by construction.}
+  \label{tab:atlas_null}
+\end{table}
+
+\textbf{Verdict: roughly 70\% of the headline precision is free, and the metric
+cannot rank strategies.} Excess-over-null at 50\,bp is +0.245, +0.243, +0.221 and
++0.249 for \texttt{lg}, \texttt{lp}, \texttt{si} and \texttt{lg\_ip\_filter} --- a
+spread of \textbf{0.028} across arms that disagree on more than half their PAS
+(Section~\ref{sec:q_strategy}). Figure~\ref{fig:atlas_excess} shows the arms
+overlapping at every cutoff.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.72\textwidth]{figures/corrected/25_atlas_excess_over_null.png}
+  \caption{Excess precision over the shifted null. The arms are
+    indistinguishable at every cutoff.}
+  \label{fig:atlas_excess}
+\end{figure}
+
+\textbf{There is real signal, and it should be reported at the cutoff where it
+lives:} called PAS sit a median \textbf{11\,bp} from the nearest atlas entry
+versus \textbf{24\,bp} for the displaced null, and at $\pm$10\,bp the caller beats
+chance by 0.211. Report precision at $\pm$10--25\,bp \emph{with} the null; never
+$\pm$50\,bp bare. Together with the yield-ranking result
+(Section~\ref{sec:validation}) and the count-controlled collapse
+(Figure~\ref{fig:count_controlled}), this retires the atlas-based strategy
+ranking on three independent grounds.
+
+% -----------------------------------------------------------------------------
+\subsection{Does the annotation window matter?}
+\label{sec:q_trim}
+
+\textbf{Question.} How far past an annotated gene end may a PAS be assigned, and
+does widening that window change anything?
+
+\textbf{Discriminating view.} Cell-type agreement and cluster count against
+\texttt{max\_gene\_distance}, scaled against a knob that \emph{does} matter
+(Figure~\ref{fig:trim_sensitivity}).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/28_trim_sensitivity.png}
+  \caption{Trim window against cell-type agreement, cluster count and PAS yield.
+    The shaded band on the left panel is the range spanned by the
+    \texttt{tfidf}$\rightarrow$\texttt{libsize} change, for scale.}
+  \label{fig:trim_sensitivity}
+\end{figure}
+
+\textbf{Verdict: inert over the range swept.} A 10$\times$ change in
+\texttt{max\_gene\_distance} moves cell-type ARI by \textbf{0.007} and the mean
+cluster count by 0.24 (Figure~\ref{fig:ip_and_trim}c). \texttt{utr\_multiplier}
+moves ARI by 0.012. All \texttt{\_ext} branches sit at ARI-vs-reference 0.78--0.80
+\emph{regardless of distance}, which locates the effect precisely:
+\textbf{\texttt{include\_extended} is the real knob on this axis;
+\texttt{max\_gene\_distance} is not.} Two independent analyses reach this
+conclusion from different statistics, which is the strongest form the result can
+take.
+
+\begin{quote}
+\textbf{\textcolor{red}{Reproducibility defect --- PAS-yield numbers on this axis
+are withdrawn.}} Five branches declaring \emph{identical} trim parameters
+(\texttt{\{5000, 2.0, false\}}) produced \textbf{three different}
+\texttt{pas\_gene.tsv} files (Figure~\ref{fig:reannotate_repro}). The PAS
+catalogue is identical across all of them (\texttt{annotatedpas.bed} = 184,295
+rows everywhere, no duplicate rows), so \emph{only the PAS$\rightarrow$gene
+assignment diverges}; and clustering parameters cannot affect gene assignment.
+The md5 groups track \textbf{write time}, the signature of a shared-state race
+between concurrently executing \texttt{ema reannotate} branches.
+
+The magnitude is disqualifying: the parameter-free spread
+(51,129 $\leftrightarrow$ 67,409 assignments) \textbf{exceeds} the spread the trim
+sweep is trying to measure (58,982 for \texttt{d5000\_ext} vs 67,409 for
+\texttt{default}). \textbf{The noise is larger than the signal.} PAS-yield
+comparisons on the trim axis must not be cited until the axis is re-run
+serially. The per-cell clustering ARIs above are far less exposed --- the
+divergence is in feature assignment, not cell assignment --- but should be
+re-confirmed on that re-run.
+\end{quote}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/30_reannotate_reproducibility.png}
+  \caption{Identical declared trim parameters; three distinct PAS$\rightarrow$gene
+    assignment tables. Colour marks the md5 group; groups follow write time, not
+    parameters.}
+  \label{fig:reannotate_repro}
+\end{figure}
+
+% -----------------------------------------------------------------------------
+\subsection{Which parameter actually controls the result?}
+\label{sec:q_knobs}
+
+\textbf{Question.} Of everything the pipeline exposes, what actually changes the
+biological readout?
+
+\textbf{Discriminating view.} Every swept knob on one axis, measured against an
+\emph{external} criterion --- agreement with independent GEX cell-type labels, not
+an internal cluster-compactness score (Figure~\ref{fig:knob_ranking}).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.82\textwidth]{figures/corrected/31_knob_ranking.png}
+  \caption{Each swept parameter ranked by the full range (max $-$ min, default
+    included) it spans in ARI against GEX cell types.}
+  \label{fig:knob_ranking}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{lrrrrr}
+    \toprule
+    branch & clusters & ARI vs ref & ARI vs cell type & AMI vs cell type & silhouette \\
+    \midrule
+    \texttt{BASE} / \texttt{A2\_trim\_default} & 14.8 & 1.000 & \textbf{0.4631} & \textbf{0.6259} & 0.122 \\
+    \texttt{A3\_nn50}          & 13.8 & 0.885 & 0.4568 & 0.6216 & 0.126 \\
+    \texttt{A2\_trim\_mult3.0} & 14.8 & 0.857 & 0.4533 & 0.6253 & 0.123 \\
+    \texttt{A2\_trim\_d1000\_ext}  & 14.9 & 0.804 & 0.4510 & 0.6266 & 0.124 \\
+    \texttt{A2\_trim\_d10000\_ext} & 14.9 & 0.783 & 0.4487 & 0.6279 & 0.127 \\
+    \texttt{A3\_nn15}    & 16.5 & 0.822 & 0.4458 & 0.6224 & 0.116 \\
+    \texttt{A3\_res0.5}  & 10.5 & 0.729 & 0.4283 & 0.6159 & \textbf{0.134} \\
+    \texttt{A3\_res2.0}  & 22.4 & 0.642 & 0.4154 & 0.6078 & 0.101 \\
+    \texttt{A3\_libsize} & 16.8 & \textbf{0.359} & \textbf{0.3234} & \textbf{0.4822} & n/a \\
+    \bottomrule
+  \end{tabular}
+  \caption{Clustering branches, averaged over 17 datasets.
+    \texttt{leiden\_libsize} produces no LSI embedding, so its silhouette is
+    undefined rather than zero.}
+  \label{tab:knob_branches}
+\end{table}
+
+\textbf{Verdict (a): TF-IDF/LSI normalisation is the pipeline's most consequential
+design choice.} Replacing it with library-size normalisation costs
+$\Delta$ARI $= \mathbf{0.140}$ (0.463 $\rightarrow$ 0.323) and
+$\Delta$AMI $= 0.144$ against independent cell-type labels, and yields the most
+fragmented partition. No other knob comes within a factor of three. To our
+knowledge no published APA tool has benchmarked PAS-based clustering against
+cell-type labels with ARI/AMI, which makes this the sweep's most transferable
+result. Figure~\ref{fig:umap_variants} shows the same fact qualitatively: the
+embedding is fixed and only the cut changes.
+
+\textbf{Verdict (b): resolution has a genuine optimum at the default 1.0, and
+silhouette is the wrong objective.} Cell-type agreement falls at both 0.5
+(under-clustered) and 2.0 (over-clustered), while silhouette rises monotonically
+as resolution falls (Figure~\ref{fig:resolution_curve}). An internal
+compactness score will always prefer fewer, rounder clusters; it cannot see that
+the clusters have stopped corresponding to cell identity. The same caution applies
+to Sankey purity, which rises mechanically as clusters shrink
+(Figure~\ref{fig:sankey_variants}).
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/corrected/32_resolution_ari_silhouette.png}
+    \caption{}\label{fig:resolution_curve}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.50\textwidth}
+    \includegraphics[width=\textwidth]{figures/corrected/29_celltype_reassignment.png}
+    \caption{}\label{fig:celltype_reassignment}
+  \end{subfigure}
+  \caption{(a) ARI against cell type peaks at resolution 1.0 while silhouette
+    prefers ever-coarser clusters. (b) The blast radius of each parameter,
+    expressed as the percentage of cells whose cell-type call changes.}
+  \label{fig:clustering_knobs}
+\end{figure}
+
+\textbf{Verdict (c): expressed as consequences for a biologist}
+(Figure~\ref{fig:celltype_reassignment}), \texttt{leiden\_libsize} changes the
+cell-type call for \textbf{30.8\%} of cells, resolution 2.0 for 19.3\% and 0.5 for
+14.4\%, while every trim branch sits at 6--10\% and \texttt{n\_neighbors}~50 at
+4.0\%.
+
+\begin{quote}
+\textbf{Caveat.} \texttt{A3\_libsize} is one of the branches affected by the
+assignment race in Section~\ref{sec:q_trim}. It received \emph{more} features than
+the branches it loses to (82,702 assignments vs 51,129), so the direction of the
+effect is unlikely to be explained by the defect --- extra features should help,
+not hurt --- but the magnitude should be re-confirmed on a serial re-run.
+\end{quote}
+
+% -----------------------------------------------------------------------------
+\subsection{Do 3\textquotesingle{}UTRs shorten as the tumour progresses?}
+\label{sec:q_shortening}
+
+\textbf{Question.} The sweep's central biological claim: within each cell type,
+does mean PDUI fall along Normal $\rightarrow$ StageI $\rightarrow$ IVprimary
+$\rightarrow$ Met?
+
+\textbf{Discriminating view.} Three checks, each of which the claim must survive:
+enough stages to fit a trend, a slope that is not the detection rate, and
+significance.
+
+\paragraph{Check 1 --- most trends are fit on too few stages.}
+Only \textbf{18 of 24} cell types have $\geq$3 stages; six (25\%) have
+\emph{two}, where Spearman $\rho$ is $\pm 1$ \textbf{by construction}
+(Figure~\ref{fig:trend_confound}b). The shipped \texttt{length\_trend.json} for
+\texttt{MESENCHYAL} reports $\rho = -1.0$ on \texttt{n\_stages} = 2. With three
+stages $\rho$ can take only four values ($\pm$0.5, $\pm$1). Cell types below three
+stages are greyed out in Figure~\ref{fig:pdui_heatmap} and must not be cited.
+
+\paragraph{Check 2 --- mean PDUI \emph{is} sequencing depth.}
+PDUI is 0 whenever a gene's distal PAS has no reads in a cell, and in this data
+\textbf{95--99\% of gene--cell pairs have no reads at all}. Mean PDUI is therefore
+arithmetically $(1 - \text{frac uninformative}) \times$ mean informative PDUI, and
+the informative component is nearly flat:
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrrrr}
+    \toprule
+    cell type & stage & mean PDUI & PDUI (informative) & frac uninform. & mean reads \\
+    \midrule
+    TREG & Normal     & 0.01016 & 0.409 & 0.975 & 0.107 \\
+    TREG & StageI     & 0.00590 & 0.382 & 0.985 & 0.067 \\
+    TREG & IVprimary  & 0.00617 & 0.399 & 0.985 & 0.067 \\
+    TREG & Met        & 0.00462 & 0.359 & 0.987 & 0.056 \\
+    \bottomrule
+  \end{tabular}
+  \caption{The apparent stage trend in column 3 is the depth trend in column 6.
+    Across cell types the correlation between per-stage mean PDUI and per-stage
+    mean reads is \textbf{median $r = 0.9957$} --- 15 of 18 interpretable cell
+    types above 0.95, 11 above 0.99.}
+  \label{tab:pdui_depth}
+\end{table}
+
+This reproduces, from a different statistic, the $r = -0.997$ between reported
+PDUI and zero-coverage fraction in Figure~\ref{fig:depth_confound}.
+
+\paragraph{Check 3 --- the direction is not robust and nothing is significant.}
+Refitting on informative pairs only flips the sign in \textbf{9 of 24} cell types
+(37.5\%) and drops the ``decreasing'' fraction from 0.833 to 0.708
+(Figure~\ref{fig:trend_confound}a). Median slope is $-0.0021$
+($-0.0033$ controlled) --- 0.2--0.3\% of the 0--1 PDUI scale per stage. Across the
+18 interpretable cell types exactly \textbf{one} reaches nominal $p < 0.05$
+(\texttt{SEROUS\_CELLS}, $p = 0.044$), which is what 18 tests at $\alpha = 0.05$
+produce by chance and survives no correction.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/34_trend_depth_confound.png}
+  \caption{(a) Slope fitted on all gene--cell pairs against slope fitted on
+    informative pairs only; points off the diagonal are confounded, points in the
+    off-sign quadrants flip direction. (b) Stages available per cell type.}
+  \label{fig:trend_confound}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.62\textwidth]{figures/corrected/33_pdui_celltype_stage.png}
+  \caption{Mean PDUI by cell type $\times$ stage. Cell types with fewer than
+    three stages are flagged: their trend statistics are undefined.}
+  \label{fig:pdui_heatmap}
+\end{figure}
+
+\textbf{Verdict: there is no defensible evidence of stage-dependent
+3\textquotesingle{}UTR shortening in this cohort.} The apparent trend is a
+detection-rate artefact of the classic PDUI estimator under 95--99\% dropout.
+Asking the question properly requires either an estimator that conditions on
+detection (report informative-only PDUI with per-stage depth as a covariate) or
+depth-matched subsampling across stages --- neither of which this sweep ran.
+\textbf{This supersedes the ``global 3\textquotesingle{}UTR shortening'' claim.}
+Consistent with Section~\ref{sec:length}, only \texttt{classic} and
+\texttt{shannon} are used here; \texttt{proportion} is invalid (98.2\% uniform
+$1/n_{\text{PAS}}$ padding) and no length metric rescues the stage signal.
+
+% -----------------------------------------------------------------------------
+\subsection{Are the differential-APA hits trustworthy?}
+\label{sec:q_fisher}
+
+\textbf{Question.} \texttt{ema switch diff} returns thousands of significant PAS
+per cell type. Can they be read as biology?
+
+\textbf{Discriminating view.} Hit counts against cell counts \emph{and} effect
+sizes (Figure~\ref{fig:fisher_pseudo}).
+
+\textbf{Verdict: no.} Across 90 cell-type $\times$ contrast tests, Fisher declares
+a \textbf{median 43\%} of tested PAS significant at FDR 0.05, reaching
+\textbf{73.7\%}. Significance tracks cell count
+(Spearman $\rho = 0.556$, $p = 1.3\times10^{-8}$) because the test is applied to
+\emph{read} counts pooled over cells, so each cell contributes many correlated
+observations. The relationship to effect size is \textbf{inverse}:
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{llrrrrr}
+    \toprule
+    cell type & contrast & cells & tests & sig. & frac & median $|\Delta p|$ \\
+    \midrule
+    \texttt{TREG}            & Normal vs StageI & 3,309 & 18,795 & 13,842 & \textbf{0.737} & \textbf{0.189} \\
+    \texttt{MONOCYTIC}       & Normal vs StageI & 2,293 & 19,084 & 13,744 & 0.720 & 0.179 \\
+    \texttt{EXHAUSTED\_REGUL}& Normal vs StageI &   930 & 23,599 & 15,096 & 0.640 & 0.207 \\
+    \midrule
+    \texttt{SEROUS\_CELLS}   & IVprimary vs Met &   220 &  4,815 &  1,284 & 0.267 & \textbf{0.781} \\
+    \texttt{MACROPHAGE\_M1}  & IVprimary vs Met &   175 &  4,454 &    773 & 0.174 & \textbf{0.820} \\
+    \bottomrule
+  \end{tabular}
+  \caption{High-power contrasts return $\approx$14,000 hits at a median effect of
+    0.19; low-power contrasts return $\approx$800 hits at a median effect of 0.82.
+    Every one of the ten largest hit lists is \texttt{Normal\_vs\_StageI} --- the
+    contrast with the most cells.}
+  \label{tab:fisher_power_crossexp}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/corrected/35_fisher_pseudoreplication.png}
+    \caption{}\label{fig:fisher_pseudo}
+  \end{subfigure}\hfill
+  \begin{subfigure}{0.50\textwidth}
+    \includegraphics[width=\textwidth]{figures/corrected/36_recurrent_switches.png}
+    \caption{}\label{fig:recurrent_crossexp}
+  \end{subfigure}
+  \caption{(a) Significant PAS against cells in the contrast, sized by the median
+    effect of the hits. (b) Recurrence across cell types, and the most recurrent
+    genes.}
+  \label{fig:switch_trust}
+\end{figure}
+
+\paragraph{Recurrence does not rescue the hit lists --- it condemns them.}
+The analysis plan proposed filtering hits by recurrence across cell types, on the
+reasoning that a gene called in one cell type is likely a power artefact while a
+gene recurring across independent cell types is defensible. Run on the real data
+that filter fails in the informative direction: of \textbf{7,941} genes with a
+significant switch, only \textbf{18.6\%} are private to one cell type, 72\% recur
+in $\geq$3 and 58\% in $\geq$5. Each of the 15 most recurrent genes is significant
+in \textbf{all 24 of 24} cell types at the maximum possible effect size, with
+\emph{inconsistent direction} --- called proximal in some cell types and distal in
+others. Real cell-type-specific APA does not look like this. The complementary
+per-gene analysis reaches the same place from the other side: private genes carry
+\emph{larger} mean $|$slope$|$ than recurrent ones (Figure~\ref{fig:recurrence}),
+so recurrence indexes testability, not shared regulation.
+
+\textbf{Consequence: no gene list from the current \texttt{fisher} output should
+be cited.} Use it as a within-gene screen ranked by effect size with a
+$|\Delta p|$ floor, or move to a test with cells as the replication unit ---
+\texttt{nb\_pairwise}, which \textbf{was not run} in this sweep.
+\texttt{nb\_multi} is not the alternative: it calls 99.8\% of PAS significant
+(Section~\ref{sec:switch_test}).
+
+% -----------------------------------------------------------------------------
+\subsection{Claims the data does not support}
+\label{sec:q_corrections}
+
+Collected for the reader who knows the earlier drafts. Each row is corrected in
+the section cited.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{XXl}
+    \toprule
+    \textbf{Earlier claim} & \textbf{What the data shows} & \textbf{See} \\
+    \midrule
+    Precision $\approx$ 1.0 against PolyASite v3.0 demonstrates accuracy &
+    $\approx$70\% of it is free; excess over null $= +0.245$ at $\pm$50\,bp &
+    \ref{sec:q_atlas} \\
+    \texttt{sierra} $>$ \texttt{lambda\_gradient} by F1 &
+    F1 ranks yield; count-controlled the arms are nested and indistinguishable &
+    \ref{sec:validation}, \ref{sec:q_atlas} \\
+    Peak strategy is a meaningful methodological choice for the biology &
+    29\% PAS overlap, $\Delta$ARI 0.011 --- it is a catalogue choice &
+    \ref{sec:q_strategy} \\
+    Global 3\textquotesingle{}UTR shortening across stages &
+    mean PDUI $\equiv$ depth ($r = 0.996$); 37.5\% sign flips; nothing significant &
+    \ref{sec:q_shortening} \\
+    Per-cell-type Spearman $\rho$ from \texttt{length\_trend.json} &
+    $\rho = \pm1$ by construction for the six two-stage cell types &
+    \ref{sec:q_shortening} \\
+    ``$N$ genes switch'' from \texttt{fisher} &
+    median 43\% of all tested PAS are called significant &
+    \ref{sec:q_fisher} \\
+    Recurrent switch genes are the high-confidence set &
+    81\% of genes recur; the most recurrent have inconsistent direction &
+    \ref{sec:q_fisher} \\
+    Trim-parameter PAS-yield differences &
+    confounded by a concurrency race larger than the effect &
+    \ref{sec:q_trim} \\
+    \texttt{canonical\_cluster} from \texttt{switch match} &
+    matching is saturated (confidence 0.0102 for every pair) --- unusable &
+    \ref{sec:cross_dataset_match} \\
+    \midrule
+    \emph{(new, positive)} &
+    TF-IDF beats library-size normalisation by $\Delta$ARI 0.140 &
+    \ref{sec:q_knobs} \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Corrections and the one new positive result.}
+  \label{tab:corrections}
 \end{table}
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -2366,39 +2913,113 @@ annot-filter, toward the depth-conditioned result of no consistent direction. If
 the split is instead unchanged across all four scenarios, that strengthens the
 conclusion that direction is set by coverage, not by which PAS are included.
 
+\subsection*{The question this experiment answers}
+
+The framing that matters is \textbf{not} ``how many PAS did the filter drop'' but
+\textbf{``did dropping them change a conclusion''}. A filter that removes 40\% of
+PAS while moving cell-type agreement by 0.01 and flipping no trend signs is
+cosmetically large and scientifically cheap; a filter that flips trend signs
+retroactively invalidates every atlas-snapped result in the project's history.
+Section~\ref{sec:q_atlas} has already established that the filters cannot be
+judged on atlas agreement, so the downstream readout is the only available test.
+
+\subsection*{Analysis skeleton (drops in when the run completes)}
+
+The analysis is implemented and wired --- \texttt{cross\_experiment.filter\_effect\_deltas()}
+emits all five tables below against the \texttt{baseline} scenario --- so this
+section is populated by re-running the generator, with no new code. Every row is
+a difference from \texttt{baseline}, which by construction keeps every PAS.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{lXl}
+    \toprule
+    \textbf{Pipeline step} & \textbf{Metric reported per scenario} & \textbf{Source table} \\
+    \midrule
+    PAS catalogue & PAS kept, $\Delta$ vs baseline, fraction retained &
+      \texttt{filter\_effect\_pas.tsv} \\
+    Feature space & PAS kept in results vs PAS used for clustering &
+      \texttt{filter\_effect\_pas.tsv} \\
+    Clustering & $n$ clusters, ARI/AMI vs baseline clustering &
+      \texttt{filter\_effect\_clustering.tsv} \\
+    Cell typing & \textbf{\% of cells whose cell-type call changes} &
+      \texttt{filter\_effect\_celltype\_shift.tsv} \\
+    Differential APA & significant PAS/genes; hit-set overlap with baseline &
+      \texttt{filter\_effect\_fisher.tsv} \\
+    3\textquotesingle{}UTR trend & per-cell-type slope; \textbf{sign flips} vs baseline &
+      \texttt{filter\_effect\_trend.tsv} \\
+    \bottomrule
+  \end{tabularx}
+  \caption{The blast radius of one filter, one row per downstream step. Figure
+    slots 20--23 are reserved for the corresponding panels.}
+  \label{tab:filter_effect_skeleton}
+\end{table}
+
+\textbf{Status at the time of writing.} The scenario directories present on disk
+are from an aborted earlier launch (restricted to a single GSM rather than the
+intended 6-GSM subset) and have been set aside as
+\texttt{\_stale\_*}; no \texttt{B2\_gex\_celltyping} or \texttt{B3\_switch}
+outputs exist for any scenario. \textbf{Nothing in this section may be cited
+until all four scenarios complete on the 6-GSM subset.}
+
 \appendix
 \section{Figure Index}
 \label{sec:figure_index}
 % ─────────────────────────────────────────────────────────────────────────────
 
+All figures below are in \texttt{figures/corrected/}, as both \texttt{.png}
+(200\,dpi) and \texttt{.svg}. Generators, all under \texttt{reports/}: figures
+01--14 from \texttt{generate\_corrected\_figures.py}, 15--19 from
+\texttt{generate\_clustering\_figures.py}, and 24--36 from
+\texttt{generate\_cross\_experiment\_figures.py}. All read on-disk tables from
+the real \texttt{RERUN\_2026-08\_fixed} sweep --- no value is hardcoded, and a
+figure whose input table is missing is skipped rather than drawn from stale
+data. \textbf{Slots 20--23 are reserved} for the pending filter-effect panels
+(Section~\ref{sec:filter_effect}); figure 14 (gene walkthroughs) is provisional
+and not cited in this revision.
+
+Schematics that remain valid from the pre-correction set
+(\texttt{fig\_pipeline\_flow}, \texttt{fig\_strategy\_explained},
+\texttt{fig\_math\_methods}, \texttt{fig\_tfidf\_pipeline},
+\texttt{*\_explainer}) are cited in place and carry no data.
+
 \begin{longtable}{rll}
   \toprule
-  \textbf{\#} & \textbf{Description} & \textbf{File} \\
+  \textbf{\#} & \textbf{Description} & \textbf{File (\texttt{.png}/\texttt{.svg})} \\
   \midrule
   \endhead
-  1  & Strategy explained                    & \texttt{fig\_strategy\_explained.png} \\
-  2  & Math methods                          & \texttt{fig\_math\_methods.png} \\
-  3  & Peak counts                           & \texttt{fig\_peak\_counts.png} \\
-  4  & Annotation impact                     & \texttt{fig\_annotation\_impact.png} \\
-  5  & Dual DB validation                    & \texttt{fig\_dual\_db\_validation.png} \\
-  6  & Precision metrics table               & \texttt{fig\_dual\_db\_table.png} \\
-  7  & Precision by distance                 & \texttt{fig\_precision\_v3.png} \\
-  8  & Distance histogram                    & \texttt{fig\_distance\_hist.png} \\
-  9  & Strategy overlap Venn                 & \texttt{fig\_venn\_overlap.png} \\
-  10 & Parameter sensitivity                 & \texttt{fig\_metrics\_table.png} \\
-  11 & ARI/AMI resolution sweep              & \texttt{fig\_ari\_ami\_sweep.png} \\
-  12 & 6-panel clustering comparison         & \texttt{fig\_main\_comparison.png} \\
-  13 & Sankey flow diagram                   & \texttt{fig\_sankey.png} \\
-  14 & Cluster sizes                         & \texttt{fig\_cluster\_sizes.png} \\
-  15 & APA subclusters                       & \texttt{fig\_subcluster.png} \\
-  16 & Differential APA (PDUI + volcano)     & \texttt{fig\_differential\_apa.png} \\
-  17 & Switch strategy explainer (cartoon)   & \texttt{switch\_strategy\_explainer.png} \\
-  18 & Length strategy explainer (cartoon)   & \texttt{length\_strategy\_explainer.png} \\
-  23 & Match strategy explainer (cartoon)    & \texttt{match\_strategy\_explainer.png} \\
-  19 & Switch strategy real-data comparison  & \texttt{switch\_strategy\_real\_data.png} \\
-  20 & Length strategy real-data comparison  & \texttt{length\_strategy\_real\_data.png} \\
-  21 & Gene walk: DPYD                       & \texttt{gene\_walk\_ENSG00000188641.png} \\
-  22 & Gene walk: PHACTR1                    & \texttt{gene\_walk\_ENSG00000112137.png} \\
+  01 & Peak count, F1 across cutoffs, F1 vs peak count & \texttt{01\_strategy\_benchmark} \\
+  02 & Atlas precision saturation vs recall & \texttt{02\_atlas\_saturation} \\
+  03 & Count-controlled rarefaction, distance, containment & \texttt{03\_count\_controlled} \\
+  04 & Internal-priming axis; trim vs PAS and cluster count & \texttt{04\_ip\_and\_trim} \\
+  05 & Resolution, n\_neighbors, PAS-vs-GEX agreement & \texttt{05\_clustering} \\
+  06 & Depth confound: PDUI vs zero-coverage fraction & \texttt{06\_depth\_confound} \\
+  07 & Stage trajectory, reported vs coverage-conditioned & \texttt{07\_stage\_trajectory} \\
+  08 & Fisher significance-rate distribution & \texttt{08\_fisher\_power} \\
+  09 & Recurrence and effect size, recurrent vs private & \texttt{09\_recurrence} \\
+  10 & Lost distal elements vs length-matched control & \texttt{10\_lost\_distal\_elements} \\
+  11 & Cancer-gene and Hallmark enrichment, crude vs adjusted & \texttt{11\_gene\_sets} \\
+  12 & Differential strategy comparison (fisher vs nb\_multi) & \texttt{12\_diff\_strategy} \\
+  13 & Length-metric comparison (classic / shannon / proportion) & \texttt{13\_length\_strategy} \\
+  15 & Cohort UMAP by stage, PAS cluster and cell type & \texttt{15\_umap\_cohort\_stages} \\
+  16 & UMAP across the six clustering variants & \texttt{16\_umap\_clustering\_grid} \\
+  17 & PAS cluster $\rightarrow$ cell-type Sankey, per variant & \texttt{17\_sankey\_clustering\_grid} \\
+  18 & PAS cluster $\rightarrow$ cell-type Sankey, per strategy & \texttt{18\_sankey\_peak\_strategies} \\
+  19 & Cluster count and size distribution across experiments & \texttt{19\_cluster\_sizes} \\
+  24 & Atlas precision against shifted and uniform nulls & \texttt{24\_atlas\_null\_control} \\
+  25 & Excess precision over null, per arm and cutoff & \texttt{25\_atlas\_excess\_over\_null} \\
+  26 & PAS-set Jaccard between peak strategies & \texttt{26\_pas\_set\_jaccard} \\
+  27 & PAS yield against cell-type ARI & \texttt{27\_yield\_vs\_celltype\_ari} \\
+  28 & Trim window vs ARI, cluster count and yield & \texttt{28\_trim\_sensitivity} \\
+  29 & \% of cells whose cell-type call each parameter changes & \texttt{29\_celltype\_reassignment} \\
+  30 & Reannotate reproducibility: identical params, 3 md5 groups & \texttt{30\_reannotate\_reproducibility} \\
+  31 & Every swept knob ranked by effect on the biology & \texttt{31\_knob\_ranking} \\
+  32 & Resolution: ARI peaks at 1.0, silhouette does not & \texttt{32\_resolution\_ari\_silhouette} \\
+  33 & Mean PDUI by cell type $\times$ stage & \texttt{33\_pdui\_celltype\_stage} \\
+  34 & Trend slope with vs without the depth control & \texttt{34\_trend\_depth\_confound} \\
+  35 & Fisher hits vs cell count, sized by effect & \texttt{35\_fisher\_pseudoreplication} \\
+  36 & Recurrence distribution and top recurrent genes & \texttt{36\_recurrent\_switches} \\
   \bottomrule
 \end{longtable}
 

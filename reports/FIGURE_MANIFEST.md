@@ -133,3 +133,45 @@ so the result reads as a test rather than a description.
 5. **Rebuilding the PDF** is `bash reports/build_latex.sh` — it now uses a fresh
    build directory, exits non-zero on LaTeX errors, and reports page count and
    figures embedded. Last clean build: **52 pages, 18 corrected figures, 0 errors.**
+
+---
+
+# Cross-experiment figures (24–36) — added by the assembler
+
+Generator: `reports/generate_cross_experiment_figures.py`, reading the TSVs in
+`reports/cumulative_analysis/cross_experiment/` produced by
+`ema.benchmark.cross_experiment.run_all()` against the real
+`RERUN_2026-08_fixed` sweep. Same contract as 01–19: nothing hardcoded, a figure
+whose input table is missing is skipped. Numbered from 24 so as not to collide
+with 01–19 or the **reserved filter-effect slots 20–23**.
+
+These answer the *cross-run* questions — whether a difference between two
+branches is real — where 01–19 answer the *per-run* ones. Where both bear on a
+claim, the report shows them together.
+
+| # | File | Caption | Claim it answers |
+|---|---|---|---|
+| **24** | `24_atlas_null_control` | Observed precision vs a shifted (±5–50 kb, same chromosome) null and a uniform null, per arm per cutoff. | **~70% of the headline precision is free.** A displaced PAS scores 0.702 at ±50 bp. Quantifies what 02 shows qualitatively — **use both together**. |
+| **25** | `25_atlas_excess_over_null` | Excess precision over the shifted null, per arm, across cutoffs. | Excess spread across arms is **0.028** — the benchmark has no power to rank strategies at any cutoff. |
+| **26** | `26_pas_set_jaccard` | Pairwise PAS-set Jaccard (±50 bp). | **`lg` vs `lp` = 0.294** — two arms scoring identical precision share 29% of their sites. Complements 03c (containment) with the symmetric measure. |
+| **27** | `27_yield_vs_celltype_ari` | PAS yield against ARI vs GEX cell type, one point per arm. | Doubling the catalogue does not improve cell-type recovery (0.4002–0.4116). The scatter form of "peak strategy is inert". |
+| **28** | `28_trim_sensitivity` | Trim window vs cell-type ARI, cluster count, PAS yield; ARI panel scaled against the tfidf→libsize range. | **ΔARI 0.007 over a 10× window change.** Independent confirmation of 04b–c from an external criterion. Yield panel carries the reproducibility caveat. |
+| **29** | `29_celltype_reassignment` | % of cells whose cell-type call changes vs the base cohort, per branch. | Translates ARI deltas into consequences: **libsize 30.8%**, res 2.0 19.3%, res 0.5 14.4%, trim branches 6–10%, nn50 4.0%. |
+| **30** | `30_reannotate_reproducibility` | Table-figure: branches with identical declared trim params, their `pas_gene.tsv` md5, rows, genes, write time. | **A reproducibility defect.** Five branches declaring `{5000, 2.0, false}` produced three md5 groups that track *write time*; `annotatedpas.bed` identical throughout. The parameter-free spread exceeds the trim effect. **Trim-axis yields are withdrawn.** |
+| **31** | `31_knob_ranking` | Every swept knob ranked by the full range (max−min, default included) it spans in ARI vs cell type. | **The headline positive result: tfidf→libsize = ΔARI 0.140**, three times any other knob. Uses full range, not endpoints, because resolution is non-monotone. |
+| **32** | `32_resolution_ari_silhouette` | Resolution vs ARI (left axis) and silhouette (right axis), annotated with cluster counts. | **Silhouette is the wrong objective** — it rises monotonically as resolution falls while cell-type agreement peaks at the default 1.0. Same caution as Sankey purity in 17. |
+| **33** | `33_pdui_celltype_stage` | Mean PDUI by cell type × stage; rows with <3 stages flagged. | 6 of 24 cell types have only two stages, where Spearman ρ is ±1 **by construction**. Those rows must not be cited. |
+| **34** | `34_trend_depth_confound` | Slope on all gene–cell pairs vs slope on informative pairs only; stage-count histogram. | **9 of 24 cell types flip sign** under the detection control; "decreasing" falls 0.833→0.708. Per-stage mean PDUI vs depth: **median r = 0.9957**. Reaches 06's conclusion from a different statistic. |
+| **35** | `35_fisher_pseudoreplication` | Significant PAS vs cells in the contrast, sized by median \|Δ proportion\| of the hits. | Significance tracks cell count (**ρ = 0.556, p = 1.3e−8**) while effect size runs the *other* way: 14,000 hits at \|Δ\|=0.19 vs 800 at 0.82. |
+| **36** | `36_recurrent_switches` | Recurrence distribution across cell types; 20 most recurrent genes coloured by direction consistency. | **Recurrence cannot be used as a confidence filter.** Only 18.6% of 7,941 genes are private; the top 15 are significant in 24/24 with *inconsistent* direction. Agrees with 09 from the opposite side. |
+
+## Assembler's notes
+
+1. **Figures 20–23 remain reserved.** Do not renumber 24–36 to close the gap; the
+   report's figure index and cross-references depend on these numbers.
+2. **`_load()` uses `index_col=False`.** A stray trailing delimiter in a source
+   TSV had promoted column 0 to the index and silently shifted every column left
+   in figure 30. The fix is in the loader, so it protects every future table too.
+3. **Corroboration is deliberate.** 02+24, 03+26, 04+28, 06+34, 08+35, 09+36 are
+   pairs reached by independent analyses. The report cites both in each case;
+   dropping either weakens the claim to a single-method result.
