@@ -3407,6 +3407,56 @@ clustered contributes to no downstream result, so for many purposes this is the
 more consequential number than the ARI drop, and it is invisible in any
 PAS-level summary.
 
+\subsection{Single-cell view: UMAP and cluster $\rightarrow$ cell-type flow}
+\label{sec:filter_effect_viz}
+
+The numbers above say the 3\textquotesingle{}UTR filter costs 0.039 ARI against
+GEX labels. This is what that looks like at single-cell resolution, on the
+shared reference dataset \texttt{GSM3516663-StageIA}, with the same conventions
+as Figures~\ref{fig:umap_stages}--\ref{fig:cluster_sizes_corrected}: unlabelled
+cells are drawn grey and \emph{kept}, and each panel is one named dataset
+because \texttt{leiden} ids are not comparable across datasets.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/21_filter_effect_umap.png}
+  \caption{Per-scenario UMAP, coloured by PAS cluster (top) and by GEX cell type
+    (bottom). \textbf{Each embedding is computed independently for its scenario},
+    so differences in \emph{layout} between panels are not evidence of a
+    clustering difference --- UMAP coordinates are not comparable across
+    separate runs. Figure~\ref{fig:filter_effect_clustering} is the quantitative
+    comparison; this figure shows that every scenario yields discrete,
+    cell-type-coherent structure rather than noise, and that the
+    3\textquotesingle{}UTR panel does so with 90 fewer cells on this dataset.}
+  \label{fig:filter_effect_umap}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/22_filter_effect_sankey.png}
+  \caption{PAS cluster $\rightarrow$ GEX cell type per scenario. Ribbon colour
+    is the destination cell type; pale grey ribbons are unlabelled cells, kept
+    rather than dropped. The cell-type column is identical across scenarios by
+    construction --- cell typing is GEX-derived and filter-independent --- so
+    only the left-hand partition and the ribbon structure change.}
+  \label{fig:filter_effect_sankey}
+\end{figure}
+
+\begin{quote}
+\textbf{Do not read the purity numbers as a ranking.} Median cluster purity is
+0.71 (baseline), 0.73 (atlas), \textbf{0.80} (3\textquotesingle{}UTR) and 0.72
+(internal priming) --- the \emph{worst} scenario by every other measure scores
+the \emph{highest} purity. This is the same mechanical artefact flagged for
+Figure~\ref{fig:sankey_variants}: purity rises as clusters shrink and multiply
+relative to the label set, so a coarser partition over the same labels can score
+higher while resolving less. The 3\textquotesingle{}UTR filter drops to 13
+clusters from 15 and loses 10.75\% of cells; its higher purity reflects that
+loss, not better agreement. \textbf{Purity is a within-panel descriptive, never a
+between-scenario score} --- ARI and AMI against the GEX labels
+(Table~\ref{tab:filter_effect_result}) are the comparable statistics, and they
+put the 3\textquotesingle{}UTR filter last.
+\end{quote}
+
 \subsection{Scoring the advance predictions}
 
 Three predictions were recorded before the run. The first can now be scored.
@@ -3486,8 +3536,8 @@ All figures below are in \texttt{figures/corrected/}, as both \texttt{.png}
 \texttt{generate\_cross\_experiment\_figures.py}. All read on-disk tables from
 the real \texttt{RERUN\_2026-08\_fixed} sweep --- no value is hardcoded, and a
 figure whose input table is missing is skipped rather than drawn from stale
-data. \textbf{Slots 21--23 remain reserved} for the pending filter-effect differential,
-length and UMAP/Sankey panels (Section~\ref{sec:filter_effect}).
+data. \textbf{Slot 23 remains reserved} for the pending filter-effect differential and
+length panels (Section~\ref{sec:filter_effect}).
 
 Schematics that remain valid from the pre-correction set
 (\texttt{fig\_pipeline\_flow}, \texttt{fig\_strategy\_explained},
@@ -3519,6 +3569,8 @@ Schematics that remain valid from the pre-correction set
   18 & PAS cluster $\rightarrow$ cell-type Sankey, per strategy & \texttt{18\_sankey\_peak\_strategies} \\
   19 & Cluster count and size distribution across experiments & \texttt{19\_cluster\_sizes} \\
   20 & Filter effect on clustering, cells and GEX concordance & \texttt{20\_filter\_effect\_clustering} \\
+  21 & Per-scenario UMAP by cluster and by cell type & \texttt{21\_filter\_effect\_umap} \\
+  22 & Per-scenario cluster $\rightarrow$ cell-type Sankey & \texttt{22\_filter\_effect\_sankey} \\
   24 & Atlas precision against shifted and uniform nulls & \texttt{24\_atlas\_null\_control} \\
   25 & Excess precision over null, per arm and cutoff & \texttt{25\_atlas\_excess\_over\_null} \\
   26 & PAS-set Jaccard between peak strategies & \texttt{26\_pas\_set\_jaccard} \\
