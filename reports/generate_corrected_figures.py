@@ -60,6 +60,8 @@ PALETTE = {
 }
 plt.rcParams.update(
     {
+        # deterministic SVG element ids, so re-running does not churn git
+        "svg.hashsalt": "peakatail-corrected",
         "figure.dpi": 150,
         "savefig.dpi": 200,
         "savefig.bbox": "tight",
@@ -77,9 +79,16 @@ _skipped: list[str] = []
 
 
 def save(fig: plt.Figure, name: str) -> None:
+    """Write PNG + SVG deterministically.
+
+    Matplotlib stamps SVGs with the current time and with randomly generated
+    element ids, so re-running would churn every SVG in git even when the figure
+    is unchanged. ``svg.hashsalt`` (set at import) fixes the ids, and suppressing
+    the Date metadata removes the timestamp, making the output byte-stable.
+    """
     OUT.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "svg"):
-        fig.savefig(OUT / f"{name}.{ext}")
+    fig.savefig(OUT / f"{name}.png")
+    fig.savefig(OUT / f"{name}.svg", metadata={"Date": None})
     plt.close(fig)
     _written.append(name)
     print(f"  wrote {name}.png/.svg")
