@@ -224,12 +224,24 @@ of the other) --- yet their agreement with independent GEX cell types differs by
 asymmetry in Figure~\ref{fig:count_controlled}c. Cell-type recovery across all
 five arms spans 0.4002--0.4116.
 
+\textbf{Three independent lines converge on this verdict}, and it is worth
+stating once that they are independent rather than repeating the claim in each
+section. (i) The call sets are \emph{nested}: count-controlled to a common $n$,
+the arms are indistinguishable at a 0.15\,pp spread and
+\texttt{lambda\_gradient} is fully contained in \texttt{sierra\_iterative}
+(Figure~\ref{fig:count_controlled}), which the symmetric Jaccard above
+reproduces from the other direction. (ii) The downstream statistic does not
+move: $\Delta$ARI $= 0.011$ across all five arms. (iii) The cluster
+$\rightarrow$ cell-type flow survives the strategy swap qualitatively
+(Figure~\ref{fig:sankey_strategies}). A set-overlap argument, an external
+agreement metric and a visual mapping are three different ways to be wrong;
+agreeing, they are strong evidence that \textbf{the strategy axis is inert
+downstream}.
+
 Two controls confirm the axis behaved as designed: \texttt{lg\_ip\_off} is
 \textbf{byte-identical} to \texttt{lg\_annotate} (Jaccard 1.000), so
 \texttt{-{}-ip-filter-mode annotate} is a verified no-op on the PAS set; and
 \texttt{lg\_ip\_filter} is a strict subset removing 8.94\% of peaks.
-Figure~\ref{fig:sankey_strategies} shows the same invariance qualitatively: the
-cluster $\rightarrow$ cell-type flow survives the strategy swap.
 
 \textbf{Practical consequence.} Choose the caller by what you want the catalogue
 to be --- \texttt{sierra\_iterative} for completeness (2$\times$ the sites, most
@@ -2204,6 +2216,17 @@ partly through 3\textquotesingle UTR shortening. DPYD is a known biomarker of 5-
 toxicity in cancer treatment; this kind of cluster-resolved APA analysis could help
 stratify drug sensitivity predictions at single-cell resolution.
 
+\begin{quote}
+\textbf{Superseded.} The paragraph above is retained to document what the
+walkthrough \emph{format} conveys, but its inference does not survive the
+corrected analysis and must not be carried forward. ``33 of 39 tested PAS
+significant'' is the pseudoreplication signature quantified in
+Section~\ref{sec:q_fisher} --- Fisher calls a median 43\% of all tested PAS
+significant --- and the shortening reading is subject to the detection-rate
+confound of Section~\ref{sec:q_shortening}. Read this subsection as a tour of
+the output panels, not as evidence about DPYD.
+\end{quote}
+
 \subsection{PHACTR1 (ENSG00000112137)}
 
 PHACTR1 (Phosphatase And Actin Regulator 1) is a signalling scaffold expressed in
@@ -2234,6 +2257,15 @@ single-gene APA signal in this dataset. The two clusters may represent distinct
 endothelial or immune cell subtypes with fundamentally different PHACTR1 regulatory
 programmes.
 
+\begin{quote}
+\textbf{Superseded}, on the same grounds as the DPYD subsection above: ``all 19
+PAS significant by Fisher'' is what a test that calls a median 43\% of PAS
+significant produces on a well-covered gene (Section~\ref{sec:q_fisher}), and
+per-cluster PDUI extremes are exactly where the detection-rate confound bites
+hardest (Section~\ref{sec:q_shortening}). The panels illustrate the output
+format; the gene-level claim is not supported by the corrected sweep.
+\end{quote}
+
 \subsection{Raw \texttt{ema switch geneview} output with isoform overlay}
 
 The custom multi-panel gene walkthroughs above synthesise outputs from several
@@ -2246,7 +2278,7 @@ the cluster panels alone.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/geneview_with_isoforms_DPYD.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C14 in the figure index for the corrected-sweep equivalent. Raw output of \texttt{ema switch geneview -i clusters.h5ad --gene-id ENSG00000188641 --gtf Homo\_sapiens.GRCh38.99.gtf} on the v9 dataset (\texttt{lambda\_gradient} peak calling). Top: five DPYD isoforms with their exon-intron-3\textquotesingle UTR structure. Below: eleven cluster rows showing within-gene PAS proportions across the 20 PAS detected for DPYD. Clusters 1, 8, 9, and 10 concentrate strongly on a single PAS (37--45\%), while cluster 0 distributes usage more broadly. This is the same figure produced inline by \texttt{ema switch diff}'s auto-top-N block but with the isoform structure added because \texttt{--gtf} was supplied.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited. A corrected-sweep equivalent is \emph{not} included in this revision: its input pass was still streaming at build time and the partial render covered only 9 of 24 cell types, so it was withheld rather than shipped incomplete. Raw output of \texttt{ema switch geneview -i clusters.h5ad --gene-id ENSG00000188641 --gtf Homo\_sapiens.GRCh38.99.gtf} on the v9 dataset (\texttt{lambda\_gradient} peak calling). Top: five DPYD isoforms with their exon-intron-3\textquotesingle UTR structure. Below: eleven cluster rows showing within-gene PAS proportions across the 20 PAS detected for DPYD. Clusters 1, 8, 9, and 10 concentrate strongly on a single PAS (37--45\%), while cluster 0 distributes usage more broadly. This is the same figure produced inline by \texttt{ema switch diff}'s auto-top-N block but with the isoform structure added because \texttt{--gtf} was supplied.}
   \label{fig:geneview_dpyd_isoforms}
 \end{figure}
 
@@ -2261,7 +2293,7 @@ axis stays in kilobase units rather than megabase units.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/geneview_CLIC2_3pas.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C14 in the figure index for the corrected-sweep equivalent. Raw output of \texttt{ema switch geneview --gene-id ENSG00000155962 --gtf ...} on the same v9 lambda\_gradient run. CLIC2 (chrX, minus strand) has three PAS in its 3\textquotesingle UTR; the gene structure track shows the full 58~kb GTF span (now visible because the renderer takes the union of pasbed coordinates and the GTF exon backbone -- the older pasbed-only axis would have clipped the 5\textquotesingle\ end). PAS regions are overlaid as translucent red stripes with their \texttt{pas\_id} numbers above the structure; per-cluster coverage bars are drawn at the PAS's actual genomic width (post-merger) so a 200-bp merged peak visibly differs from a 50-bp singleton. The colour ramp encodes within-gene proportion (0--1) so a few clusters that favour the proximal PAS while others favour the distal one are immediately legible.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited. A corrected-sweep equivalent is \emph{not} included in this revision: its input pass was still streaming at build time and the partial render covered only 9 of 24 cell types, so it was withheld rather than shipped incomplete. Raw output of \texttt{ema switch geneview --gene-id ENSG00000155962 --gtf ...} on the same v9 lambda\_gradient run. CLIC2 (chrX, minus strand) has three PAS in its 3\textquotesingle UTR; the gene structure track shows the full 58~kb GTF span (now visible because the renderer takes the union of pasbed coordinates and the GTF exon backbone -- the older pasbed-only axis would have clipped the 5\textquotesingle\ end). PAS regions are overlaid as translucent red stripes with their \texttt{pas\_id} numbers above the structure; per-cluster coverage bars are drawn at the PAS's actual genomic width (post-merger) so a 200-bp merged peak visibly differs from a 50-bp singleton. The colour ramp encodes within-gene proportion (0--1) so a few clusters that favour the proximal PAS while others favour the distal one are immediately legible.}
   \label{fig:geneview_clic2}
 \end{figure}
 
