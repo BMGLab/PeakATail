@@ -56,8 +56,10 @@ TECHNICAL_REPORT_COMPLETE.md
 README_TECHNICAL_REPORT.md
 REPORT_DELIVERY.txt
 
-# Reports directory (local technical write-up scratch, not upstream content)
-reports/technical_report.md
+# Reports directory helper scripts (local scratch, not upstream content).
+# NOTE: technical_report.md and PeakATail_Technical_Report.tex are deliberately
+# NOT ignored -- the technical report is a shipped deliverable and is tracked.
+# Only its build artefacts and the generated PDF stay out of the repository.
 reports/README.md
 reports/PDF_CONVERSION_INSTRUCTIONS.txt
 reports/build_report.sh
@@ -69,8 +71,7 @@ reports/run_build_simple.sh
 reports/build_pdf.sh
 reports/build_latex.sh
 reports/subset_heavy_strategies.py
-# LaTeX source and build artefacts
-reports/PeakATail_Technical_Report.tex
+# LaTeX build artefacts (the .tex source itself is tracked -- see note above)
 reports/*.aux
 reports/*.log
 reports/*.toc

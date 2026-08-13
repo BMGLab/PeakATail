@@ -1,0 +1,464 @@
+{
+  "run_id": "lg_annotate",
+  "root": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed/runs/grid/lg_annotate",
+  "contract_version": "0.1.0",
+  "timestamp": "2026-08-12T04:27:34.844643",
+  "datasets": [
+    {
+      "dataset_id": "GSM3516675-Normal",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8326051_STAR/SRR8326051_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326052_STAR/SRR8326052_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326053_STAR/SRR8326053_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326054_STAR/SRR8326054_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326055_STAR/SRR8326055_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326056_STAR/SRR8326056_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326057_STAR/SRR8326057_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326058_STAR/SRR8326058_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516663-StageIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325955_STAR/SRR8325955_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325956_STAR/SRR8325956_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325957_STAR/SRR8325957_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325958_STAR/SRR8325958_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325959_STAR/SRR8325959_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325960_STAR/SRR8325960_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325961_STAR/SRR8325961_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325962_STAR/SRR8325962_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516667-StageIA",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325987_STAR/SRR8325987_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325988_STAR/SRR8325988_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325989_STAR/SRR8325989_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325990_STAR/SRR8325990_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325991_STAR/SRR8325991_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325992_STAR/SRR8325992_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325993_STAR/SRR8325993_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325994_STAR/SRR8325994_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516665-StageIVprimary",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325971_STAR/SRR8325971_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325972_STAR/SRR8325972_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325973_STAR/SRR8325973_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325974_STAR/SRR8325974_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325975_STAR/SRR8325975_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325976_STAR/SRR8325976_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325977_STAR/SRR8325977_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325978_STAR/SRR8325978_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516668-MetBrain",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325995_STAR/SRR8325995_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325996_STAR/SRR8325996_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325997_STAR/SRR8325997_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325998_STAR/SRR8325998_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325999_STAR/SRR8325999_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326000_STAR/SRR8326000_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326001_STAR/SRR8326001_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8326002_STAR/SRR8326002_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    },
+    {
+      "dataset_id": "GSM3516664-MetBone",
+      "bam_paths": [
+        "/mnt/ssd2/Laugney_Aligned/SRR8325963_STAR/SRR8325963_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325964_STAR/SRR8325964_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325965_STAR/SRR8325965_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325966_STAR/SRR8325966_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325967_STAR/SRR8325967_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325968_STAR/SRR8325968_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325969_STAR/SRR8325969_Aligned.sortedByCoord.out.bam",
+        "/mnt/ssd2/Laugney_Aligned/SRR8325970_STAR/SRR8325970_Aligned.sortedByCoord.out.bam"
+      ],
+      "label": null
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "unified/pas_uid.tsv",
+      "stage": "unified",
+      "format": "tsv",
+      "schema_name": "pas_uid",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:99788767e3cef77167c1b1775415341ceff76bf3abf8df70073d2c896271461d"
+    },
+    {
+      "path": "unified/multi_sample_pas_mapping.tsv",
+      "stage": "pas_merge",
+      "format": "tsv",
+      "schema_name": "pas_mapping",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:6f0b2be9cc8d02a1397073027bd658ffc610c498e48137f8b12c34449793a23d"
+    },
+    {
+      "path": "provenance/by_dataset/pas_ledger.tsv",
+      "stage": "provenance",
+      "format": "tsv",
+      "schema_name": "PasLedgerRow",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:64793b365773a48e98fbdf8b2a90bd50005119ac83929abc3be3ea325d3445e3"
+    },
+    {
+      "path": "provenance/by_dataset/cell_ledger.tsv",
+      "stage": "provenance",
+      "format": "tsv",
+      "schema_name": "CellLedgerRow",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:abe810e75f9788cc97db2460ca566703201325c54f4fda75332aa876bd64e90e"
+    },
+    {
+      "path": "provenance/reconcile_summary.json",
+      "stage": "provenance",
+      "format": "json",
+      "schema_name": "reconcile_summary",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:60b00936408b8f4a555a11155f7799d9957b6d1e241a4cdbeaf5d1e80d31c07f"
+    },
+    {
+      "path": "run_config.json",
+      "stage": "run",
+      "format": "json",
+      "schema_name": "run_config",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:fe23b46a4ef07087d66f51f46b9516232f533ba0f4902e60a65b6febc6695988"
+    },
+    {
+      "path": "07_clustering/GSM3516663-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:254c30bd32cebe8e5849a0dd943694e5c0e019d9b030f2dfb744b8b2b2e55868"
+    },
+    {
+      "path": "07_clustering/GSM3516664-MetBone/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:d411c71bf987dbfd0287152ff41817dcc9a765e195323e91dc1a24bd73581813"
+    },
+    {
+      "path": "07_clustering/GSM3516665-StageIVprimary/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:967781926833abb53dfcfffc27aadc3a0f9cdda838a15190844ba0dc0feffcc4"
+    },
+    {
+      "path": "07_clustering/GSM3516667-StageIA/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:063f54ba3d30e20fc263858ea48459790a7f18c33652c2b1ae92f05b0aae5eb1"
+    },
+    {
+      "path": "07_clustering/GSM3516668-MetBrain/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:0c7af8f5c4317172cad5ccad8bb23359db3114b5e2833746284456d1cfe989db"
+    },
+    {
+      "path": "07_clustering/GSM3516675-Normal/clusters.h5ad",
+      "stage": "clustering",
+      "format": "h5ad",
+      "schema_name": "clusters.h5ad",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:5b9ffee2a9ed6bb774730b9cefd71097e4c07f8d9a5a6ee027a19167d6c3c8cb"
+    },
+    {
+      "path": "07_clustering/GSM3516663-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:a547deb85b5a1bb062cc88d72768e66f9b9e7618cd0f99b66bff8d8a5203b299"
+    },
+    {
+      "path": "07_clustering/GSM3516664-MetBone/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:5eddcf04d771040a036990ce0536c3c10bde26ab92d4d25b771dd5a96d79c58c"
+    },
+    {
+      "path": "07_clustering/GSM3516665-StageIVprimary/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:df821e9cc9f185e83b284853f94a06c28cb6938d5841cdde761019d723d43970"
+    },
+    {
+      "path": "07_clustering/GSM3516667-StageIA/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:03a570f3fe8014fcbae63b4710013ddd5ccf37640a20f3f6921e751e7aba5dbd"
+    },
+    {
+      "path": "07_clustering/GSM3516668-MetBrain/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:c7710a964cc18798df91c34e7a4e3072cf98985786315f8fd9d47e3287f4d280"
+    },
+    {
+      "path": "07_clustering/GSM3516675-Normal/stage_stats.json",
+      "stage": "qc",
+      "format": "json",
+      "schema_name": "stage_stats",
+      "schema_version": "0.1.0",
+      "entity_counts": {},
+      "content_hash": "sha256:d6578d64767cfa0aca579f2a5962c4313cab153518fecf400d7bd0241591220f"
+    }
+  ],
+  "resolved_config": {
+    "directories": {
+      "output_dir": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed/runs/grid/lg_annotate",
+      "bam_dir": null,
+      "gtf_dir": "/home/sharedFolder/humanSTARindex/Homo_sapiens.GRCh38.99.gtf",
+      "atlas": "/mnt/ssd2/Laugney_Aligned/refs/polyasite_3.0_GRCh38_ensembl_sorted.bed",
+      "atlas_distance": 50,
+      "datasets": [
+        {
+          "id": "GSM3516675-Normal",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8326051_STAR/SRR8326051_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326052_STAR/SRR8326052_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326053_STAR/SRR8326053_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326054_STAR/SRR8326054_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326055_STAR/SRR8326055_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326056_STAR/SRR8326056_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326057_STAR/SRR8326057_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326058_STAR/SRR8326058_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516663-StageIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325955_STAR/SRR8325955_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325956_STAR/SRR8325956_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325957_STAR/SRR8325957_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325958_STAR/SRR8325958_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325959_STAR/SRR8325959_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325960_STAR/SRR8325960_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325961_STAR/SRR8325961_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325962_STAR/SRR8325962_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516667-StageIA",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325987_STAR/SRR8325987_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325988_STAR/SRR8325988_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325989_STAR/SRR8325989_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325990_STAR/SRR8325990_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325991_STAR/SRR8325991_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325992_STAR/SRR8325992_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325993_STAR/SRR8325993_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325994_STAR/SRR8325994_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516665-StageIVprimary",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325971_STAR/SRR8325971_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325972_STAR/SRR8325972_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325973_STAR/SRR8325973_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325974_STAR/SRR8325974_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325975_STAR/SRR8325975_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325976_STAR/SRR8325976_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325977_STAR/SRR8325977_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325978_STAR/SRR8325978_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516668-MetBrain",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325995_STAR/SRR8325995_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325996_STAR/SRR8325996_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325997_STAR/SRR8325997_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325998_STAR/SRR8325998_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325999_STAR/SRR8325999_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326000_STAR/SRR8326000_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326001_STAR/SRR8326001_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8326002_STAR/SRR8326002_Aligned.sortedByCoord.out.bam"
+          ]
+        },
+        {
+          "id": "GSM3516664-MetBone",
+          "merge_strategy": "before",
+          "bams": [
+            "/mnt/ssd2/Laugney_Aligned/SRR8325963_STAR/SRR8325963_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325964_STAR/SRR8325964_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325965_STAR/SRR8325965_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325966_STAR/SRR8325966_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325967_STAR/SRR8325967_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325968_STAR/SRR8325968_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325969_STAR/SRR8325969_Aligned.sortedByCoord.out.bam",
+            "/mnt/ssd2/Laugney_Aligned/SRR8325970_STAR/SRR8325970_Aligned.sortedByCoord.out.bam"
+          ]
+        }
+      ],
+      "filenames": {}
+    },
+    "variables": {
+      "seqlen": 98,
+      "cb_len": 16,
+      "barcode_tag": "CB",
+      "default_threshold": 5,
+      "merge_len": 100,
+      "min_pas_spacing": -1,
+      "min_pas_prominence": 5.0
+    },
+    "filters": {
+      "min_read": 1500,
+      "min_cells": 3,
+      "min_genes": 50,
+      "min_pas_per_cell": 50
+    },
+    "args": {
+      "config": null,
+      "output": "emaout",
+      "bam_dir": null,
+      "bam_files": null,
+      "gtf": null,
+      "atlas": null,
+      "atlas_distance": 50,
+      "atlas_mode": "annotate",
+      "filenames": null,
+      "seq_len": null,
+      "cb_len": null,
+      "barcode_tag": null,
+      "default_threshold": 5,
+      "merge_len": 100,
+      "ignore_chro": "MT,mt",
+      "threads": null,
+      "bam_threads": 4,
+      "pipeline": false,
+      "batch_size": 10000,
+      "tiles": false,
+      "tile_size": null,
+      "tile_overlap": 10000,
+      "strategy": "lambda_gradient",
+      "lambda_window": 5000,
+      "lambda_method": "median",
+      "lambda_fold_change": 2.0,
+      "max_pas": 5,
+      "smoothing_window": 50,
+      "min_prominence": 5.0,
+      "dynamic_threshold": false,
+      "floor_threshold": 3,
+      "pas_gap": 100,
+      "min_pas_spacing": -1,
+      "min_pas_prominence": 5.0,
+      "ip_filter": true,
+      "genome_fasta": "/home/sharedFolder/humanSTARindex/Homo_sapiens.GRCh38.dna.primary_assembly.fa",
+      "ip_filter_mode": "annotate",
+      "annot_filter": false,
+      "annotation_bed": null,
+      "ip_a_stretch": 6,
+      "ip_a_fraction": 0.7,
+      "ip_window_left": 10,
+      "ip_window_right": 30,
+      "min_pas_per_cell": 50,
+      "min_read": 1500,
+      "min_cells": 3,
+      "max_gene_distance": 5000,
+      "utr_multiplier": 2.0,
+      "include_extended": false,
+      "clustering_method": "leiden_tfidf",
+      "resolution": 1.0,
+      "n_pcs": 40,
+      "external_clusters": null,
+      "random_seed": 42,
+      "cluster_match_method": "marker_overlap",
+      "n_top_markers": 50,
+      "marker_top_n": 200,
+      "marker_method": "wilcoxon",
+      "fdr": 0.05,
+      "per_worker_mb": 300,
+      "isoform_agg": "per_gene",
+      "isoform_collapse": "none",
+      "pdui_pseudocount": 0.0,
+      "log2fc_thresh": 1.0,
+      "min_cells_per_group": 10,
+      "mnn_components": 30,
+      "mnn_k_neighbors": 10,
+      "n_neighbors": 30,
+      "tfidf_scale_factor": 10000.0,
+      "depth_corr_threshold": 0.75,
+      "n_svd_components": 50,
+      "n_top_hvg": 2000,
+      "benchmark": false,
+      "validate_db": null,
+      "log_level": null,
+      "no_log_file": false,
+      "no_progress": false,
+      "verbose": 0,
+      "quiet": false,
+      "datasets": [],
+      "gtf_dir": null,
+      "seqlen": null
+    }
+  },
+  "stratum_to_label": {},
+  "entity_counts": {
+    "n_ip_flagged": 16197,
+    "ip_flag_rate": 0.0772,
+    "n_datasets": 6
+  },
+  "id_grammar": {
+    "pas_uid": "chrom:pos:strand (pos = end-1 on +, start on -)",
+    "cell_uid": "{dataset_id}:{barcode}",
+    "cluster_uid": "{dataset_id}:{leiden}",
+    "canonical_cluster": "shared int across datasets (obs column)",
+    "finding_uid": "{arm}:{celltype}:{gene_id}"
+  }
+}

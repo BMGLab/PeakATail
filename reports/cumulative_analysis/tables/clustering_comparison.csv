@@ -1,0 +1,7 @@
+branch,cluster_method,resolution,n_neighbors,n_datasets,n_cells_total,n_clusters_mean,n_clusters_median
+A2_trim_default,leiden_tfidf,1.0,30,17,55422,14.82,15.0
+A3_res0.5,leiden_tfidf,0.5,30,17,55422,10.53,11.0
+A3_res2.0,leiden_tfidf,2.0,30,17,55422,22.41,23.0
+A3_nn15,leiden_tfidf,1.0,15,17,55422,16.47,17.0
+A3_nn50,leiden_tfidf,1.0,50,17,55422,13.82,14.0
+A3_libsize,leiden_libsize,1.0,30,17,55422,16.82,17.0

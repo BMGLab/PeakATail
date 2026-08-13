@@ -1,0 +1,2 @@
+test,shortening_oncogene,shortening_TSG,lengthening_oncogene,lengthening_TSG,odds_ratio,p_value
+oncogene_vs_TSG_by_direction,236,205,27,21,0.8953929539295393,0.762051631431669

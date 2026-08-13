@@ -1,0 +1,9 @@
+branch,max_gene_distance,utr_multiplier,include_extended,n_pas,n_datasets,n_cells_total,n_clusters_mean,n_clusters_median
+A2_trim_d1000_ext,1000,2.0,True,17758,17,55647,14.88,15.0
+A2_trim_d2000_ext,2000,2.0,True,17829,17,55662,14.82,15.0
+A2_trim_d3000_ext,3000,2.0,True,17915,17,55676,14.82,15.0
+A2_trim_mult1.5,5000,1.5,False,16454,17,55411,14.94,16.0
+A2_trim_d5000_ext,5000,2.0,True,18097,17,55697,15.06,16.0
+A2_trim_default,5000,2.0,False,16500,17,55422,14.82,15.0
+A2_trim_mult3.0,5000,3.0,False,16575,17,55440,14.82,15.0
+A2_trim_d10000_ext,10000,2.0,True,18512,17,55734,14.88,15.0

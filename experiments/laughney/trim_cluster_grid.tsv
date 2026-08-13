@@ -1,0 +1,14 @@
+branch_name	max_gene_distance	utr_multiplier	include_extended	cluster_method	resolution	n_neighbors
+A2_trim_d1000_ext	1000	2.0	true	leiden_tfidf	1.0	30
+A2_trim_d2000_ext	2000	2.0	true	leiden_tfidf	1.0	30
+A2_trim_d3000_ext	3000	2.0	true	leiden_tfidf	1.0	30
+A2_trim_d5000_ext	5000	2.0	true	leiden_tfidf	1.0	30
+A2_trim_d10000_ext	10000	2.0	true	leiden_tfidf	1.0	30
+A2_trim_default	5000	2.0	false	leiden_tfidf	1.0	30
+A2_trim_mult1.5	5000	1.5	false	leiden_tfidf	1.0	30
+A2_trim_mult3.0	5000	3.0	false	leiden_tfidf	1.0	30
+A3_res0.5	5000	2.0	false	leiden_tfidf	0.5	30
+A3_res2.0	5000	2.0	false	leiden_tfidf	2.0	30
+A3_nn15	5000	2.0	false	leiden_tfidf	1.0	15
+A3_nn50	5000	2.0	false	leiden_tfidf	1.0	50
+A3_libsize	5000	2.0	false	leiden_libsize	1.0	30

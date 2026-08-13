@@ -1,0 +1,4 @@
+rank,run,peak_strategy,atlas_mode,ip_mode,n_pas,n_reference,atlas_match_rate,n_atlas_matched,n_pas_dropped_vs_off,pct_flagged_internal_priming
+2,lg_annotate,lambda_gradient,annotate,annotate,22633,18432135,0.8199,171968,0,0.0
+4,lg_ip_filter,lambda_gradient,annotate,filter,20609,18432135,0.8199,171968,2024,8.94
+3,lg_ip_off,lambda_gradient,annotate,off,22633,18432135,0.8199,171968,0,0.0
