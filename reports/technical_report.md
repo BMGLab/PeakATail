@@ -1141,8 +1141,12 @@ than silently corrected:
    `ip_filter`. The matrix therefore derives `ip_mode_effective`. This also
    explains the Jaccard = 1.000 between `lg_annotate` and `lg_ip_off` reported in
    §6.3: in `annotate` mode the filter only *labels* peaks and removes none, so
-   turning it off entirely produces byte-identical output. The nominally
-   three-level ip axis is really two-level — `filter` versus everything else.
+   turning it off entirely produces byte-identical output. Comparing the two
+   resolved configs directly, they differ in exactly two fields — `ip_filter`
+   (True/False) and `genome_fasta` (path/None) — so `lg_ip_off` genuinely loaded
+   no genome and ran no scan, and *still* returned the same 22,633 peaks. The
+   nominally three-level ip axis is really two-level: `filter` versus everything
+   else.
 
 2. **The re-annotation branches' manifests describe their base run.** `A2_*` and
    `A3_*` re-annotate an existing run, and their `run_manifest.json` carries the

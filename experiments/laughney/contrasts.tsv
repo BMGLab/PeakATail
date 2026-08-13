@@ -1,0 +1,7 @@
+contrast_name	groupA	groupB	note
+Normal_vs_StageI	Normal	StageI	well-powered early tumorigenic APA shift
+StageI_vs_Met	StageI	Met	well-powered progression-associated APA
+Normal_vs_Met	Normal	Met	well-powered normal-to-metastasis axis
+Normal_vs_Tumor	Normal	StageI|IVprimary|Met	pooled tumour vs normal max power
+Primary_vs_Met	StageI|IVprimary	Met	primary vs metastatic dissemination APA
+StageI_vs_IVprimary	StageI	IVprimary	EXPLORATORY IVprimary n=1

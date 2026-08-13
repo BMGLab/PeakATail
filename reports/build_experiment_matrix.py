@@ -137,6 +137,18 @@ def main(argv: list[str] | None = None) -> int:
     # branch as identical. For those runs the grid TSV is authoritative, so the
     # varied columns are overwritten from it and `param_source` records the swap.
     tc = grids.get("trim_cluster_grid")
+    n_reannot = int(df["run"].str.startswith("reannotate_").sum())
+    if tc is None and n_reannot:
+        # Without the grid the varied axis is unrecoverable, and the manifests
+        # would make every branch look identical. Fail loudly rather than emit a
+        # matrix that is quietly wrong.
+        raise SystemExit(
+            f"ERROR: {n_reannot} re-annotation branches present but "
+            f"trim_cluster_grid.tsv was not found under {args.grids}.\n"
+            "Their manifests carry the base run's args, so the varied trim and "
+            "clustering parameters cannot be recovered without the grid. "
+            "Point --grids at the directory holding it."
+        )
     if tc is not None:
         tc = tc.set_index("branch_name")
         varied = ["max_gene_distance", "utr_multiplier", "include_extended",

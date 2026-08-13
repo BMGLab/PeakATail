@@ -1,0 +1,6 @@
+run_name	peak_strategy	atlas_mode	ip_mode	note
+lg_annotate	lambda_gradient	annotate	annotate	baseline: keep-all atlas + fasta (same policy as the Phase-1 headline, subset)
+lp_annotate	lambda_poisson	annotate	annotate	strategy axis: Poisson-lambda peak calling
+si_annotate	sierra_iterative	annotate	annotate	strategy axis: Sierra-style iterative peak calling
+lg_ip_filter	lambda_gradient	annotate	filter	FASTA-FILTER experiment: DROP internal-priming PAS, do NOT carry them into clustering/switch
+lg_ip_off	lambda_gradient	annotate	off	fasta axis: no internal-priming step at all — compare vs lg_annotate / lg_ip_filter
