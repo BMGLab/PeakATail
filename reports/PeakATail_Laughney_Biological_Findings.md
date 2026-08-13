@@ -53,6 +53,28 @@ regulation — private genes actually have *larger* mean |slope| than recurrent 
 (0.0137 vs 0.0104, Mann–Whitney p = 0.029). Note that **MEF2A** appears in the
 recurrent set here and in the original "not in the Cancer Gene Census" list below.
 
+**(4) There is no cancer-gene or pathway enrichment.** Tested against the OncoKB
+list (which carries the COSMIC Cancer Gene Census flag) and the 50 MSigDB Hallmark
+sets, restricted to the 8,441 genes that actually carry a trend call
+(`technical_report.md` §12.6):
+
+| gene set | recurrent | private | crude OR | adjusted for detectability |
+|---|---|---|---|---|
+| COSMIC CGC | 5.54% | 2.86% | 1.99 (p=6.7e−09) | **1.22 (p=0.28)** |
+| OncoKB annotated | 8.36% | 5.42% | 1.59 (p=4.8e−07) | **0.93 (p=0.60)** |
+| OncoKB oncogene | 3.44% | 2.53% | 1.37 (p=0.022) | **0.94 (p=0.78)** |
+| OncoKB TSG | 3.26% | 1.63% | 2.03 (p=5.7e−06) | **1.10 (p=0.68)** |
+
+The crude enrichment is entirely explained by how many cell types could test the
+gene. Hallmark: **0 of 50 sets** at FDR<0.05. And direction carries no
+oncogene/TSG asymmetry — shortening genes split 236 oncogenes to 205 TSGs,
+lengthening 27 to 21 (OR 0.90, p=0.76). **This removes the aggregate justification
+for §1's curated "oncogenes shorten / tumour suppressors lengthen" tables.** The
+individual genes may still be real, but they were selected by inspection from a set
+with no detectable enrichment, so the selection cannot be defended by the aggregate.
+`cumulative_analysis/extra/recurrent_genes_annotated.csv` carries the per-gene CGC
+/ OncoKB / oncogene / TSG flags for anyone re-deriving a candidate list.
+
 **What it would take to revive a biological claim** (in order):
 1. Restrict PDUI to proximal/distal pairs inside the same annotated 3′UTR.
 2. Test per gene only where both compared stages have adequate coverage, with
