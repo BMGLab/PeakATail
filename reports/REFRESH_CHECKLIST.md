@@ -114,8 +114,14 @@ the gene-walk figure 14.
 
 ## 4. Also outstanding
 
-- **Filter-effect §19** — awaiting Phase-3; skeleton and reserved figure slots
-  20–23 are in place.
+- **Filter-effect §19 clustering** — **DONE and final** (computed without
+  `fisher`/`proportion`, figure 20). The differential and length rows still
+  await the corrected engines; slots 21–23 stay reserved.
+- **Feature-count-matched control for the 3'UTR filter** — **not run**. Removing
+  73% of features and 10.75% of cells degrades clustering mechanically; a
+  random-73% mask re-clustered would separate "non-3'UTR PAS carry signal" from
+  "fewer features cluster worse". Cheap (`ema reannotate` with a shuffled mask)
+  and it is what would make §19 conclusive rather than suggestive.
 - **Trim-axis PAS yields** — withdrawn pending a serial re-run (§2.4).
 - One clean final build covering all of the above at once; do not rebuild
   piecemeal.

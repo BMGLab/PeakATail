@@ -3329,90 +3329,150 @@ filter-threshold sensitivity analysis. Sensitivity to \texttt{max\_gene\_distanc
 and \texttt{utr\_multiplier} \emph{is} covered by the \texttt{A2\_*} branches.
 
 % -----------------------------------------------------------------------------
-\section{Filter-Effect Comparison --- Pending}
+\section{Filter-Effect Comparison}
 \label{sec:filter_effect}
 % -----------------------------------------------------------------------------
 
 \begin{quote}
-\textbf{Status: experiment running; this section is a placeholder and contains no
-results.} Nothing here may be cited until it is filled in.
+\textbf{Status: the clustering result below is complete and final.} It is
+computed without \texttt{fisher} or \texttt{proportion}, so it is unaffected by
+the two engine fixes in flight (Section~\ref{sec:switch_atlas}). The
+differential and length rows of Table~\ref{tab:filter_effect_skeleton} are
+\textbf{still pending} and are marked as such.
 \end{quote}
 
-A separate run is executing the \textbf{full pipeline} (peak calling
-$\rightarrow$ clustering $\rightarrow$ GEX cell-typing $\rightarrow$ switch
-\texttt{diff} + \texttt{length} + \texttt{trend}) on the 6-GSM subset under four
-filtering scenarios --- baseline (label only), atlas-filter, annot-filter (GTF
-3\textquotesingle{}UTR), and ip-filter --- to measure how each filter propagates
-to the biological readout rather than only to peak counts. It will report, per
-scenario: PAS retained and cluster structure (n clusters, ARI/AMI against GEX
-labels); differential-APA hit counts by stage contrast; and the
-shortening/lengthening split with its slope distribution.
+Each scenario re-runs clustering and GEX cell-typing off \emph{identical} saved
+peak-calls on the 6-GSM subset, flipping exactly one PAS filter. Critically,
+every scenario keeps all \textbf{400,253} PAS in its results --- the filter only
+changes which PAS are used \emph{as clustering features}. So this measures the
+cost of a filter, not of a smaller catalogue.
 
 \textbf{Why this matters.} Section~\ref{sec:validation} showed that F1 against a
 saturated reference \emph{penalises} a filter that removes false positives, so
 filters cannot be evaluated on atlas agreement. Whether a filter changes the
-biology is the question that remains --- and Section~\ref{fig:lost_distal} gives a
+biology is the question that remains --- and Figure~\ref{fig:lost_distal} gives a
 concrete reason to expect the annot-filter to matter most: 80\% of the
 proximal/distal PAS pairs driving PDUI span more than 3\,kb, which restricting to
 the annotated 3\textquotesingle{}UTR would directly address.
 
-Three predictions are recorded \textbf{in advance} so the result reads as a test:
-clustering should be robust (trim grid moved it by only 0.24); differential hit
-counts should fall roughly in proportion to PAS removed, if they index power
-rather than effect; and the shortening/lengthening split should move most under
-annot-filter, toward the depth-conditioned result of no consistent direction. If
-the split is instead unchanged across all four scenarios, that strengthens the
-conclusion that direction is set by coverage, not by which PAS are included.
+\subsection{Result}
 
-\subsection*{The question this experiment answers}
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/20_filter_effect_clustering.png}
+  \caption{What each filter removes, and what it costs: PAS excluded from
+    clustering, agreement with the baseline clustering, agreement with
+    independent GEX cell types, and the cost to cells --- both those reassigned
+    to a different cluster and those dropped from the analysis entirely.}
+  \label{fig:filter_effect_clustering}
+\end{figure}
 
-The framing that matters is \textbf{not} ``how many PAS did the filter drop'' but
-\textbf{``did dropping them change a conclusion''}. A filter that removes 40\% of
-PAS while moving cell-type agreement by 0.01 and flipping no trend signs is
-cosmetically large and scientifically cheap; a filter that flips trend signs
-retroactively invalidates every atlas-snapped result in the project's history.
-Section~\ref{sec:q_atlas} has already established that the filters cannot be
-judged on atlas agreement, so the downstream readout is the only available test.
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{lrrrrrrr}
+    \toprule
+    scenario & \% PAS & clusters & ARI vs & AMI vs & \% cells & \% cells & ARI vs \\
+             & excl.\ & (mean)   & base   & base   & reassign & lost     & GEX \\
+    \midrule
+    \texttt{baseline}          &  0.0 & 14.17 & ---    & ---    & ---   & ---   & 0.423 \\
+    \texttt{atlas\_filter}     &  8.7 & 13.67 & 0.834 & 0.878 &  8.44 &  0.31 & 0.423 \\
+    \texttt{annot\_filter\_3utr} & \textbf{73.1} & \textbf{11.67} & \textbf{0.628} & \textbf{0.710} & \textbf{18.02} & \textbf{10.75} & \textbf{0.384} \\
+    \texttt{ip\_filter}        &  8.3 & 13.50 & 0.842 & 0.878 &  6.88 &  0.31 & 0.414 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Filter effect on clustering, 6-GSM subset, mean over datasets.
+    Baseline AMI vs GEX is 0.610; atlas 0.608, 3\textquotesingle{}UTR 0.577, ip
+    0.609. Cell-type calls are GEX-derived and therefore independent of the PAS
+    filter --- they stay at 11.3--11.5 types in every scenario, which is the
+    sanity check that the pipeline did what was intended.}
+  \label{tab:filter_effect_result}
+\end{table}
 
-\subsection*{Analysis skeleton (drops in when the run completes)}
+\textbf{Headline: requiring a PAS to sit literally inside an annotated
+3\textquotesingle{}UTR excludes 73\% of called PAS, and it is the only filter
+that materially degrades the analysis.} Agreement with the baseline clustering
+falls to ARI 0.628, agreement with independent GEX cell types falls from 0.423 to
+0.384, 18\% of cells change cluster, and the partition coarsens from 14.2 to 11.7
+clusters. The atlas-nonmatch and internal-priming filters remove $\approx$8\%
+each and cost almost nothing: ARI 0.83--0.84 against baseline, GEX concordance
+unchanged to three decimals for atlas.
 
-The analysis is implemented and wired --- \texttt{cross\_experiment.filter\_effect\_deltas()}
-emits all five tables below against the \texttt{baseline} scenario --- so this
-section is populated by re-running the generator, with no new code. Every row is
-a difference from \texttt{baseline}, which by construction keeps every PAS.
+\textbf{A cost that only appears when you look at cells.} The
+3\textquotesingle{}UTR filter does not merely move cells between clusters --- it
+\textbf{drops 2,251 of 20,933 cells (10.75\%) out of the analysis entirely},
+because they fall below the minimum-PAS-per-cell threshold once 73\% of features
+are gone. The other two filters lose 65 cells (0.31\%). A cell that is never
+clustered contributes to no downstream result, so for many purposes this is the
+more consequential number than the ARI drop, and it is invisible in any
+PAS-level summary.
+
+\subsection{Scoring the advance predictions}
+
+Three predictions were recorded before the run. The first can now be scored.
+
+\begin{enumerate}[nosep]
+  \item \emph{"Clustering should be robust (the trim grid moved it by only
+    0.24)."} \textbf{Half wrong, and the wrong half is the interesting one.}
+    Robust for atlas and internal-priming; \textbf{not} robust for the
+    3\textquotesingle{}UTR filter, which moved cell-type agreement by 0.039 ARI
+    --- five times the entire \texttt{max\_gene\_distance} range
+    (Section~\ref{sec:q_trim}) and comparable to the resolution knob. The
+    intuition that "clustering is insensitive to PAS-set changes" came from
+    filters that remove $\approx$8\%; it does not extend to one that removes 73\%.
+  \item \emph{"Differential hit counts should fall roughly in proportion to PAS
+    removed."} \textbf{Pending} the corrected differential engine.
+  \item \emph{"The shortening/lengthening split should move most under
+    annot-filter."} \textbf{Pending} the corrected length engine.
+\end{enumerate}
+
+\subsection{Interpretation, and the control it still needs}
+
+Most called PAS are \emph{not} inside annotated 3\textquotesingle{}UTRs --- 73\%
+sit in introns, 5\textquotesingle{} regions, extended windows or intergenic
+space --- and the clustering result says a meaningful share of them carry
+cell-identity signal. That is a direct argument against pipelines that restrict
+APA analysis to annotated 3\textquotesingle{}UTRs by default: the restriction is
+not conservative, it discards signal.
+
+\begin{quote}
+\textbf{The control that would make this airtight has not been run.} Removing
+73\% of features and 10.75\% of cells will degrade any clustering somewhat, for
+purely mechanical reasons. To separate \emph{"non-3\textquotesingle{}UTR PAS are
+especially informative"} from \emph{"fewer features cluster worse"}, the
+scenario needs a \textbf{feature-count-matched control}: drop a random 73\% of
+PAS (several draws) and re-cluster. If random removal costs as much, the result
+is about feature count; if it costs less, non-3\textquotesingle{}UTR PAS are
+carrying disproportionate signal. This is cheap --- it is \texttt{ema reannotate}
+with a shuffled mask --- and it is the single thing that would turn this section
+from suggestive into conclusive. Until then, the defensible claim is the
+\emph{operational} one: applying a 3\textquotesingle{}UTR filter changes the
+clustering and loses a tenth of the cells, so it must not be applied silently.
+\end{quote}
+
+\subsection{Still pending}
 
 \begin{table}[htbp]
   \centering
   \small
   \begin{tabularx}{\textwidth}{lXl}
     \toprule
-    \textbf{Pipeline step} & \textbf{Metric reported per scenario} & \textbf{Source table} \\
+    \textbf{Pipeline step} & \textbf{Metric reported per scenario} & \textbf{Status} \\
     \midrule
-    PAS catalogue & PAS kept, $\Delta$ vs baseline, fraction retained &
-      \texttt{filter\_effect\_pas.tsv} \\
-    Feature space & PAS kept in results vs PAS used for clustering &
-      \texttt{filter\_effect\_pas.tsv} \\
-    Clustering & $n$ clusters, ARI/AMI vs baseline clustering &
-      \texttt{filter\_effect\_clustering.tsv} \\
-    Cell typing & \textbf{\% of cells whose cell-type call changes} &
-      \texttt{filter\_effect\_celltype\_shift.tsv} \\
-    Differential APA & significant PAS/genes; hit-set overlap with baseline &
-      \texttt{filter\_effect\_fisher.tsv} \\
-    3\textquotesingle{}UTR trend & per-cell-type slope; \textbf{sign flips} vs baseline &
-      \texttt{filter\_effect\_trend.tsv} \\
+    PAS catalogue & PAS kept, excluded, fraction retained & \textbf{done} \\
+    Feature space & kept-in-results vs used-for-clustering & \textbf{done} \\
+    Clustering & $n$ clusters, ARI/AMI vs baseline & \textbf{done} \\
+    Cell typing & \% of cells reassigned; \% dropped entirely & \textbf{done} \\
+    Differential APA & significant PAS/genes; hit-set overlap with baseline & pending engine \\
+    3\textquotesingle{}UTR trend & per-cell-type slope; sign flips vs baseline & pending engine \\
+    \midrule
+    Feature-count-matched control & random-73\% mask, re-cluster & \textbf{not run} \\
     \bottomrule
   \end{tabularx}
-  \caption{The blast radius of one filter, one row per downstream step. Figure
-    slots 20--23 are reserved for the corresponding panels.}
+  \caption{Figure slots 21--23 remain reserved for the differential, length and
+    per-scenario UMAP/Sankey panels.}
   \label{tab:filter_effect_skeleton}
 \end{table}
-
-\textbf{Status at the time of writing.} The scenario directories present on disk
-are from an aborted earlier launch (restricted to a single GSM rather than the
-intended 6-GSM subset) and have been set aside as
-\texttt{\_stale\_*}; no \texttt{B2\_gex\_celltyping} or \texttt{B3\_switch}
-outputs exist for any scenario. \textbf{Nothing in this section may be cited
-until all four scenarios complete on the 6-GSM subset.}
 
 \appendix
 \section{Figure Index}
@@ -3426,8 +3486,8 @@ All figures below are in \texttt{figures/corrected/}, as both \texttt{.png}
 \texttt{generate\_cross\_experiment\_figures.py}. All read on-disk tables from
 the real \texttt{RERUN\_2026-08\_fixed} sweep --- no value is hardcoded, and a
 figure whose input table is missing is skipped rather than drawn from stale
-data. \textbf{Slots 20--23 are reserved} for the pending filter-effect panels
-(Section~\ref{sec:filter_effect}).
+data. \textbf{Slots 21--23 remain reserved} for the pending filter-effect differential,
+length and UMAP/Sankey panels (Section~\ref{sec:filter_effect}).
 
 Schematics that remain valid from the pre-correction set
 (\texttt{fig\_pipeline\_flow}, \texttt{fig\_strategy\_explained},
@@ -3458,6 +3518,7 @@ Schematics that remain valid from the pre-correction set
   17 & PAS cluster $\rightarrow$ cell-type Sankey, per variant & \texttt{17\_sankey\_clustering\_grid} \\
   18 & PAS cluster $\rightarrow$ cell-type Sankey, per strategy & \texttt{18\_sankey\_peak\_strategies} \\
   19 & Cluster count and size distribution across experiments & \texttt{19\_cluster\_sizes} \\
+  20 & Filter effect on clustering, cells and GEX concordance & \texttt{20\_filter\_effect\_clustering} \\
   24 & Atlas precision against shifted and uniform nulls & \texttt{24\_atlas\_null\_control} \\
   25 & Excess precision over null, per arm and cutoff & \texttt{25\_atlas\_excess\_over\_null} \\
   26 & PAS-set Jaccard between peak strategies & \texttt{26\_pas\_set\_jaccard} \\
