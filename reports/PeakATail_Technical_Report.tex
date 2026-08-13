@@ -1068,46 +1068,58 @@ expected behaviour, not a bug.
 
 \textbf{Implementation}: \texttt{ema/switch\_test/strategies/nb\_multi.py :: NbMultiStrategy}.
 
-\subsection{Strategy Comparison on the v9 Run}
+\subsection{Strategy Comparison on the Corrected Cohort}
 
-Comparison on cluster 0 vs 1 (pair chosen because it has the largest cell counts:
-213 cells in C0, 183 in C1):
+Both strategies run across all 24 cell types: \texttt{fisher} over the 6 stage
+contrasts (90 cell-type $\times$ contrast tests), \texttt{nb\_multi} as one
+omnibus per cell type. \textbf{\texttt{nb\_pairwise} was not run in this sweep},
+so the three-way comparison of the superseded Figure~17 cannot be reproduced.
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=\textwidth]{figures/switch_strategy_real_data.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} This figure shows output \emph{format} from the superseded v9 run; its values predate the cell-doubling and atlas-snap fixes and must not be cited. (A) Significant PAS at $q{<}0.05$ per strategy. Fisher flags $\sim$9,200
-    PAS --- 10$\times$ more than NB pairwise (451), reflecting its anti-conservative
-    character. NB multi's 19,832 reflects the omnibus nature (tested against all 12
-    clusters). (B) Jaccard similarity between Fisher and NB-pairwise significant sets
-    = 0.027 --- very low concordance, confirming that Fisher is capturing many false
-    positives absent in the NB GLM. (C) Score distribution: NB pairwise q-values are
-    concentrated near 1.0 (most PAS not significant), while Fisher spreads across the
-    entire range.}
-  \label{fig:switch_strategy_real_data}
+  \includegraphics[width=\textwidth]{figures/corrected/12_diff_strategy.png}
+  \caption{(a) significance rate per strategy; (b) hits against tests, with the
+    diagonal marking ``every test significant''; (c) agreement between the two
+    strategies.}
+  \label{fig:diff_strategy}
 \end{figure}
 
 \begin{table}[htbp]
-  \centering
-  \caption{Strategy comparison on v9 run, cluster 0 vs 1.}
-  \label{tab:switch_strategy_comparison}
-  \resizebox{\textwidth}{!}{%
-  \begin{tabular}{lrrrrr}
+  \centering \small
+  \begin{tabular}{lrrrr}
     \toprule
-    \textbf{Strategy} & \textbf{n\_tested} & \textbf{n\_sig ($q{<}0.05$)} &
-    \textbf{n\_sig\_strong} & \textbf{Jaccard vs NB-pair} & \textbf{Runtime (s)} \\
+    strategy & tests & PAS tested & PAS significant & rate \\
     \midrule
-    fisher      & 17,093 & 9,197  & 8,176  & 0.027 & 7   \\
-    nb\_pairwise & 1,289  & 451    & 402    & 1.0   & 3   \\
-    nb\_multi    & 20,274 & 19,832 & 19,832 (omnibus) & ---   & 227 \\
+    \texttt{fisher}   & 90 (celltype $\times$ contrast) & 1,233,328 & 541,133 & \textbf{42.9\%} \\
+    \texttt{nb\_multi} & 24 (celltype omnibus)          & 7,965     & 7,946   & \textbf{99.8\%} \\
     \bottomrule
-  \end{tabular}}
+  \end{tabular}
+  \caption{Differential-APA strategies on the corrected cohort.}
+  \label{tab:diff_strategy}
 \end{table}
 
-\noindent\textit{NB pairwise tests only 1,289 PAS because the
-\texttt{min\_cells\_per\_group=10} filter on non-zero cells is applied per PAS per
-cluster (cell-level non-zero counts, not total cell count). Fisher tests 17,093
-because it uses aggregated counts and only requires $\geq 10$ total cells per cluster.}
+\textbf{Neither rate is credible, and they fail in different ways.}
+\texttt{nb\_multi} calls essentially everything significant --- 99.8\% overall and
+between 84.2\% and 100\% in every cell type, its points lying \emph{on} the
+all-significant diagonal. An omnibus across four stages on hundreds of cells will
+reject the null for any PAS with non-uniform usage, which is nearly all of them:
+the test answers ``does this PAS vary at all'', not ``does it vary with stage''.
+It is a variability screen, not a differential test. \texttt{fisher} calls 42.9\%,
+for the pseudoreplication reason given later --- its contingency table is built
+over reads, so effective $n$ is depth.
+
+\textbf{They corroborate each other on about a quarter.} Only 24\% (median; mean
+27.7\%) of \texttt{nb\_multi}'s significant PAS are also called by
+\texttt{fisher}. Note the statistic: fisher calls $\sim$11,000 PAS per cell type
+against nb\_multi's $\sim$331, a 33$\times$ size gap that pins Jaccard near zero
+(median 0.008) for arithmetic reasons rather than genuine disagreement.
+Containment is the statistic that answers the question; both are plotted so the
+difference is visible. Three quarters of the strictest strategy's hits are not
+reproduced by the more permissive one --- the opposite of what nesting would
+predict if both detected the same signal, and the strongest available evidence
+that at least one is dominated by false positives.
+
+The superseded v9 numbers are withdrawn.
 
 \subsection{When to Use Which}
 

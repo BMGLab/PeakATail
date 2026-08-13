@@ -753,18 +753,34 @@ def fig_diff_strategy() -> None:
     ax.legend(fontsize=7)
     ax.set_title("b  Hits scale with tests, not with effect")
 
-    # c) agreement between the two strategies
+    # c) agreement between the two strategies.
+    # Jaccard is reported but not led with: fisher calls ~11,000 PAS significant
+    # per cell type against nb_multi's ~331, a 33x size gap that pins Jaccard near
+    # zero for arithmetic reasons rather than disagreement. Containment -- what
+    # share of the smaller set the larger one corroborates -- is the statistic
+    # that actually answers "do they agree".
     ax = axes[2]
     if ov is not None and len(ov):
-        ax.hist(ov["jaccard"], bins=20, color="#8172B3", edgecolor="white")
-        med = ov["jaccard"].median()
-        ax.axvline(med, color="crimson", ls="--", lw=1.5, label=f"median {med:.3f}")
-        ax.set_xlabel("Jaccard(fisher significant, nb_multi significant)")
-        ax.set_ylabel("cell types")
-        ax.legend(fontsize=7)
-        ax.set_title("c  The two strategies barely agree")
+        ov = ov.copy()
+        ov["frac_nb_in_fisher"] = ov["n_both"] / ov["n_nbmulti_sig"].replace(0, np.nan)
+        bp = ax.boxplot([ov["frac_nb_in_fisher"].dropna(), ov["jaccard"]],
+                        tick_labels=["nb_multi hits\nalso called by fisher",
+                                     "Jaccard\n(size-confounded)"],
+                        showmeans=True, patch_artist=True)
+        for patch, c in zip(bp["boxes"], ["#8172B3", "#CCCCCC"]):
+            patch.set_facecolor(c); patch.set_alpha(0.6)
+        for j, col in enumerate(["frac_nb_in_fisher", "jaccard"], start=1):
+            v = ov[col].dropna()
+            ax.scatter(np.random.default_rng(2).normal(j, 0.05, len(v)), v,
+                       s=14, color="k", alpha=0.5, zorder=3)
+        med = ov["frac_nb_in_fisher"].median()
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("overlap fraction")
+        ax.tick_params(axis="x", labelsize=7)
+        ax.set_title(f"c  Only {med:.0%} of nb_multi hits are corroborated")
     fig.suptitle(
-        "Differential-APA strategies on the corrected cohort — fisher vs nb_multi "
+        "Differential-APA strategies on the corrected cohort — fisher calls 42.9% of PAS significant, "
+        "nb_multi 99.8%, and they corroborate each other on a quarter "
         "(nb_pairwise was not run in this sweep)", fontsize=9)
     save(fig, "12_diff_strategy")
 
