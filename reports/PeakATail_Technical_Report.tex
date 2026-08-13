@@ -680,6 +680,358 @@ the section cited.
 \end{table}
 
 % ─────────────────────────────────────────────────────────────────────────────
+\section{Per-Cell-Type Switch Atlas}
+\label{sec:switch_atlas}
+% ─────────────────────────────────────────────────────────────────────────────
+
+Section~\ref{sec:q_fisher} established that the differential layer's \emph{hit
+counts} cannot be read as biology. This section goes one level down, per cell
+type, and asks the questions a biologist actually wants answered: what do
+\emph{both} differential strategies say, what does the distribution of switch
+effects look like, which genes are the strongest and most recurrent switches,
+what do \emph{both} length metrics do across stages, and what pathways do the
+switch-gene sets belong to.
+
+The answers are largely diagnostic rather than biological, and that is the
+finding: each view independently locates the same defect. All numbers are from
+the corrected 17-GSM cohort, 24 cell types, 90 (cell type $\times$ contrast)
+tests. Length uses \texttt{classic} and \texttt{shannon}; \texttt{proportion} is
+excluded because it is 98.2\% uniform padding (Section~\ref{sec:length}), and a
+slot is held for it once the corrected engine data lands.
+
+% -----------------------------------------------------------------------------
+\subsection{Both differential strategies, side by side}
+\label{sec:atlas_diff_strategies}
+
+The sweep ran two differential strategies. Reporting only \texttt{fisher} has
+made it look like a choice; it is not, because the two do not measure the same
+thing and their outputs barely intersect.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/37_diff_strategies_by_celltype.png}
+  \caption{Per cell type, \texttt{Normal} vs \texttt{StageI}: significance rate
+    for each strategy (left; the pale inner bar is \texttt{fisher} restricted to
+    $|\Delta p| \geq 0.30$), how many PAS each strategy tests at all (centre,
+    log scale), and the Jaccard overlap of their significant sets (right).}
+  \label{fig:diff_strategies_celltype}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{lrrr}
+    \toprule
+    & \texttt{fisher} & \texttt{fisher} $+|\Delta p|\geq0.30$ & \texttt{nb\_multi} \\
+    \midrule
+    PAS tested (mean per contrast) & 13,704 & 13,704 & 436 \\
+    \dots\ as a share of \texttt{fisher} & 100\% & 100\% & \textbf{3.2\%} \\
+    Mean significance rate & 0.429 & 0.238 & \textbf{0.997} \\
+    \midrule
+    Jaccard of significant sets & \multicolumn{3}{c}{\textbf{0.011}} \\
+    Share of \texttt{nb\_multi} hits also \texttt{fisher}-significant & \multicolumn{3}{c}{0.169} \\
+    \dots\ expected if independent & \multicolumn{3}{c}{0.429} \\
+    \bottomrule
+  \end{tabular}
+  \caption{The two differential strategies over 90 (cell type $\times$ contrast)
+    tests.}
+  \label{tab:diff_strategies_atlas}
+\end{table}
+
+\textbf{Verdict: neither strategy is usable as a differential test, and they
+fail in opposite directions.}
+
+\texttt{nb\_multi} is degenerate. It tests only \textbf{3.2\%} of the PAS
+\texttt{fisher} tests, and calls \textbf{99.7\%} of that subset significant ---
+in most cell types, exactly 100\%. A test that rejects the null for every
+feature it examines is a coverage filter with a $p$-value attached, not an
+omnibus test. This reproduces, per cell type, the 99.8\% aggregate figure in
+Section~\ref{sec:switch_test}.
+
+\texttt{fisher} is pseudoreplicated (Section~\ref{sec:q_fisher}). Adding an
+effect-size floor of $|\Delta p| \geq 0.30$ roughly halves the rate, from 0.429
+to 0.238 --- an improvement, but 24\% of all tested PAS passing both a
+significance and a large-effect filter is still not a credible hit rate.
+
+The two disagree \emph{more than chance would produce}. Of \texttt{nb\_multi}'s
+significant PAS, \textbf{16.9\%} are also \texttt{fisher}-significant; if the
+two were independent, \texttt{fisher}'s own 42.9\% rate would put that at
+\textbf{42.9\%}. The observed agreement is \textbf{0.39$\times$} chance. Two
+tests that were both detecting real differential usage would overlap
+\emph{more} than chance, not less. Anti-correlation of this kind is what you get
+when each test is responding to a different artefact --- \texttt{fisher} to
+read-depth pseudoreplication, \texttt{nb\_multi} to per-PAS dispersion.
+
+\textbf{Consequence.} \texttt{nb\_pairwise} --- the one strategy with cells as
+the replication unit --- \textbf{was not run}, and it is the only member of the
+family that could give a defensible hit list. Running it is the single highest-value
+addition to the next sweep.
+
+% -----------------------------------------------------------------------------
+\subsection{The distribution of switch effects}
+\label{sec:atlas_volcano}
+
+Counts hide shape. Plotting every tested PAS per cell type shows where the
+"significant" calls actually sit.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/38_volcano_by_celltype.png}
+  \caption{Per-cell-type volcanoes for \texttt{Normal} vs \texttt{StageI}, the
+    twelve best-powered cell types. Dashed line $q = 0.05$; dotted lines
+    $|\Delta p| = 0.30$. Blue marks significant-and-large calls, thinned to the
+    same sampling rate as the grey background so the rendered density is
+    faithful to the underlying distribution.}
+  \label{fig:volcano_celltype}
+\end{figure}
+
+Three features are visible in every panel and none of them is what a healthy
+volcano looks like.
+
+\begin{enumerate}[nosep]
+  \item \textbf{Significance is not concentrated at large effects.} The
+    significant band runs flat across the whole $\Delta p$ range, including the
+    smallest effects. In a well-calibrated test, $-\log_{10} q$ rises with
+    $|\Delta p|$; here it is nearly independent of it, which is the graphical
+    form of "significance tracks cell count, not effect size".
+  \item \textbf{Effects pile up hard at $\pm 1.0$.} The extremes are not a tail;
+    they are a wall.
+  \item \textbf{The well-powered cell types (TREG, MONOCYTIC, MACROPHAGE\_M2)
+    are the ones with the densest significant clouds}, again matching cell count
+    rather than any biological expectation.
+\end{enumerate}
+
+% -----------------------------------------------------------------------------
+\subsection{The strongest switches, named --- and why they are not switches}
+\label{sec:atlas_top_genes}
+
+Taking the 30 largest-effect significant calls per (cell type, contrast) gives
+41,626 calls over 5,909 distinct genes, with symbols resolved from the
+annotation.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/40_top_switch_genes.png}
+  \caption{The 25 most recurrent large-effect switch genes: how many cell types
+    each is called in (left), and the direction consistency of those calls
+    (right). Red marks genes called in \emph{both} directions across cell types.}
+  \label{fig:top_switch_genes}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{lrrrr}
+    \toprule
+    gene & cell types & calls & contrasts & \% proximal-up \\
+    \midrule
+    \texttt{ABL1}   & 15 & 41 & 5 & 61\% \\
+    \texttt{TAB2}   & 15 & 41 & 6 & 54\% \\
+    \texttt{AC107871.1} & 15 & 32 & 6 & 75\% \\
+    \texttt{AC073610.2} & 14 & 25 & 6 & 72\% \\
+    \texttt{EIPR1}  & 14 & 23 & 4 & 100\% \\
+    \texttt{GBE1}   & 14 & 23 & 5 & 87\% \\
+    \texttt{HPCAL1} & 13 & 35 & 5 & 71\% \\
+    \texttt{ECD}    & 13 & 28 & 4 & 75\% \\
+    \texttt{ME1}    & 13 & 28 & 5 & 50\% \\
+    \texttt{PIAS1}  & 13 & 28 & 5 & 82\% \\
+    \bottomrule
+  \end{tabular}
+  \caption{Most recurrent large-effect switch genes. \texttt{ME1} and
+    \texttt{TAB2} are called proximal-up in half their cell types and distal-up
+    in the other half.}
+  \label{tab:top_switch_genes}
+\end{table}
+
+\textbf{The decisive statistic is not in the table.} Across all 41,626
+largest-effect calls, $|\Delta p|$ has mean \textbf{1.0000}, standard deviation
+\textbf{0.0002}, and minimum \textbf{0.9735}: \textbf{every single one is an
+all-or-nothing call}, a PAS used essentially 100\% in one stage and 0\% in the
+other.
+
+That is not what a biological APA switch looks like. Genuine alternative
+polyadenylation shifts the \emph{balance} between sites; a gene whose entire
+read mass moves from one PAS to another between stages, in thousands of genes at
+once, is the signature of \textbf{a PAS observed in one stage and not the other}
+--- i.e.\ of sparsity, under the 95--99\% dropout documented in
+Section~\ref{sec:q_shortening}. With one read in one stage and zero in the other,
+$\Delta p$ is exactly 1 and Fisher's exact test on pooled reads will happily
+return a tiny $q$.
+
+The recurrence pattern says the same thing from the other side:
+\textbf{82.9\%} of the top recurrent genes are called in \emph{both} directions
+across cell types. A gene cannot be shortening and lengthening in the same
+comparison for biological reasons; it can easily do so if which PAS happens to
+be observed is a coin flip driven by coverage.
+
+\textbf{Verdict: no gene list should be taken from this layer as it stands.} The
+right fix is a minimum-read floor on \emph{both} sides of a contrast before a PAS
+is eligible, plus cells as the replication unit. Both are cheap; neither was
+applied here.
+
+% -----------------------------------------------------------------------------
+\subsection{Both length metrics across stages}
+\label{sec:atlas_length}
+
+Section~\ref{sec:q_shortening} showed that \texttt{classic} PDUI tracks
+sequencing depth. The obvious question is whether a different length metric
+escapes it. \texttt{shannon} entropy is the natural candidate: it summarises the
+whole within-gene usage vector rather than a proximal/distal pair, so it does not
+depend on choosing two sites.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/39_length_metrics_by_stage.png}
+  \caption{Both length metrics by stage. Grey lines are individual cell types;
+    coloured lines are the mean. Left and centre: \texttt{shannon} as reported
+    and conditioned on the gene having reads. Right: \texttt{classic} PDUI under
+    the same split.}
+  \label{fig:length_metrics_stage}
+\end{figure}
+
+\textbf{Verdict: it does not escape, and it fails in a way that matters more
+than the trend question.}
+
+First the trend. \texttt{classic} PDUI falls steeply as reported
+($0.0175 \rightarrow 0.0073$ across the four stages) and stops falling once
+rows without reads are dropped --- the confound of
+Section~\ref{sec:q_shortening}. \texttt{shannon} does \emph{not} reproduce that
+pattern: it shows no stage trend in either form. As reported only
+\textbf{2 of 18} interpretable cell types decrease (median slope
+$+0.0021$); conditioned, \textbf{8 of 18} do (median $+0.0016$), with
+\textbf{10 of 18 flipping sign} between the two. So the two metrics do not
+corroborate a shortening signal --- one shows an artefact and the other shows
+nothing.
+
+Second, and more important: \textbf{\texttt{shannon} carries the same
+padded-constant defect that invalidates \texttt{proportion}.} A gene--cell pair
+with zero reads is assigned entropy exactly $1.0$ (uniform over its PAS) rather
+than being left undefined, and \textbf{94--97\% of rows are exactly that
+constant}. The consequence is visible in the means: reported entropy is
+$\approx 1.05$ while entropy over informative rows is $\approx 1.79$ --- the
+reported value is essentially the padding. Per-stage reported entropy tracks the
+uninformative fraction at \textbf{median $r = 0.994$}, the same coupling
+strength with which \texttt{classic} tracks depth.
+
+\begin{quote}
+\textbf{This extends the \texttt{proportion} finding rather than repeating it.}
+Section~\ref{sec:length} marks \texttt{proportion} invalid at 98.2\% uniform
+padding. The same audit applied to \texttt{shannon} gives 94--97\%. Two of the
+three length metrics substitute a constant for missing data instead of
+propagating missingness, and the third (\texttt{classic}) substitutes zero ---
+which is why all three track coverage. \textbf{The defect is in how the length
+layer handles absent observations, not in any one statistic}, so a fourth metric
+would not fix it. The fix is to propagate missingness and report a
+coverage-conditioned estimate with the covered-row count beside it.
+\end{quote}
+
+A slot is reserved here for \texttt{proportion} once its corrected engine output
+is available, so the three metrics can be compared on equal terms; the
+comparison to make at that point is whether the corrected engine propagates
+missingness or merely changes the constant.
+
+% -----------------------------------------------------------------------------
+\subsection{What pathways do the switch genes belong to?}
+\label{sec:atlas_enrichment}
+
+The natural next question for a biologist. It is asked here with the control
+that makes the answer interpretable: enrichment is computed against the
+\textbf{genes actually tested}, not against all genes. Testing requires
+coverage, so an all-gene background would return "enrichment" for anything
+merely well expressed --- which is how APA papers most often manufacture a
+pathway story.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/41_hallmark_switch_enrichment.png}
+  \caption{Hallmark enrichment of recurrent ($\geq$3 cell types) and
+    cell-type-private large-effect switch genes, against the tested-gene
+    background. Green marks sets surviving FDR $\leq 0.05$.}
+  \label{fig:hallmark_enrichment}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{lrrr}
+    \toprule
+    Hallmark set (recurrent switch genes) & overlap & odds ratio & $q$ \\
+    \midrule
+    \texttt{MITOTIC\_SPINDLE}           & 116 & 2.04 & 0.0015 \\
+    \texttt{UV\_RESPONSE\_DN}           &  83 & 2.11 & 0.0054 \\
+    \texttt{PROTEIN\_SECRETION}         &  68 & 2.27 & 0.0054 \\
+    \texttt{TNFA\_SIGNALING\_VIA\_NFKB} & 102 & 1.83 & 0.0063 \\
+    \texttt{TGF\_BETA\_SIGNALING}       &  36 & 3.30 & 0.0063 \\
+    \texttt{UNFOLDED\_PROTEIN\_RESPONSE}&  61 & 2.24 & 0.0063 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Top Hallmark sets for recurrent switch genes ($\geq$3 cell types;
+    $n = 5{,}568$ of a 9,632-gene tested background). \textbf{9 of 50} sets reach
+    FDR $\leq 0.05$. For cell-type-private switch genes ($n = 1{,}507$),
+    \textbf{0 of 50} do.}
+  \label{tab:hallmark_switch}
+\end{table}
+
+\textbf{Verdict: the enrichment is real as arithmetic and uninterpretable as
+biology.} Three things block a pathway claim.
+
+\begin{enumerate}[nosep]
+  \item \textbf{The query is 58\% of the background.} 5,568 of 9,632 tested
+    genes are "recurrent switch genes". A set that large is close to asking
+    which Hallmark sets are enriched among well-covered genes.
+  \item \textbf{The sets that pass are the ones detectability predicts} ---
+    \texttt{MITOTIC\_SPINDLE}, \texttt{PROTEIN\_SECRETION},
+    \texttt{UNFOLDED\_PROTEIN\_RESPONSE}: large, highly expressed, long-3\textquotesingle{}UTR
+    gene families. That is the profile of genes that clear a coverage threshold,
+    not of a polyadenylation programme.
+  \item \textbf{The gene set itself is coverage-selected.}
+    Section~\ref{sec:atlas_top_genes} showed every one of these calls has
+    $|\Delta p| \approx 1$ and 82.9\% are called in both directions. Enrichment
+    computed on that set inherits its selection.
+\end{enumerate}
+
+The contrast with the private set is the tell rather than a result: private
+genes are simply less covered, so they are both harder to call repeatedly and
+less likely to belong to abundant Hallmark families. This is the same pattern
+Section~\ref{sec:corrected} found and correctly discounted --- COSMIC CGC crude
+odds ratio 1.99 ($p = 6.7\times10^{-9}$) falling to \textbf{1.22 ($p = 0.28$)}
+once detectability was controlled --- and the same one
+Figure~\ref{fig:recurrence} shows from the effect-size side, where private genes
+carry \emph{larger} mean $|$slope$|$ than recurrent ones.
+
+\textbf{Reported for completeness and to document the correct background choice.
+It should not be used to claim a biological programme.} A defensible version
+needs the switch calls fixed first (Section~\ref{sec:atlas_top_genes}), then
+enrichment against a background matched on expression and 3\textquotesingle{}UTR
+length, not merely on being tested.
+
+% -----------------------------------------------------------------------------
+\subsection{Where the rest of the per-cell-type detail lives}
+\label{sec:atlas_pointers}
+
+For readers looking for analyses this section does not repeat:
+
+\begin{itemize}[nosep]
+  \item \textbf{Aggregate strategy comparison} --- significance rate and hit-set
+    containment for \texttt{fisher} vs \texttt{nb\_multi} across the whole
+    cohort: Section~\ref{sec:switch_test}, Figure~\ref{fig:diff_strategy} and
+    Table~\ref{tab:diff_strategy}.
+  \item \textbf{Length-metric comparison} including why \texttt{proportion} is
+    invalid: Section~\ref{sec:length}, Figure~\ref{fig:length_strategy}.
+  \item \textbf{Cell type $\times$ stage PDUI matrix and the depth confound}:
+    Section~\ref{sec:corrected}, Figures~\ref{fig:depth_confound}
+    and~\ref{fig:stage_trajectory}.
+  \item \textbf{Recurrent vs private trending genes, and cancer-gene /
+    Hallmark enrichment of that set}: Section~\ref{sec:corrected},
+    Figures~\ref{fig:recurrence} and~\ref{fig:gene_sets}.
+  \item \textbf{The 3\textquotesingle{}UTR-element mechanism scan}
+    (miRNA seeds, AREs, lost-interval lengths):
+    Section~\ref{sec:corrected}, Figure~\ref{fig:lost_distal}.
+  \item \textbf{Per-gene tracks} for EZR, DPYD and PHACTR1 by stage:
+    Figure~\ref{fig:gene_walk_corrected}.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
 \section{Multi-BAM Merge Strategies}
 \label{sec:merge_strategy}
 % ─────────────────────────────────────────────────────────────────────────────
@@ -3087,6 +3439,11 @@ Schematics that remain valid from the pre-correction set
   34 & Trend slope with vs without the depth control & \texttt{34\_trend\_depth\_confound} \\
   35 & Fisher hits vs cell count, sized by effect & \texttt{35\_fisher\_pseudoreplication} \\
   36 & Recurrence distribution and top recurrent genes & \texttt{36\_recurrent\_switches} \\
+  37 & Both differential strategies per cell type & \texttt{37\_diff\_strategies\_by\_celltype} \\
+  38 & Per-cell-type differential APA volcanoes & \texttt{38\_volcano\_by\_celltype} \\
+  39 & Both length metrics (classic, shannon) by stage & \texttt{39\_length\_metrics\_by\_stage} \\
+  40 & Most recurrent large-effect switch genes, named & \texttt{40\_top\_switch\_genes} \\
+  41 & Hallmark enrichment of switch-gene sets & \texttt{41\_hallmark\_switch\_enrichment} \\
   \bottomrule
 \end{longtable}
 
