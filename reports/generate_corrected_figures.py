@@ -781,15 +781,23 @@ def fig_length_strategy() -> None:
 
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.3), layout="constrained")
 
-    # a) how much of each table is zero-coverage padding
+    # a) how much of each table is zero-coverage padding.
+    # `proportion` reads 0% here only because its coverage column holds the PAS
+    # count rather than a read count on padded rows -- taken at face value the
+    # panel would recommend the one metric that is unusable, so it is marked.
     ax = axes[0]
-    data, labels, colors = [], [], []
+    data, labels = [], []
     for strat, g in ls.groupby("strategy"):
         data.append(g["frac_zero_cov"] * 100)
         labels.append(strat)
     bp = ax.boxplot(data, tick_labels=labels, showmeans=True, patch_artist=True)
     for patch, c in zip(bp["boxes"], ["#C44E52", "#4C72B0", "#55A868"]):
         patch.set_facecolor(c); patch.set_alpha(0.6)
+    if "proportion" in labels:
+        i_p = labels.index("proportion") + 1
+        ax.annotate("not 0 — its coverage column\nholds n_PAS, not reads\n(98.2% of rows are\nuniform 1/n_PAS padding)",
+                    xy=(i_p, 0), xytext=(i_p, 45), ha="center", fontsize=6.5, color="#B00020",
+                    arrowprops=dict(arrowstyle="->", color="#B00020", lw=1.2))
     ax.set_ylabel("% of rows with zero gene coverage")
     ax.set_title("a  Every strategy is dominated by empty rows")
 
@@ -804,6 +812,10 @@ def fig_length_strategy() -> None:
     for xx, (a, b) in enumerate(zip(m_all, m_cov)):
         ax.text(xx - w / 2, a, f"{a:.3f}", ha="center", va="bottom", fontsize=7)
         ax.text(xx + w / 2, b, f"{b:.3f}", ha="center", va="bottom", fontsize=7)
+    if "proportion" in labels:
+        i_p = labels.index("proportion")
+        ax.text(i_p, max(m_all[i_p], m_cov[i_p]) * 1.12, "INVALID\n(conditioning is a no-op:\nwrong filter column)",
+                ha="center", fontsize=6.5, color="#B00020", fontweight="bold")
     ax.set_xticks(x, labels)
     ax.set_ylabel("mean score")
     ax.legend(fontsize=7)
@@ -820,10 +832,12 @@ def fig_length_strategy() -> None:
     ax.set_ylabel("mean score (>=1 read)")
     ax.legend(fontsize=7)
     ax.set_title("c  No stage trend survives in any metric")
+    ax.text(0.5, 0.02, "proportion is flat by construction, not by result — see (a)",
+            transform=ax.transAxes, ha="center", fontsize=6.5, color="#B00020")
 
     fig.suptitle(
-        "3'UTR length metrics on the corrected cohort — the choice of metric does not "
-        "rescue the stage signal", fontsize=9)
+        "3'UTR length metrics on the corrected cohort — no metric rescues the stage signal, "
+        "and `proportion` cannot be evaluated at all (98.2% synthetic rows)", fontsize=9)
     save(fig, "13_length_strategy")
 
 
