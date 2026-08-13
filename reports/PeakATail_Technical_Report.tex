@@ -1147,6 +1147,33 @@ substantially.
   \label{fig:length_proportion_heatmap}
 \end{figure}
 
+
+\begin{quote}
+\textbf{The mean of this metric is not a measurement --- do not compare it across
+conditions.} Because the proportions sum to 1.0 within each (gene, cell), the mean
+over all rows is exactly $n_{\text{gene,cell}} / n_{\text{rows}}$, the reciprocal
+of the mean number of PAS per gene. It is a property of the gene$\rightarrow$PAS
+structure and carries no information about reads, stage or biology.
+
+On the corrected sweep this is exact, not approximate: within every cell type the
+mean proportion is \textbf{identical to six decimal places across all four
+stages} (spread exactly 0.0), and across nine cell types it takes only three
+distinct values (0.328633, 0.328320, 0.278112), corresponding to mean
+PAS-per-gene of 3.043, 3.046 and 3.596. By comparison \texttt{classic} and
+\texttt{shannon} vary across stages within a cell type by up to 0.033 and 0.014.
+
+This retroactively explains the previous report's own result, which recorded that
+``only 47 genes showed inter-cluster proportion shift $>0.1$ (by the
+mean-across-PAS metric)'' and read it as consistent with a smooth usage
+distribution. A statistic that cannot vary produced almost no variation; the
+near-null was structural.
+
+\textbf{Use rank-stratified proportions instead}: rank 1 is the proximal-most
+site, higher ranks progressively distal, and read share moving from high to low
+ranks across stages is what shortening looks like in this metric. Unlike the mean,
+it is free to vary.
+\end{quote}
+
 \subsection{Proportion per Isoform}
 
 The same proportion formula as Section~\ref{sec:length}.3 (Proportion per Gene), but

@@ -576,7 +576,33 @@ This produces a vector of proportions summing to 1.0 per (gene, cell). In the lo
 
 **When to use**: When genes have 3+ PAS and you want to capture the entire distribution shift (not just a scalar summary). The output is high-dimensional — one vector per (gene, cell) — so downstream analysis typically summarises with the highest-proportion PAS per cluster or performs Jensen-Shannon divergence between cluster distributions.
 
-On the v9 data: 8,800 genes quantified, mean proportion 0.21 ± 0.39. Only 47 genes showed inter-cluster proportion shift > 0.1 (by the mean-across-PAS metric), consistent with the smooth distribution of usage.
+> **The mean of this metric is not a measurement — do not compare it across
+> conditions.** Because the proportions sum to 1.0 within each (gene, cell), the
+> mean over all rows is exactly `n_gene_cell_pairs / n_rows`, i.e. the reciprocal
+> of the mean number of PAS per gene. It is a property of the gene→PAS structure
+> and carries no information about reads, stage, or biology.
+>
+> Measured on the corrected sweep this is not approximate — it is exact. Within
+> every cell type the mean proportion is **identical to six decimal places across
+> all four stages** (spread exactly 0.0), and across nine cell types it takes only
+> three distinct values — 0.328633, 0.328320 and 0.278112 — corresponding to mean
+> PAS-per-gene of 3.043, 3.046 and 3.596. For comparison, `classic` and `shannon`
+> vary across stages within a cell type by up to 0.033 and 0.014 respectively.
+>
+> **This retroactively explains the previous report's own result.** It recorded
+> that "only 47 genes showed inter-cluster proportion shift > 0.1 (by the
+> mean-across-PAS metric)" and read that as "consistent with the smooth
+> distribution of usage." It was not: a statistic that cannot vary produced almost
+> no variation. The near-null was structural, not biological.
+
+**Use rank-stratified proportions instead.** The informative summary keeps the
+PAS axis: rank 1 is the proximal-most site, higher ranks progressively distal, and
+read share moving from high ranks to low ranks across stages is what
+3′UTR shortening looks like in this metric. Unlike the mean, it is free to vary.
+See §9.1 and Figure C13.
+
+The superseded v9 numbers (8,800 genes, mean proportion 0.21 ± 0.39) are withdrawn
+along with the rest of that run.
 
 ### 8.4 Proportion per isoform
 
@@ -628,7 +654,7 @@ On the v9 data: 8,800 genes quantified, mean entropy 0.13 ± 0.40 bits. 2,948 ge
 | Goal | Use |
 |---|---|
 | Compare to DaPars / scAPA literature | `classic` |
-| Full distribution of N PAS per gene | `proportion per_gene` |
+| Full distribution of N PAS per gene | `proportion per_gene` — **stratified by PAS rank; never summarised by its mean** (§8.3) |
 | Isoform-specific PAS budgets | `proportion per_isoform` |
 | Detect concentration changes (any direction) | `shannon` |
 | Combine scalar + distribution | `classic` + `proportion per_gene` |
