@@ -2153,8 +2153,11 @@ cannot be reproduced.
     real switch is the boolean \texttt{ip\_filter}. This also explains the
     Jaccard $= 1.000$ between \texttt{lg\_annotate} and \texttt{lg\_ip\_off}: in
     \texttt{annotate} mode the filter only \emph{labels} peaks and removes none,
-    so disabling it produces byte-identical output. The nominally three-level ip
-    axis is really two-level.
+    so disabling it produces byte-identical output. Comparing the two resolved
+    configs directly, they differ in exactly two fields --- \texttt{ip\_filter}
+    (True/False) and \texttt{genome\_fasta} (path/None) --- so \texttt{lg\_ip\_off}
+    loaded no genome and ran no scan, and \emph{still} returned the same 22,633
+    peaks. The nominally three-level ip axis is really two-level.
   \item \textbf{The re-annotation branches' manifests describe their base run.}
     \texttt{A2\_*} and \texttt{A3\_*} re-annotate an existing run, so their
     manifests carry the \emph{base} run's args. Read naively, all eight trim
