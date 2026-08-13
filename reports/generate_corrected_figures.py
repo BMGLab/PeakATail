@@ -645,6 +645,68 @@ def fig_lost_distal_elements() -> None:
     save(fig, "10_lost_distal_elements")
 
 
+# ===========================================================================
+# 11. Cancer-gene and pathway characterisation of the recurrent switch genes
+# ===========================================================================
+def fig_gene_sets() -> None:
+    ov = load(EXTRA, "cancer_gene_overlap.csv")
+    hall = load(EXTRA, "hallmark_enrichment.csv")
+    if ov is None and hall is None:
+        _skipped.append("11_gene_sets")
+        return
+
+    ncols = int(ov is not None) * 2 + int(hall is not None)
+    fig, axes = plt.subplots(1, ncols, figsize=(4.7 * ncols, 4.3), squeeze=False, layout="constrained")
+    axes = axes[0]
+    i = 0
+
+    if ov is not None:
+        # a) raw membership rates, recurrent vs private
+        ax = axes[i]; i += 1
+        x = np.arange(len(ov))
+        w = 0.38
+        ax.bar(x - w / 2, ov["rate_recurrent"] * 100, w, label="recurrent (≥3 CT)", color="#4C72B0")
+        ax.bar(x + w / 2, ov["rate_private"] * 100, w, label="private (≤2 CT)", color="#999999")
+        ax.set_xticks(x, [g.replace("_", "\n") for g in ov["gene_set"]], fontsize=7)
+        ax.set_ylabel("% of genes in the set")
+        ax.legend(fontsize=7)
+        ax.set_title("a  Membership looks enriched…")
+
+        # b) …until detectability is adjusted for
+        ax = axes[i]; i += 1
+        y = np.arange(len(ov))
+        ax.scatter(ov["odds_ratio_crude"], y + 0.13, s=55, color="#C44E52", label="crude", zorder=3)
+        if "odds_ratio_adj_detectability" in ov:
+            ax.scatter(ov["odds_ratio_adj_detectability"], y - 0.13, s=55, color="#4C72B0",
+                       marker="s", label="adjusted for detectability", zorder=3)
+            for yy, (cr, ad) in enumerate(zip(ov["odds_ratio_crude"],
+                                              ov["odds_ratio_adj_detectability"])):
+                ax.plot([cr, ad], [yy + 0.13, yy - 0.13], color="k", lw=0.7, alpha=0.5, zorder=2)
+        ax.axvline(1.0, color="k", ls="--", lw=1)
+        ax.set_yticks(y, [g.replace("_", " ") for g in ov["gene_set"]], fontsize=7)
+        ax.set_xlabel("odds ratio, recurrent vs private")
+        ax.legend(fontsize=7)
+        ax.set_title("b  …and the enrichment disappears")
+
+    if hall is not None:
+        ax = axes[i]
+        h = hall.nsmallest(12, "p_value").sort_values("odds_ratio")
+        colors = ["#C44E52" if q < 0.05 else "#BBBBBB" for q in h["q_value"]]
+        ax.barh(range(len(h)), h["odds_ratio"], color=colors)
+        ax.axvline(1.0, color="k", ls="--", lw=1)
+        ax.set_yticks(range(len(h)),
+                      [g.replace("HALLMARK_", "").replace("_", " ").title() for g in h["gene_set"]],
+                      fontsize=6)
+        ax.set_xlabel("odds ratio (recurrent vs tested universe)")
+        n_sig = int((hall["q_value"] < 0.05).sum())
+        ax.set_title(f"c  Hallmark: {n_sig}/{len(hall)} sets at FDR<0.05")
+
+    fig.suptitle(
+        "Recurrent switch genes carry no cancer-gene or pathway signal once detectability is controlled",
+        fontsize=9)
+    save(fig, "11_gene_sets")
+
+
 FIGURES = [
     fig_strategy_benchmark,
     fig_atlas_saturation,
@@ -656,6 +718,7 @@ FIGURES = [
     fig_fisher_power,
     fig_recurrence,
     fig_lost_distal_elements,
+    fig_gene_sets,
 ]
 
 
