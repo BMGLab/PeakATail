@@ -328,10 +328,17 @@ def fig_recurrent(df: pd.DataFrame, out_dir: Path, top_n: int = 20) -> None:
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(9.2, 3.8),
                                   gridspec_kw={"width_ratios": [1, 1.3]})
     counts = df["n_celltypes"].value_counts().sort_index()
+    private = float((df["n_celltypes"] == 1).mean())
     ax.bar(counts.index.astype(str), counts.values, color=OBS)
     ax.set_xlabel("cell types the gene switches in")
     ax.set_ylabel("genes")
-    ax.set_title("Most switches are private to one cell type", fontsize=9.5)
+    # Real cell-type-specific APA would be concentrated at 1. It is not: the
+    # distribution has a long flat tail out to all 24 cell types.
+    ax.set_title(
+        f"Switch calls are not sparse: only {private:.0%} are private,\n"
+        "with a long tail out to all cell types",
+        fontsize=9.5,
+    )
 
     top = df.head(top_n).iloc[::-1]
     colors = ["#2e7d32" if c else "#c62828" for c in top["consistent_direction"]]
