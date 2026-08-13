@@ -160,3 +160,35 @@ claim, the report shows them together.
 3. **Corroboration is deliberate.** 02+24, 03+26, 04+28, 06+34, 08+35, 09+36 are
    pairs reached by independent analyses. The report cites both in each case;
    dropping either weakens the claim to a single-method result.
+
+---
+
+# Switch deep-dive figures (37–41) — and provisional status
+
+Generator: `reports/generate_switch_deepdive_figures.py`, from
+`reports/_server_scripts/s7_switch_deepdive.py` tables in
+`reports/cumulative_analysis/deepdive/`.
+
+| # | File | Caption | Claim it answers | Status |
+|---|---|---|---|---|
+| **37** | `37_diff_strategies_by_celltype` | Significance rate per strategy, PAS tested per strategy, Jaccard of the significant sets — per cell type. | `nb_multi` tests **3.2%** of the PAS `fisher` tests and calls **99.7%** of them significant; the two agree on **1.1%**, and only **16.9%** of `nb_multi` hits are `fisher`-significant where chance predicts **42.9%** — **0.39× chance**. | ⚠ PROVISIONAL |
+| **38** | `38_volcano_by_celltype` | Per-cell-type volcanoes, 12 best-powered cell types. | Significance is flat in \|Δp\| rather than rising with it. Large-effect points are **thinned to the background sampling rate** so the density is faithful — plotting the harvest raw shows a hole at Δp≈0 that is a sampling artefact. | ⚠ PROVISIONAL |
+| **39** | `39_length_metrics_by_stage` | `shannon` as reported and coverage-conditioned; `classic` under the same split. | `shannon` does **not** reproduce `classic`'s trend (2/18 vs 8/18 decreasing, 10/18 sign flips) — the metrics do not corroborate shortening. And `shannon` carries the **same padded-constant defect as `proportion`**: 94–97% of rows are the constant 1.0, tracking the uninformative fraction at median r = 0.994. | **FINAL** for classic/shannon; proportion slot pending |
+| **40** | `40_top_switch_genes` | 25 most recurrent large-effect switch genes, with direction consistency. | Named switches (ABL1, TAB2, ME1, TP53BP1…). The decisive number is in the prose: across all **41,626** largest-effect calls \|Δp\| has mean **1.0000**, sd **0.0002**, min **0.9735** — every one is all-or-nothing, and **82.9%** of top genes are called in *both* directions. | ⚠ PROVISIONAL |
+| **41** | `41_hallmark_switch_enrichment` | Hallmark enrichment of recurrent vs private switch genes, tested-gene background. | 9/50 sets pass for recurrent genes, 0/50 for private — but the query is **58% of the background** and the passing sets are the large, abundant families detectability predicts. Reported to document the background choice, not as a pathway claim. | ⚠ PROVISIONAL |
+
+## Provisional status — read `reports/REFRESH_CHECKLIST.md`
+
+`fisher` is being replaced by `mwu_percell` and `proportion` by a corrected
+length engine. Figures **35, 36, 37, 38, 40, 41** and science's **08, 09, 11,
+12** are derived from `fisher` and must be regenerated; **35 and 36 are easy to
+miss** because they sit in the cross-experiment set rather than the deep-dive
+one.
+
+Both generators are parameterised (`--diff-strategy`); `s7` stamps the strategy
+into its column names and the figure code recovers it via `strategy_names()`, so
+a refresh is a flag, not an edit.
+
+**Findings *about* the engines' misbehaviour are final** — they are the evidence
+that motivated the fixes. **Findings *using* them as instruments are
+provisional.** The checklist spells out which is which.

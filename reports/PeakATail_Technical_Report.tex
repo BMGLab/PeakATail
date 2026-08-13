@@ -699,6 +699,38 @@ tests. Length uses \texttt{classic} and \texttt{shannon}; \texttt{proportion} is
 excluded because it is 98.2\% uniform padding (Section~\ref{sec:length}), and a
 slot is held for it once the corrected engine data lands.
 
+\begin{quote}
+\textbf{\textcolor{red}{PROVISIONAL --- pending the corrected differential
+engine.}} \texttt{fisher} is being replaced by a per-cell test
+(\texttt{mwu\_percell}) that fixes the pseudoreplication documented in
+Section~\ref{sec:q_fisher}, and \texttt{proportion} by a corrected length
+engine. Sections~\ref{sec:atlas_diff_strategies}, \ref{sec:atlas_volcano},
+\ref{sec:atlas_top_genes} and~\ref{sec:atlas_enrichment} are computed
+\emph{with} \texttt{fisher} and will be regenerated against the replacement
+before the report is final.
+
+\textbf{A distinction worth holding onto, because it decides what survives:}
+
+\begin{itemize}[nosep]
+  \item Findings \emph{about} \texttt{fisher}'s misbehaviour --- the 43\%
+    significance rate, the cell-count coupling, the $|\Delta p| \approx 1$
+    saturation, \texttt{nb\_multi}'s 99.7\%, and the below-chance agreement
+    between them --- are \textbf{final}. They characterise the engine being
+    replaced and are the evidence that motivated replacing it. A corrected test
+    cannot retroactively make the old one well-behaved.
+  \item Findings that \emph{use} \texttt{fisher} as a measuring instrument ---
+    which genes switch, in which direction, how recurrent they are, and what
+    pathways they enrich --- are \textbf{provisional} and must not be cited
+    until regenerated.
+\end{itemize}
+
+Regeneration is one command per stage against the corrected run; see
+\texttt{reports/REFRESH\_CHECKLIST.md}. Everything outside this section and
+Section~\ref{sec:q_fisher} --- clustering, the atlas null control, the TF-IDF
+result, the depth confound, \texttt{classic}/\texttt{shannon} --- is independent
+of both engines and final.
+\end{quote}
+
 % -----------------------------------------------------------------------------
 \subsection{Both differential strategies, side by side}
 \label{sec:atlas_diff_strategies}

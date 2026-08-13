@@ -71,23 +71,39 @@ def _save(fig, out_dir: Path, stem: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def strategy_names(df: pd.DataFrame) -> tuple[str, str]:
+    """Recover (primary, secondary) strategy from the harvest's column names.
+
+    s7 stamps the strategy into its columns (``n_tests_<strategy>``) so a
+    refresh against a replacement test — e.g. ``mwu_percell`` superseding
+    ``fisher`` — needs no edit here.
+    """
+    tests = [c[len("n_tests_"):] for c in df.columns if c.startswith("n_tests_")]
+    primary = next((t for t in tests if f"n_sig_{t}_large" in df.columns), None)
+    secondary = next((t for t in tests if t != primary), None)
+    if primary is None:  # single-strategy harvest
+        primary = tests[0] if tests else "diff"
+    return primary, secondary or "secondary"
+
+
 def fig_diff_strategies(df: pd.DataFrame, out_dir: Path) -> None:
+    prim, sec = strategy_names(df)
     d = df[df["contrast"] == "Normal_vs_StageI"].copy()
     if d.empty:
         d = df[df["contrast"] == df["contrast"].mode().iloc[0]].copy()
     contrast = d["contrast"].iloc[0]
     d["ct"] = d["celltype"].map(short)
-    d = d.sort_values("frac_sig_fisher", ascending=False)
+    d = d.sort_values(f"frac_sig_{prim}", ascending=False)
     y = np.arange(len(d))
 
     fig, axes = plt.subplots(1, 3, figsize=(12.6, 0.30 * len(d) + 2.2),
                              gridspec_kw={"width_ratios": [1.5, 1.1, 1.0]})
 
     ax = axes[0]
-    ax.barh(y + 0.20, d["frac_sig_fisher"], 0.38, color=FISHER, label="fisher (q≤0.05)")
-    ax.barh(y + 0.20, d["frac_sig_fisher_large"], 0.38, color="#7fb3d5",
-            label="fisher, also |Δp|≥0.30")
-    ax.barh(y - 0.20, d["frac_sig_nb_multi"], 0.38, color=NB, label="nb_multi (q≤0.05)")
+    ax.barh(y + 0.20, d[f"frac_sig_{prim}"], 0.38, color=FISHER, label=f"{prim} (q≤0.05)")
+    ax.barh(y + 0.20, d[f"frac_sig_{prim}_large"], 0.38, color="#7fb3d5",
+            label=f"{prim}, also |Δp|≥0.30")
+    ax.barh(y - 0.20, d[f"frac_sig_{sec}"], 0.38, color=NB, label=f"{sec} (q≤0.05)")
     ax.set_yticks(y)
     ax.set_yticklabels(d["ct"], fontsize=6.5)
     ax.set_xlabel("fraction of tested PAS called significant")
@@ -98,8 +114,8 @@ def fig_diff_strategies(df: pd.DataFrame, out_dir: Path) -> None:
     ax.invert_yaxis()
 
     ax = axes[1]
-    ax.barh(y + 0.20, d["n_tests_fisher"], 0.38, color=FISHER, label="fisher")
-    ax.barh(y - 0.20, d["n_tests_nb_multi"], 0.38, color=NB, label="nb_multi")
+    ax.barh(y + 0.20, d[f"n_tests_{prim}"], 0.38, color=FISHER, label=prim)
+    ax.barh(y - 0.20, d[f"n_tests_{sec}"], 0.38, color=NB, label=sec)
     ax.set_yticks(y)
     ax.set_yticklabels([])
     ax.set_xscale("log")
@@ -118,9 +134,8 @@ def fig_diff_strategies(df: pd.DataFrame, out_dir: Path) -> None:
     ax.invert_yaxis()
 
     fig.suptitle(
-        f"Both differential strategies, per cell type ({contrast}). "
-        "nb_multi calls ~100% of the ~3% of PAS it tests significant; "
-        "the two agree on ~1%.",
+        f"Both differential strategies, per cell type ({contrast}): "
+        f"{prim} vs {sec}.",
         fontsize=9.5, y=1.005,
     )
     _save(fig, out_dir, "37_diff_strategies_by_celltype")
@@ -151,7 +166,9 @@ def fig_volcano_grid(df: pd.DataFrame, out_dir: Path,
     counts = None
     if strategy is not None:
         s = strategy[strategy["contrast"] == contrast]
-        counts = s.set_index("celltype")[["n_tests_fisher", "n_sig_fisher_large"]]
+        prim, _ = strategy_names(strategy)
+        counts = s.set_index("celltype")[[f"n_tests_{prim}", f"n_sig_{prim}_large"]]
+        counts.columns = ["n_tests", "n_large"]
     order = d.groupby("celltype").size().sort_values(ascending=False).index[:max_panels]
     ncol = 4
     nrow = int(np.ceil(len(order) / ncol))
@@ -163,8 +180,8 @@ def fig_volcano_grid(df: pd.DataFrame, out_dir: Path,
         big = s["is_large_sig"].astype(bool)
         small, large = s[~big], s[big]
         if counts is not None and ct in counts.index:
-            n_tests = float(counts.loc[ct, "n_tests_fisher"])
-            n_large = float(counts.loc[ct, "n_sig_fisher_large"])
+            n_tests = float(counts.loc[ct, "n_tests"])
+            n_large = float(counts.loc[ct, "n_large"])
             n_small_true = max(n_tests - n_large, 1.0)
             rate = min(1.0, len(small) / n_small_true)
             keep = max(int(round(n_large * rate)), 1)
