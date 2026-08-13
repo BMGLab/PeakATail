@@ -214,7 +214,13 @@ process SWITCH_COMBINE {
     tuple val(cohort), val(b2dir), val(combine_specs)
     output:
     tuple val(cohort), path('combined/*.h5ad'), emit: celltypes
-    path 'combined/pasbed.bed', emit: pasbed
+    // NOTE: this MUST carry val(cohort) too -- a bare `path` output has no
+    // key at all, so a downstream keyed join (needed the moment more than
+    // one cohort is in flight, e.g. phase3's 4 concurrent scenarios) has
+    // nothing to match on and silently pairs with nothing. Root cause of a
+    // real bug: phase3's SWITCH_CELLTYPE never ran a single time until this
+    // was added (see git history / PR #63 discussion).
+    tuple val(cohort), path('combined/pasbed.bed'), emit: pasbed
     script:
     """
     export TMPDIR=${params.tmpbase}/\$\$ && mkdir -p \$TMPDIR
@@ -425,6 +431,29 @@ process FILTER_EFFECT_BRANCH {
     """
 }
 
+// Fail FAST (before launching anything) if a grid/scenario table has two
+// rows resolving to the same output directory -- e.g. two trim_cluster_grid
+// rows with the same branch_name would both target
+// `${params.out_root}/reannotate/${branch_name}` and run CONCURRENTLY
+// (nextflow has no dependency between grid rows), racing on every file
+// under that --out. This is the actual mechanism behind a real bug: 5
+// grid rows with identical params produced 3 different pas_gene.tsv row
+// counts, grouped by write time (see ema/outputs.py's atomic-write fix for
+// the other half of this guard -- that makes any single write safe even if
+// two processes DO collide; this stops the collision from being possible
+// in the first place).
+def assertUniqueNames(names, label) {
+    def counts = names.countBy { it }
+    def dupes = counts.findAll { k, v -> v > 1 }
+    if( dupes ) {
+        error(
+            "${label}: duplicate name(s) resolve to the same --out and would run " +
+            "CONCURRENTLY, racing on the same files: ${dupes.keySet().join(', ')}. " +
+            "Fix the grid/scenario table before launching."
+        )
+    }
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 workflow {
     ch_ready = PREWARM_GTF().ready.first()
@@ -452,18 +481,39 @@ workflow {
             tuple(cohort, b2dir, specs)
         }
         combined = SWITCH_COMBINE(combine_ch)
+        // Keyed join (not a bare .combine() cross-product) -- correct
+        // regardless of how many cohorts are in flight; phase1 only ever
+        // has one, but there's no reason for this path to rely on that.
         ct = combined.celltypes
-                .flatMap { cohort, files ->
+                .join(combined.pasbed)
+                .flatMap { cohort, files, pb ->
                     (files instanceof List ? files : [files])
                         .findAll { it.name.endsWith('.h5ad') }
-                        .collect { tuple(cohort, it) }
+                        .collect { tuple(cohort, it, pb) }
                 }
-                .combine(combined.pasbed)   // append the one complete pasbed to each celltype
         SWITCH_CELLTYPE(ct)
         SWITCH_MATCH(cohort_ch)
     }
 
     if( do_p2 ) {
+        // Fail fast if two rows resolve to the same --out (see
+        // assertUniqueNames' comment above) -- read synchronously, before
+        // dispatching anything, same pattern id2grp already uses above.
+        def peakcall_names = []
+        file(params.peakcall_grid).eachLine { ln ->
+            if( ln && !ln.startsWith('#') && !ln.startsWith('run_name') ) {
+                peakcall_names << ln.split('\t')[0]
+            }
+        }
+        assertUniqueNames(peakcall_names, "peakcall_grid.tsv run_name")
+        def branch_names = []
+        file(params.grid).eachLine { ln ->
+            if( ln && !ln.startsWith('#') && !ln.startsWith('branch_name') ) {
+                branch_names << ln.split('\t')[0]
+            }
+        }
+        assertUniqueNames(branch_names, "trim_cluster_grid.tsv branch_name")
+
         // peak-call method sweep (strategy × atlas_mode × ip_mode) from the grid.
         grid_run_ch = Channel.fromPath(params.peakcall_grid)
                              .splitCsv(header:true, sep:'\t')
@@ -503,16 +553,22 @@ workflow {
             [name: 'annot_filter_3utr', exclude: 'not-in-3utr'],
             [name: 'ip_filter',         exclude: 'internal-priming'],
         ]
+        assertUniqueNames(scenarios.collect { it.name }, "phase3 scenarios")
 
         // FILTER_EFFECT_BRANCH/GEX_CELLTYPE/SWITCH_COMBINE reuse the exact
         // same `val cohort` / tuple shapes phase1 uses for B1_cohort_full —
         // here `cohort` is one of the 4 scenario run dirs (its basename IS
         // the scenario name, by construction of --out above), so all three
-        // processes are reused UNCHANGED; only the pasbed join needs `by: 0`
-        // (phase1 only ever has one cohort in flight, so a bare `.combine()`
-        // broadcast was fine there — phase3 has 4 concurrent cohorts, so the
-        // join MUST be keyed or celltypes from one scenario would pair with
-        // another scenario's pasbed).
+        // processes are reused UNCHANGED. `SWITCH_COMBINE.pasbed` is now
+        // `tuple val(cohort), path(...)` (was a bare, key-less `path` output
+        // until this fix -- root cause of a real bug: with no key, NEITHER
+        // a bare `.combine()` cross-product NOR a keyed `.combine(by:0)`/
+        // `.join()` had anything to correctly pair per scenario, so
+        // SWITCH_CELLTYPE ran ZERO times across two separate fix attempts,
+        // on both a resumed AND a from-scratch run, before this was found).
+        // `.join()` here is the correct 1:1-by-cohort pairing now that both
+        // sides are properly keyed -- attach pasbed BEFORE flattening the
+        // h5ad list (matches phase1's `ct`, which uses the same pattern).
         ch_3utr_bed = PREP_3UTR_BED().bed.first()
         base_run_ch = Channel.value(params.filter_effect_base_run)
         fe_ch = Channel.fromList(scenarios).combine(base_run_ch).combine(ch_3utr_bed)
@@ -527,12 +583,12 @@ workflow {
         }
         fe_combined = SWITCH_COMBINE(fe_combine_ch)
         fe_ct = fe_combined.celltypes
-                .flatMap { cohort, files ->
+                .join(fe_combined.pasbed)
+                .flatMap { cohort, files, pb ->
                     (files instanceof List ? files : [files])
                         .findAll { it.name.endsWith('.h5ad') }
-                        .collect { tuple(cohort, it) }
+                        .collect { tuple(cohort, it, pb) }
                 }
-                .combine(fe_combined.pasbed, by: 0)
         SWITCH_CELLTYPE(fe_ct)
     }
 }
