@@ -159,14 +159,28 @@ def fig_yield_vs_biology(
 # F2/F3 — which knob actually matters
 # ---------------------------------------------------------------------------
 
-# (branch, reference branch, human label) per swept axis
+# label -> every branch on that axis (the swept arms *including* the default, so
+# the reported delta is the full range max-min, not an endpoint difference; this
+# matters because resolution is non-monotone and peaks at the default).
 KNOBS = [
-    ("A3_libsize", "A2_trim_default", "cluster method\ntfidf → libsize"),
-    ("A3_res2.0", "A3_res0.5", "resolution\n0.5 → 2.0"),
-    ("A2_trim_d5000_ext", "A2_trim_default", "include_extended\nfalse → true"),
-    ("A3_nn50", "A3_nn15", "n_neighbors\n15 → 50"),
-    ("A2_trim_mult3.0", "A2_trim_mult1.5", "utr_multiplier\n1.5 → 3.0"),
-    ("A2_trim_d10000_ext", "A2_trim_d1000_ext", "max_gene_distance\n1000 → 10000"),
+    ("cluster method\ntfidf → libsize", ["A2_trim_default", "A3_libsize"]),
+    ("resolution\n0.5 / 1.0 / 2.0", ["A3_res0.5", "A2_trim_default", "A3_res2.0"]),
+    ("include_extended\nfalse → true", ["A2_trim_default", "A2_trim_d5000_ext"]),
+    ("n_neighbors\n15 / 30 / 50", ["A3_nn15", "A2_trim_default", "A3_nn50"]),
+    (
+        "utr_multiplier\n1.5 / 2.0 / 3.0",
+        ["A2_trim_mult1.5", "A2_trim_default", "A2_trim_mult3.0"],
+    ),
+    (
+        "max_gene_distance\n1000 → 10000",
+        [
+            "A2_trim_d1000_ext",
+            "A2_trim_d2000_ext",
+            "A2_trim_d3000_ext",
+            "A2_trim_d5000_ext",
+            "A2_trim_d10000_ext",
+        ],
+    ),
 ]
 
 
@@ -176,16 +190,14 @@ def fig_knob_ranking(
     """The headline: every swept knob ranked by its effect on the biology."""
     b = branch_df.set_index("branch")
     rows = []
-    for arm, ref, label in KNOBS:
-        if arm in b.index and ref in b.index:
-            rows.append(
-                {
-                    "knob": label,
-                    "delta_ari": abs(
-                        b.loc[arm, "ARI_vs_celltype"] - b.loc[ref, "ARI_vs_celltype"]
-                    ),
-                }
-            )
+    for label, arms in KNOBS:
+        vals = [
+            b.loc[a, "ARI_vs_celltype"]
+            for a in arms
+            if a in b.index and pd.notna(b.loc[a, "ARI_vs_celltype"])
+        ]
+        if len(vals) >= 2:
+            rows.append({"knob": label, "delta_ari": float(max(vals) - min(vals))})
     if strategy_df is not None and "ARI_vs_celltype" in strategy_df:
         s = strategy_df["ARI_vs_celltype"]
         rows.append({"knob": "peak strategy\nlg / lp / si", "delta_ari": float(s.max() - s.min())})

@@ -121,15 +121,18 @@ one factor at a time, 17 datasets each.
 **What discriminates.** ARI/AMI against **independent GEX cell-type labels** —
 an external criterion, not an internal cluster-compactness score. *(Figure F3.1.)*
 
+Δ is the **full range** (max − min) over the arms swept on that axis, including
+the default — resolution is non-monotone, so endpoint differences understate it.
+
 | knob | range swept | Δ ARI vs cell type | verdict |
 |---|---|---|---|
 | **clustering method** | `leiden_tfidf` → `leiden_libsize` | **0.140** | **dominant** |
-| resolution | 0.5 → 2.0 | 0.048 | real, optimum at 1.0 |
-| `include_extended` | false → true | 0.015 | minor |
-| n_neighbors | 15 → 50 | 0.011 | minor |
+| resolution | 0.5 / 1.0 / 2.0 | 0.048 | real, optimum at the default 1.0 |
+| `include_extended` | false → true | 0.019 | minor |
+| n_neighbors | 15 / 30 / 50 | 0.017 | minor |
+| `utr_multiplier` | 1.5 / 2.0 / 3.0 | 0.012 | minor |
 | peak strategy | `lg`/`lp`/`si` | 0.011 | inert |
-| `utr_multiplier` | 1.5 → 3.0 | 0.002 | inert |
-| **`max_gene_distance`** | 1000 → 10000 (10×) | **0.002** | **inert** |
+| **`max_gene_distance`** | 1000 → 10000 (10×) | **0.007** | **inert** |
 
 Full branch table (mean over 17 datasets):
 
@@ -203,11 +206,11 @@ checks. *(Figures F5.1, F5.2.)*
 
 ### 4.1 Most trends are fit on too few stages
 
-Only **17 of 24** cell types have ≥3 stages. Seven have **two** — and over two
-points Spearman ρ is **±1 by construction**. The shipped
-`length_trend.json` for `MESENCHYAL` reports `spearman = -1.0` on `n_stages = 2`;
-that is not evidence. With three stages ρ can take only four values
-(±0.5, ±1), so ρ = −1.0 at p = 0.069 is barely more informative.
+Only **18 of 24** cell types have ≥3 stages. Six (**25 %**) have **two** — and over
+two points Spearman ρ is **±1 by construction**. The shipped `length_trend.json`
+for `MESENCHYAL` reports `spearman = -1.0` on `n_stages = 2`; that is not
+evidence. With three stages ρ can take only four values (±0.5, ±1), so
+ρ = −1.0 at p = 0.069 is barely more informative.
 
 ### 4.2 Mean PDUI *is* sequencing depth
 
@@ -226,19 +229,21 @@ informative PDUI is nearly flat. So the per-stage mean tracks the **detection
 rate**. Across cell types, the correlation between per-stage mean PDUI and
 per-stage mean reads is:
 
-**median r = 0.996** — 14 of 17 interpretable cell types above 0.95, 11 above 0.99
+**median r = 0.9957** — 15 of 18 interpretable cell types above 0.95, 11 above 0.99
 (TREG 0.998, MONOCYTIC 0.999, ENDOTHELIAL 0.9998, CYTOTOXIC_T_NK 0.9997).
 
 **The "3′UTR shortening" curve and the sequencing-depth curve are the same curve.**
 
 ### 4.3 The direction is not robust, and nothing is significant
 
-Refitting on informative pairs only (`slope_informative`) flips the sign in
-**7 of 17** interpretable cell types (41 %) — AE2, CYTOTOXIC_T_NK, EPITHELIAL,
-MACROPHAGE_M1, MONOCYTIC, PERICYTES, SEROUS_CELLS. Slopes are ~0.001–0.01 PDUI
-units per stage on a 0–1 scale. Across 17 cell types, exactly **one** nominal
-p < 0.05 (SEROUS_CELLS, p = 0.044) — which is what 17 tests at α = 0.05 produce by
-chance, and it does not survive any correction.
+Refitting on informative pairs only (`slope_informative`) **flips the sign in 9 of
+24 cell types (37.5 %)** — AE2, CYTOTOXIC_T_NK, EPITHELIAL, MACROPHAGE_M1,
+MESENCHYAL, MONOCYTIC, NE_CELLS, PERICYTES, SEROUS_CELLS — and drops the
+"decreasing" fraction from **0.833 to 0.708**. Median slope is −0.0021 (−0.0033
+controlled), i.e. ~0.2–0.3 % of the 0–1 PDUI scale per stage. Across the 18
+interpretable cell types exactly **one** reaches nominal p < 0.05 (SEROUS_CELLS,
+p = 0.044) — precisely what 18 tests at α = 0.05 yield by chance, and it survives
+no correction.
 
 **Verdict.** There is **no defensible evidence of stage-dependent 3′UTR
 shortening in this cohort**. The apparent trend is a detection-rate artefact of
@@ -254,13 +259,36 @@ or depth-matched subsampling across stages — neither of which this sweep ran.
 **Experiment.** `ema switch diff` per cell type: `fisher` (exhaustive within-gene
 screen) and `nb_multi` (omnibus LRT). `nb_pairwise` was **not run**.
 
-**Structural caveat, restated because it governs every hit count.** Fisher's
-exact test is applied to **read** counts pooled over cells, so each cell
-contributes many correlated observations. Significance therefore scales with cell
-count rather than effect size — classic pseudoreplication. `fisher_power_check`
-and `pseudoreplication_signature` quantify this as Spearman(n_cells,
-n_significant), and F5.3 plots it with the median |Δ proportion| of the hits as
-point size, so the "many hits, tiny effects" pattern is visible.
+**No.** Across 90 cell-type × contrast tests, Fisher declares a **mean of 42.9 %**
+of all tested PAS significant at FDR 0.05, reaching **73.7 %**. A calibrated
+differential test does not call three quarters of its features significant.
+
+The mechanism is pseudoreplication: Fisher's exact test is applied to **read**
+counts pooled over cells, so each cell contributes many correlated observations
+and the effective sample size is inflated by orders of magnitude. The signature
+is unmistakable once hit counts are plotted against cell counts *and* effect
+sizes *(Figure F5.3)*:
+
+| cell type | contrast | cells | tests | significant | frac | median \|Δ prop\| |
+|---|---|---|---|---|---|---|
+| TREG | Normal vs StageI | 3,309 | 18,795 | 13,842 | **0.737** | **0.189** |
+| MONOCYTIC | Normal vs StageI | 2,293 | 19,084 | 13,744 | 0.720 | 0.179 |
+| EXHAUSTED_REGUL | Normal vs StageI | 930 | 23,599 | 15,096 | 0.640 | 0.207 |
+| … | | | | | | |
+| SEROUS_CELLS | IVprimary vs Met | 220 | 4,815 | 1,284 | 0.267 | **0.781** |
+| MACROPHAGE_M1 | IVprimary vs Met | 175 | 4,454 | 773 | 0.174 | **0.820** |
+
+The relationship is **inverse**: the high-power contrasts return ~14,000 hits at a
+median effect of 0.19, while the low-power contrasts return ~800 hits at a median
+effect of 0.82. Significance is tracking cell count, and effect size is tracking
+its absence. Every one of the ten largest hit lists is the same contrast
+(`Normal_vs_StageI`) — the one with the most cells.
+
+**Verdict.** Fisher hit *counts* are not interpretable as biology and should not
+be reported as "N genes switch". Use it as a within-gene screen and rank by
+**effect size** with a |Δ proportion| floor, or move to a test with cells as the
+replication unit. `nb_pairwise` — the obvious candidate — **was not run** in this
+sweep.
 
 Two further limits belong next to any hit list:
 
@@ -272,10 +300,35 @@ Two further limits belong next to any hit list:
   essentially every other cluster — the `marker_overlap` matching is saturated.
   **`canonical_cluster` must not be used** as a cross-dataset identity.
 
-The recurrent-vs-private split (`recurrent_switches`, F5.4) is the right way to
-read the hit lists: a gene called in one cell type is as likely a power artefact
-as biology, while genes recurring across independent cell types *with a consistent
-direction* are the defensible candidates.
+### 5.1 Recurrence does not rescue the hit lists — it condemns them
+
+The plan proposed filtering hits by recurrence across cell types, on the
+reasoning that a gene called in one cell type is likely a power artefact while a
+gene recurring across independent cell types is defensible. Run on the real data
+(`recurrent_switches`, |Δ| ≥ 0.1, FDR 0.05), that filter **fails in the
+informative direction**:
+
+| quantity | value |
+|---|---|
+| genes with ≥1 significant switch | **7,941** |
+| in ≥3 cell types | 5,719 (72 %) |
+| in ≥5 cell types | 4,630 (58 %) |
+| private to one cell type | 1,473 (**18.6 %**) |
+
+Each of the top 15 genes is significant in **all 24 of 24 cell types**, at
+`max_abs_delta = 1.0`, with **`consistent_direction = false`** — i.e. the same
+gene is called switching to the *proximal* site in some cell types and the
+*distal* site in others, at the maximum possible effect size, everywhere.
+
+Real cell-type-specific APA does not look like this. A test in which 81 % of
+genes recur across cell types and the most recurrent genes have no consistent
+direction is a test that is firing on structure in the data other than the
+contrast — consistent with §5's pseudoreplication. **Recurrence cannot be used as
+a confidence filter here, because the noise is universal rather than sporadic.**
+
+**Verdict.** No gene list from the current `fisher` output should enter the
+report. Re-run with cells as the replication unit (`nb_pairwise`, or a
+pseudobulk-per-sample design), then apply the recurrence filter to *that*.
 
 ---
 
@@ -312,3 +365,35 @@ this axis should enter the report before then.
 | trim-parameter yield comparisons | blocked by a concurrency race larger than the effect (§3) |
 | `canonical_cluster` / `switch match` | unusable — matching is saturated (§5) |
 | — *(add)* | TF-IDF beats library-size normalisation by ΔARI 0.140 (§3a) — the headline positive result |
+
+---
+
+## 8. Figures and data
+
+Figures in `reports/figures/cross_experiment/`, source tables in
+`reports/cumulative_analysis/cross_experiment/`. All generated from the real
+`RERUN_2026-08_fixed` outputs by `scripts/analyst_figures.py`.
+
+| figure | § | shows |
+|---|---|---|
+| `F1_1_atlas_null_control.png` | 2 | observed vs shifted-null vs uniform-null precision, per arm per cutoff |
+| `F1_1b_atlas_excess_over_null.png` | 2 | excess-over-null — arms indistinguishable at every cutoff |
+| `F1_2_pas_set_jaccard.png` | 1 | pairwise PAS-set agreement (`lg` vs `lp` = 0.29) |
+| `F1_3_yield_vs_celltype_ari.png` | 1 | PAS yield vs cell-type recovery — the flat line |
+| `F2_2_celltype_reassignment.png` | 3 | % of cells whose cell-type call each parameter changes |
+| `F3_1_knob_ranking.png` | 3 | **every swept knob ranked by effect on the biology** |
+| `F3_2_resolution_ari_vs_silhouette.png` | 3 | ARI peaks at res 1.0 while silhouette prefers coarser |
+| `F5_1_pdui_celltype_stage.png` | 4 | PDUI by cell type × stage, <3-stage rows flagged |
+| `F5_2_trend_depth_confound.png` | 4 | slope with vs without the detection control; stage-count histogram |
+| `F5_3_fisher_pseudoreplication.png` | 5 | hits vs cell count, sized by effect — small effects, many hits |
+| `F5_4_recurrent_switches.png` | 5.1 | recurrence distribution and top recurrent genes |
+
+Reproduce with:
+
+```bash
+python -m ema.benchmark.cross_experiment \
+    --sweep-root <...>/RERUN_2026-08_fixed \
+    --out <out> --atlas <polyasite_3.0_GRCh38_ensembl_sorted.bed> \
+    --filter-effect-root <...>/FILTER_EFFECT_2026-08
+python scripts/analyst_figures.py --in <out> --out reports/figures/cross_experiment
+```

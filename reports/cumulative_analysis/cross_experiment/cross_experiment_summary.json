@@ -1,0 +1,170 @@
+{
+  "sweep_root": "/mnt/ssd2/Laugney_Aligned/peakatail_experiments/RERUN_2026-08_fixed",
+  "n_datasets_with_celltypes": 17,
+  "atlas_null_at_50bp": {
+    "lg_annotate": {
+      "observed": 0.9469,
+      "null_shift": 0.7021,
+      "excess": 0.2448
+    },
+    "lg_ip_filter": {
+      "observed": 0.9465,
+      "null_shift": 0.6977,
+      "excess": 0.2488
+    },
+    "lg_ip_off": {
+      "observed": 0.9469,
+      "null_shift": 0.7021,
+      "excess": 0.2448
+    },
+    "lp_annotate": {
+      "observed": 0.9406,
+      "null_shift": 0.6979,
+      "excess": 0.2427
+    },
+    "si_annotate": {
+      "observed": 0.927,
+      "null_shift": 0.7065,
+      "excess": 0.2205
+    }
+  },
+  "celltype_reassignment_by_branch": {
+    "A2_trim_d10000_ext": 0.1012,
+    "A2_trim_d1000_ext": 0.0815,
+    "A2_trim_d2000_ext": 0.0831,
+    "A2_trim_d3000_ext": 0.0646,
+    "A2_trim_d5000_ext": 0.0759,
+    "A2_trim_default": 0.0,
+    "A2_trim_mult1.5": 0.0801,
+    "A2_trim_mult3.0": 0.0836,
+    "A3_libsize": 0.3077,
+    "A3_nn15": 0.0924,
+    "A3_nn50": 0.0401,
+    "A3_res0.5": 0.1438,
+    "A3_res2.0": 0.1931
+  },
+  "depth_confound": {
+    "n_celltypes": 24,
+    "n_celltypes_with_ge3_stages": 18,
+    "n_celltypes_with_2_stages_only": 6,
+    "pct_trends_uninterpretable": 25.0,
+    "median_slope": -0.002134,
+    "frac_decreasing": 0.8333,
+    "median_slope_informative": -0.003309,
+    "frac_decreasing_informative": 0.7083,
+    "sign_flips_when_depth_controlled": 9,
+    "median_corr_pdui_vs_depth": 0.9957
+  },
+  "pseudoreplication": {
+    "n_points": 90,
+    "spearman_ncells_vs_n_significant": 0.5561,
+    "pvalue_ncells_vs_n_significant": 1.273106587036216e-08,
+    "spearman_ncells_vs_frac_significant": 0.52,
+    "pvalue_ncells_vs_frac_significant": 1.5022435136567144e-07,
+    "median_frac_significant": 0.4326,
+    "max_frac_significant": 0.7365
+  },
+  "recurrent_switches": {
+    "n_genes_total": 7941,
+    "n_genes_in_1_celltype": 1473,
+    "n_genes_in_ge3_celltypes": 5719,
+    "n_genes_in_ge5_celltypes": 4630,
+    "frac_private": 0.1855,
+    "top_genes": [
+      {
+        "gene_id": "ENSG00000009413",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000010810",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000023287",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000027075",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000047849",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000053254",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000062650",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000062716",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000065243",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000069424",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000072110",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000072736",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000078369",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000081026",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      },
+      {
+        "gene_id": "ENSG00000095564",
+        "n_celltypes": 24,
+        "max_abs_delta": 1.0,
+        "consistent_direction": false
+      }
+    ]
+  },
+  "filter_effect_scenarios_present": [
+    "_stale_full_run_attempt",
+    "_stale_optionA_drop_attempt"
+  ]
+}
