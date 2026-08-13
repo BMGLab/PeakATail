@@ -662,18 +662,42 @@ Shannon entropy is a scalar per (gene, cell) — one number that summarises the 
 
 On the v9 data: 8,800 genes quantified, mean entropy 0.13 ± 0.40 bits. 2,948 genes showed inter-cluster entropy shift > 0.1 bits.
 
-### 8.6 Strategy comparison on the v9 run
+### 8.6 Strategy comparison on the corrected cohort
 
-![Length strategy real data](figures/length_strategy_real_data.png)
+![Length strategy comparison](figures/corrected/13_length_strategy.png)
 
-*Figure 18: (A) Mean score per strategy with standard deviation bars. Classic PDUI has the widest spread (bimodal: proximal-dominant and distal-dominant genes). Shannon entropy is concentrated near 0 (most cells have concentrated usage). (B) Number of quantifiable units per strategy — classic excludes multi-PAS-only genes. (C) Units with inter-cluster shift > 0.1. Classic has the highest count (4,045) because its bimodal nature makes any shift cross the 0.1 threshold easily. Shannon: 2,948 genes. (D) PDUI distribution across clusters showing the characteristic U-shape.*
+*Figure C13: (a) share of each table that is zero-coverage rows; (b) mean score
+as reported versus conditioned on the gene having reads; (c) the stage trajectory
+per metric, conditioned. Aggregated over 24 cell types.*
 
-| Strategy | Agg | n_units | mean_score | score_std | n_shift (>0.1) |
-|---|---|---|---|---|---|
-| classic | per_gene | 4,101 | 0.505 | 0.489 | 4,045 |
-| proportion | per_gene | 8,800 | 0.210 | 0.391 | 47 |
-| shannon | per_gene | 8,800 | 0.135 | 0.401 | 2,948 |
-| proportion | per_isoform | — | — | — | not run (RAM) |
+| strategy | cell types | rows | mean units | zero-coverage rows | mean (all rows) | mean (≥1 read) |
+|---|---|---|---|---|---|---|
+| `classic` | 18 | 85,404,992 | 4,426 | 96.9% | 0.012 | 0.381 |
+| `proportion` | 18 | 463,425,077 | 7,682 | 0.0% | 0.322 | 0.322 |
+| `shannon` | 17 | 138,621,873 | 7,704 | 95.7% | 0.570 | 0.688 |
+
+Read this table with §8.3 in hand — **the `proportion` row is not comparable to the
+other two.** Its 0.0% zero-coverage and its identical all-rows / conditioned means
+are both artifacts of the padding described there, not properties of the metric.
+
+For `classic` and `shannon`, which are comparable:
+
+- **Both tables are ~96–97% zero-coverage rows.** The signal is carried by 3–4% of
+  each table.
+- **Conditioning moves both means substantially** — classic 0.012 → 0.381,
+  shannon 0.570 → 0.688. Any summary of either metric that includes uncovered rows
+  is reporting mostly detection rate, exactly as §12.1 found for the stage trend.
+- **Neither shows a stage trend once conditioned** (Figure C13c). Changing the
+  length metric does not rescue the shortening signal. That is the useful negative:
+  the §12.1 result is a property of the data, not of the `classic` PDUI definition.
+
+The superseded v9 numbers (classic 4,101 units / mean 0.505; proportion 8,800 /
+0.210; shannon 8,800 / 0.135, with 4,045 / 47 / 2,948 units shifting by >0.1) are
+withdrawn. Note in passing that the v9 `proportion` row showed 47 shifting units
+against 4,045 for classic — the constant-mean artifact of §8.3 visible in the old
+run, and read at the time as a biological property.
+
+`proportion per_isoform` was not run in this sweep (memory-bound on the full GTF).
 
 ### 8.7 When to use which
 

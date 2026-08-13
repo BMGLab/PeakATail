@@ -1255,38 +1255,45 @@ $0.14 \pm 0.39$ bits. 1,372 genes showed inter-cluster entropy shift $> 0.1$ bit
   \label{fig:length_entropy_dist}
 \end{figure}
 
-\subsection{Strategy Comparison on the v9 Run}
+\subsection{Strategy Comparison on the Corrected Cohort}
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=\textwidth]{figures/length_strategy_real_data.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} This figure shows output \emph{format} from the superseded v9 run; its values predate the cell-doubling and atlas-snap fixes and must not be cited. (A) Mean score per strategy with standard deviation bars. Classic PDUI has
-    the widest spread (bimodal: proximal-dominant and distal-dominant genes). Shannon
-    entropy is concentrated near 0 (most cells have concentrated usage). (B) Number of
-    quantifiable units per strategy --- classic excludes multi-PAS-only genes. (C)
-    Units with inter-cluster shift $> 0.1$. Classic has the highest count (4,045)
-    because its bimodal nature makes any shift cross the 0.1 threshold easily. Shannon:
-    2,948 genes. (D) PDUI distribution across clusters showing the characteristic
-    U-shape.}
-  \label{fig:length_strategy_real_data}
+  \includegraphics[width=\textwidth]{figures/corrected/13_length_strategy.png}
+  \caption{(a) share of each table that is zero-coverage rows; (b) mean score as
+    reported versus conditioned on the gene having reads; (c) the stage
+    trajectory per metric, conditioned. Aggregated over 24 cell types.}
+  \label{fig:length_strategy}
 \end{figure}
 
 \begin{table}[htbp]
-  \centering
-  \caption{Length strategy comparison on v9 run.}
-  \label{tab:length_strategy}
-  \begin{tabular}{llrrrr}
+  \centering \small
+  \begin{tabular}{lrrrrrr}
     \toprule
-    \textbf{Strategy} & \textbf{Agg} & \textbf{n\_units} & \textbf{mean\_score} &
-    \textbf{score\_std} & \textbf{n\_shift ($>$0.1)} \\
+    strategy & cell types & rows & mean units & zero-cov rows & mean (all) & mean ($\geq$1 read) \\
     \midrule
-    classic     & per\_gene     & 1,898 & 0.501 & 0.481 & 1,895 \\
-    proportion  & per\_gene     & 5,407 & 0.297 & 0.436 & 0     \\
-    shannon     & per\_gene     & 5,407 & 0.136 & 0.393 & 1,372 \\
-    proportion  & per\_isoform  & ---   & ---   & ---   & not run (RAM) \\
+    \texttt{classic} & 18 & 85,404,992 & 4,426 & 96.9\% & 0.012 & 0.381 \\
+    \texttt{proportion} & 18 & 463,425,077 & 7,682 & 0.0\% & 0.322 & 0.322 \\
+    \texttt{shannon} & 17 & 138,621,873 & 7,704 & 95.7\% & 0.570 & 0.688 \\
     \bottomrule
   \end{tabular}
+  \caption{Length metrics on the corrected cohort. The \texttt{proportion} row is
+    not comparable to the other two --- see the padding note above.}
+  \label{tab:length_strategy}
 \end{table}
+
+For \texttt{classic} and \texttt{shannon}, which are comparable: both tables are
+$\sim$96--97\% zero-coverage rows, so the signal is carried by 3--4\% of each;
+conditioning moves both means substantially (classic $0.012 \rightarrow 0.381$,
+shannon $0.570 \rightarrow 0.688$); and neither shows a stage trend once
+conditioned. Changing the length metric does not rescue the shortening signal,
+which is the useful negative --- the Section~\ref{sec:corrected} result is a
+property of the data, not of the \texttt{classic} PDUI definition.
+
+The superseded v9 numbers are withdrawn. Note that the v9 \texttt{proportion} row
+showed 47 shifting units against 4,045 for \texttt{classic} --- the constant-mean
+artifact visible in the old run, and read at the time as a biological property.
+\texttt{proportion per\_isoform} was not run in this sweep (memory-bound).
 
 \subsection{When to Use Which}
 
