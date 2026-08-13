@@ -450,7 +450,7 @@ resolution" rested on the withdrawn single-run ARI and is not re-established her
 
 ### 7.1 Why "differential APA" is statistically tricky
 
-The naive approach — applying a Fisher exact test to pseudo-bulk read totals per PAS across all clusters — has a fundamental pseudo-replication problem. A gene with 20 PAS produces 20 correlated tests, and any global read imbalance between clusters inflates every individual p-value. On the v9 dataset the uncorrected Fisher flagged 9,197 significant PAS (out of 17,093 tested) for cluster 0 vs 1 — a 54% rate that is biologically implausible. The within-gene framing corrects this: the 2×2 table for each PAS uses the gene's other PAS as the background, so the test asks "conditional on reads allocated to this gene, does this PAS get used disproportionately?" rather than "does this PAS carry more total reads?". The within-gene Fisher is the design used by DEXSeq for splicing and is now the default in PeakATail's `fisher` strategy.
+The naive approach — applying a Fisher exact test to pseudo-bulk read totals per PAS across all clusters — has a fundamental pseudo-replication problem. A gene with 20 PAS produces 20 correlated tests, and any global read imbalance between clusters inflates every individual p-value. On the v9 dataset the uncorrected Fisher flagged 9,197 significant PAS (out of 17,093 tested) for cluster 0 vs 1 — a 54% rate that is biologically implausible. **The within-gene framing does not fix this on the corrected cohort**: across 1,233,328 tests it still calls 43.9% significant (§12.3), because the residual problem is pseudoreplication over *reads*, which no contingency-table framing removes. The within-gene framing corrects this: the 2×2 table for each PAS uses the gene's other PAS as the background, so the test asks "conditional on reads allocated to this gene, does this PAS get used disproportionately?" rather than "does this PAS carry more total reads?". The within-gene Fisher is the design used by DEXSeq for splicing and is now the default in PeakATail's `fisher` strategy.
 
 ### 7.2 Fisher (within-gene)
 
@@ -513,7 +513,7 @@ gives an omnibus p-value: a significant PAS is one where *any* cluster shows dif
 
 **When to use**: Multi-cluster screening where you want a single global variability statistic per PAS — e.g., to build a ranked list of PAS to follow up, or to filter the count matrix before downstream analysis. NB multi is the most computationally expensive strategy (two GLM fits per PAS, each with K−1 coefficients) but produces one interpretable statistic that does not require choosing cluster pairs.
 
-**Note**: The nb_multi q-values on this v9 dataset are extremely small (median 9×10⁻¹⁰) because the test uses all 12 clusters simultaneously — even tiny inter-cluster variation becomes highly significant with 1,051 cells. This is expected behaviour, not a bug.
+**Note**: The nb_multi q-values on the v9 dataset were extremely small (median 9×10⁻¹⁰) because the test uses all 12 clusters simultaneously — even tiny inter-cluster variation becomes highly significant with 1,051 cells. This is expected behaviour, not a bug.
 
 **Implementation**: `ema/switch_test/strategies/nb_multi.py :: NbMultiStrategy`.
 
@@ -560,7 +560,7 @@ PDUI = distal_reads / (proximal_reads + distal_reads)
 
 PDUI = 0 means all reads at the proximal site (short 3′UTR); PDUI = 1 means all reads at the distal site (long 3′UTR). For genes with more than 2 PAS, PeakATail selects the first PAS as proximal and the last as distal in transcription order (strand-aware). Genes with only one detected PAS are excluded.
 
-**Limitation**: The 2-PAS reduction discards information from all intermediate PAS. For a gene with 5 PAS, PDUI only uses 2, ignoring 3 sites that may be biologically meaningful. On the v9 data, classic PDUI quantified 4,101 genes (out of 8,800 with ≥1 PAS in adata.var), mean PDUI 0.51 ± 0.49.
+**Limitation**: The 2-PAS reduction discards information from all intermediate PAS. For a gene with 5 PAS, PDUI only uses 2, ignoring 3 sites that may be biologically meaningful. On the corrected cohort, classic PDUI quantifies a mean of 4,426 genes per cell type across 24 cell types, with mean PDUI **0.381 conditioned on the gene having reads** — but 0.012 if the 96.9% zero-coverage rows are included (§8.6). The v9 figures (4,101 genes, 0.51 ± 0.49) are withdrawn.
 
 **When to use**: Historical comparison with DaPars/scAPA results, or when a single scalar per gene is sufficient and the gene set of interest is mostly 2-PAS.
 
@@ -660,7 +660,7 @@ Shannon entropy is a scalar per (gene, cell) — one number that summarises the 
 
 **When to use**: Screening for genes where PAS usage becomes more or less concentrated across conditions, without committing to a proximal/distal framing. High H genes are candidates for regulatory complexity; low H genes in one condition but high H in another indicate condition-specific PAS concentration.
 
-On the v9 data: 8,800 genes quantified, mean entropy 0.13 ± 0.40 bits. 2,948 genes showed inter-cluster entropy shift > 0.1 bits.
+On the corrected cohort: a mean of 7,704 genes per cell type across 24 cell types, mean normalised entropy **0.688 conditioned on coverage** and 0.570 unconditionally, with 95.7% of rows carrying no reads (§8.6). The v9 figures (8,800 genes, 0.13 ± 0.40 bits, 2,948 shifting) are withdrawn.
 
 ### 8.6 Strategy comparison on the corrected cohort
 
