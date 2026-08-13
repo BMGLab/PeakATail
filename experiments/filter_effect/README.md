@@ -5,70 +5,79 @@ Compares how each PAS filter changes **clustering**, **differential APA**, and
 matrix, on the Laughney 6-GSM method-comparison subset (spans all 4 stages:
 Normal / StageI / IVprimary / Met), `lambda_gradient` peak-calling.
 
+The pipeline is **Phase 3** of the existing corrected-rerun sweep
+(`experiments/laughney/main.nf`) — there is no separate nextflow here. It is
+opt-in: `bash run_sweep.sh --phase phase3` (never runs as part of the default
+`--phase all`). See `main.nf`'s "PHASE 3" section for the processes
+(`PREP_3UTR_BED`, `FILTER_EFFECT_BRANCH`, reusing `GEX_CELLTYPE` /
+`SWITCH_COMBINE` / `SWITCH_CELLTYPE` verbatim).
+
+## Mechanism: `ema reannotate`, NOT a fresh peak-call
+
+Peak-calling is the expensive step and it's already done: Phase 3 branches
+off **`runs/grid/lg_annotate`** — the 6-GSM subset, `lambda_gradient`, atlas
+annotate + ip annotate run Phase 2's `GRID_RUN` already produced (row
+`lg_annotate` in `peakcall_grid.tsv`, "keep-all atlas + fasta"). Each
+scenario is an `ema reannotate --base-run runs/grid/lg_annotate` branch —
+cheap (trim → annotate → preprocess → cluster only), no BAM streaming.
+
+This is also what makes "PAS results keep everything, filter only applies
+downstream" literally true here (unlike a fresh filtered `ema run` would be
+— see the retracted first attempt at this experiment, corrected after
+team-lead review): the PAS filters (new `--atlas-filter` / `--ip-filter` /
+`--annot-filter` flags on `ema reannotate`, added in this PR) are applied to
+a **copy** of `lg_annotate`'s `posbed.bed`/`negbed.bed` written into each
+branch's own `--out` directory, immediately before `find_close()`.
+`lg_annotate`'s own `posbed.bed`/`negbed.bed`/`annotatedpas.bed` are never
+touched — it stays the complete, unfiltered PAS-results reference every
+scenario's PAS count is compared against. Dropping a PAS from the filtered
+copy only removes it from `find_close()`'s gene-assignment table, which is
+what the clustering matrix is built from (`genes.index ∩ matrix_pas_ids`) —
+so the drop is confined to the downstream matrix, exactly as asked.
+
 ## Scenarios (one-factor-at-a-time against `baseline`)
 
-| scenario | atlas-mode | ip-filter-mode | annot-filter |
-|---|---|---|---|
-| `baseline` | annotate (keep+flag) | annotate (keep+flag) | off |
-| `atlas_filter` | **filter** (drop non-atlas PAS) | annotate | off |
-| `annot_filter_3utr` | annotate | annotate | **on**, `--annotation-bed` = GTF-derived 3'UTR-only BED |
-| `ip_filter` | annotate | **filter** (drop internal-priming PAS) | off |
+| scenario | `ema reannotate` flags (beyond `--base-run runs/grid/lg_annotate --gtf ...`) |
+|---|---|
+| `baseline` | none — reproduces `lg_annotate`'s downstream byte-for-byte |
+| `atlas_filter` | `--atlas-filter` (drops PAS with no atlas match; reuses `lg_annotate`'s cached `unified/atlas_status.tsv`) |
+| `annot_filter_3utr` | `--annot-filter --annotation-bed <3'UTR-only BED>` (keeps only PAS inside an annotated transcript 3'UTR) |
+| `ip_filter` | `--ip-filter --genome-fasta <fa>` (drops PAS flagged as internal-priming artifacts) |
 
-Exact `ema run` invocation per scenario (see `main.nf::RUN_SCENARIO`):
-
-```
-ema run -c <A2_base_lambda_gradient.yaml (reused from the corrected-rerun sweep)> \
-    --atlas <polyasite_v3.bed> --atlas-distance 50 --atlas-mode <annotate|filter> \
-    --ip-filter --genome-fasta <fa> --ip-filter-mode <annotate|filter> \
-    [--annot-filter --annotation-bed <three_prime_utr.bed>] \
-    --output <exp_root>/runs/<scenario> --threads 16 --no-progress
-```
-
-Then per scenario: `scripts/gex_celltyping.py` → `ema switch combine
---group-key stage --split-key celltype` → per-celltype `ema switch diff`
-(fisher, nb_multi) + `ema switch length` (classic, shannon) + `ema switch
-trend --stage-order Normal,StageI,IVprimary,Met`.
-
-## IMPORTANT caveat — read before interpreting results
-
-The user's framing was "PAS results always keep every PAS; the filter only
-applies going into clustering." At the `ema run` code level this is **not**
-what `--atlas-mode filter` / `--ip-filter-mode filter` / `--annot-filter` do:
-`ema/main.py::_apply_pas_filters()` runs **before** `find_close()` builds the
-gene-assignment table that `write_pas_gene_artifacts()` writes
-`annotatedpas.bed` from. So a "filter" scenario's own `annotatedpas.bed` /
-`pasbed.bed` already has fewer rows than `baseline`'s — the drop is not
-confined to the clustering matrix. There is no existing `ema` flag that keeps
-a PAS in the result list while excluding it only from clustering (that would
-need new engine code — out of scope here).
-
-This still answers the question asked: `baseline` is the one scenario whose
-PAS list is provably complete (nothing dropped), and each filtered
-scenario's PAS-count delta against `baseline` **is** the "removed for
-downstream" number the comparison reports. Just don't describe a filtered
-scenario's own `annotatedpas.bed` as "the full PAS results, filter applied
-only downstream" — it isn't, by construction of the current filter wiring.
+Then per scenario (unchanged from the original design, reusing Phase 1's
+processes): `scripts/gex_celltyping.py` → `ema switch combine --group-key
+stage --split-key celltype` → per-celltype `ema switch diff` (fisher,
+nb_multi) + `ema switch length` (classic, shannon) + `ema switch trend
+--stage-order Normal,StageI,IVprimary,Met`.
 
 ## 3'UTR-only annotation BED
 
-`annot_filter_3utr` needs a 3'UTR-*only* BED, not the default `--annot-filter`
-fallback (`ema/annotate/gtftobed.py`'s gene BED, `source_type="gene"` —
-whole gene bodies, not 3'UTRs). Built once by `BUILD_3UTR_BED` via
+`annot_filter_3utr` needs a 3'UTR-*only* BED, not `ema reannotate
+--annot-filter`'s default fallback (no `--annotation-bed` given → the
+GTF-derived gene BED, `ema/annotate/gtftobed.py`, `source_type="gene"` —
+whole gene bodies, not 3'UTRs). Built once by `PREP_3UTR_BED` via
 `scripts/build_3utr_bed.py`: scans the GTF for `three_prime_utr` feature rows
 (col 3) directly, converts to BED, `bedtools merge -s` per strand. Output:
-`<exp_root>/refs/three_prime_utr.bed`.
+`<filter_effect_root>/refs/three_prime_utr.bed`.
 
-## Output layout
+## Output layout (dedicated root, `runs/grid/lg_annotate` is read-only)
 
 ```
-<exp_root>/runs/<scenario>/{07_clustering,B2_gex_celltyping,B3_switch,annotatedpas.bed,pasbed.bed,...}
-<exp_root>/logs/{nextflow.log,report.html,timeline.html,trace.txt}
-<exp_root>/refs/three_prime_utr.bed
+/mnt/ssd2/Laugney_Aligned/peakatail_experiments/FILTER_EFFECT_2026-08/
+  runs/<scenario>/{07_clustering,B2_gex_celltyping,B3_switch,pasbed.bed,posbed.bed,negbed.bed,branch_manifest.json,...}
+  refs/three_prime_utr.bed
 ```
+
+`branch_manifest.json`'s `"pas_filters"` key records `n_pas_before_filter` /
+`n_pas_after_filter` / `n_pas_dropped` for that scenario, plus the raw
+`apply_filters`/atlas-match stats.
 
 ## Analysis
 
-`python -m ema.benchmark.sweep_analysis --filter-effect <exp_root>/runs
---scenario baseline=baseline --scenario atlas_filter=atlas_filter
---scenario annot_filter_3utr=annot_filter_3utr --scenario ip_filter=ip_filter
---out <exp_root>/logs/filter_effect_analysis` (see `analyze_filter_effect()`).
+`python -m ema.benchmark.sweep_analysis --scenario baseline=<root>/runs/baseline
+--scenario atlas_filter=<root>/runs/atlas_filter --scenario
+annot_filter_3utr=<root>/runs/annot_filter_3utr --scenario
+ip_filter=<root>/runs/ip_filter --out <root>/logs/filter_effect_analysis`
+(see `analyze_filter_effect()` in `ema/benchmark/sweep_analysis.py`) —
+compares PAS-retained count/delta, clustering (n_clusters, GEX ARI/AMI),
+Fisher differential hit counts, and 3'UTR trend across the 4 scenarios.

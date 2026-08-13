@@ -52,6 +52,85 @@ def _require(path: Path, what: str) -> Path:
     return path
 
 
+def _count_bed_lines(path: Path) -> int:
+    if not Path(path).exists():
+        return 0
+    with open(path) as fh:
+        return sum(1 for ln in fh if ln.strip())
+
+
+def _load_or_compute_atlas_match(
+    base: Path, atlas: str | Path | None, atlas_distance: int, out: Path,
+) -> dict[str, bool]:
+    """``{pas_id: atlas_match_bool}`` for every PAS in the base run's unified set.
+
+    Prefers ``<base>/unified/atlas_status.tsv`` -- already computed by the
+    base run when it used ``--atlas-mode annotate`` (the default), so this
+    is normally a plain read, no recompute. Falls back to a fresh
+    :func:`ema.datasets.atlas_annotate.annotate_pas_against_atlas` pass
+    (read-only, never drops/renumbers a PAS -- only used here to get the
+    match status) when the base run has no cached sidecar, e.g. it never
+    had an atlas configured. Requires *atlas* in that case.
+    """
+    cached = base / "unified" / "atlas_status.tsv"
+    if cached.exists():
+        log.info("atlas_filter: reusing cached %s", cached)
+        status_path = cached
+    else:
+        if not atlas:
+            raise ReannotateError(
+                "--atlas-filter is enabled but the base run has no cached "
+                f"{cached} (it wasn't atlas-annotated) and no --atlas was "
+                "given to recompute match status from."
+            )
+        from ema.datasets.atlas_annotate import annotate_pas_against_atlas
+
+        unified_tmp = out / "_atlas_filter_check" / "unified_pas.bed"
+        unified_tmp.parent.mkdir(parents=True, exist_ok=True)
+        with open(unified_tmp, "w") as f:
+            for src in (base / "posbed.bed", base / "negbed.bed"):
+                if src.exists():
+                    f.write(src.read_text())
+        status_path, _stats_path = annotate_pas_against_atlas(
+            unified_pasbed_path=unified_tmp,
+            atlas_bed_path=atlas,
+            distance=atlas_distance,
+            output_dir=unified_tmp.parent,
+        )
+        log.info("atlas_filter: recomputed match status -> %s", status_path)
+
+    import pandas as pd
+
+    df = pd.read_csv(status_path, sep="\t", dtype=str)
+    return {
+        row["unified_pas_id"]: str(row["atlas_match"]).strip().lower() == "true"
+        for _, row in df.iterrows()
+    }
+
+
+def _drop_unmatched_pas(bed_path: Path, match_of: dict[str, bool]) -> None:
+    """Rewrite *bed_path* in place, keeping only rows whose col-4 id matches.
+
+    A PAS absent from *match_of* (id not covered by the atlas-status source)
+    is treated as unmatched -- dropped, same as an explicit ``False`` --
+    since a PAS this filter can't confirm a match for should not survive a
+    "keep only atlas-confirmed PAS" filter.
+    """
+    bed_path = Path(bed_path)
+    if not bed_path.exists():
+        return
+    kept = []
+    with open(bed_path) as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            fields = line.rstrip("\n").split("\t")
+            pas_id = fields[3] if len(fields) > 3 else None
+            if pas_id is not None and match_of.get(pas_id, False):
+                kept.append(line)
+    bed_path.write_text("".join(kept))
+
+
 def reannotate_run(
     *,
     base_run: str | Path,
@@ -74,12 +153,27 @@ def reannotate_run(
     min_cells: int = 3,
     min_pas_per_cell: int = 50,
     threads: int | None = None,
+    atlas_filter: bool = False,
+    atlas: str | Path | None = None,
+    atlas_distance: int = 50,
+    ip_filter: bool = False,
+    genome_fasta: str | Path | None = None,
+    ip_window_left: int = 10,
+    ip_window_right: int = 30,
+    ip_a_stretch: int = 6,
+    ip_a_fraction: float = 0.7,
+    annot_filter: bool = False,
+    annotation_bed: str | Path | None = None,
 ) -> dict[str, Any]:
     """Branch ``base_run`` into ``out`` with new trim / filter / cluster params.
 
     Validates the base run's artifacts exist BEFORE importing anything heavy
     (mirrors ``scripts/reannotate_from_run.py``), then:
 
+      0. (NEW, all optional/default-off) Apply PAS-level filters to COPIES of
+         the base run's unified ``posbed.bed``/``negbed.bed`` -- never the
+         base run's own files -- so the base run's PAS results are untouched
+         and reusable by every other branch. See "PAS filters" below.
       1. Re-derives ``gene_end.bed`` / UTR lengths from ``gtf`` (two-tier
          cached — near-instant on repeat).
       2. Re-runs ``find_close`` (the trim) on the base run's unified PAS set.
@@ -122,6 +216,40 @@ def reannotate_run(
             singleton (same mechanism ``ema/cli/run.py`` uses), so the
             downstream per-dataset ``Pool`` respects it. ``None`` leaves the
             existing/auto-detected ceiling untouched.
+        atlas_filter: Drop PAS with no atlas match before trim/cluster (all
+            default False -- a branch with none of these set reproduces the
+            base run's downstream exactly, byte-for-byte, same guarantee as
+            the trim/cluster knobs above). Applied to a COPY of the base
+            run's ``posbed.bed``/``negbed.bed`` written under ``out`` --
+            the base run's own files, and its ``annotatedpas.bed``/PAS
+            ledger, are never touched, so the base run stays a valid
+            "keeps everything" reference for every other branch. Prefers
+            ``<base_run>/unified/atlas_status.tsv`` (already computed when
+            the base run used ``--atlas-mode annotate``) over recomputing;
+            falls back to a fresh :func:`ema.datasets.atlas_annotate.
+            annotate_pas_against_atlas` pass when that sidecar is absent
+            (requires *atlas*).
+        atlas: Reference atlas BED, used only as the fallback recompute
+            source for *atlas_filter* (or to validate distance) when the
+            base run has no cached ``atlas_status.tsv``.
+        atlas_distance: Max summit-to-atlas distance (bp) for a match, used
+            only by the fallback recompute path.
+        ip_filter: Drop PAS flagged as internal-priming artifacts (A-rich
+            downstream stretch) before trim/cluster. Recomputed fresh via
+            :func:`ema.experimental.peak_filters.apply_filters` (mode=
+            "filter") against *genome_fasta* -- cheap (a genome-FASTA scan
+            over ~10^4-10^5 already-called PAS, not a re-peak-call).
+        genome_fasta, ip_window_left, ip_window_right, ip_a_stretch,
+            ip_a_fraction: Forwarded verbatim to ``apply_filters`` when
+            *ip_filter* is set; same defaults as ``ema run``'s schema.
+        annot_filter: Drop PAS not overlapping *annotation_bed* before
+            trim/cluster (e.g. a 3'UTR-only BED, for "keep only PAS inside
+            an annotated transcript 3'UTR"). Recomputed fresh via
+            :func:`ema.experimental.peak_filters.apply_filters`.
+        annotation_bed: Annotation BED for *annot_filter*. Defaults to the
+            GTF-derived gene-body BED this branch already writes
+            (``directory_config.endbed``, from step 1) when unset -- same
+            fallback ``ema run`` uses.
 
     Returns:
         The branch manifest dict written to ``<out>/branch_manifest.json``
@@ -184,7 +312,69 @@ def reannotate_run(
     )
     log.info("utr_lengths: %d genes", len(utr_lengths))
 
-    # 2. THE TRIM — re-run find_close on the base run's unified PAS set.
+    # 1.5 PAS FILTERS (all optional, default off) — applied to COPIES of the
+    #     base run's unified posbed/negbed under `out`, so the base run's own
+    #     PAS results (posbed.bed/negbed.bed/annotatedpas.bed) are NEVER
+    #     touched and stay a valid "keeps everything" reference for other
+    #     branches. `posbed`/`negbed` are reassigned below to point at the
+    #     (possibly filtered) copies find_close() actually consumes.
+    pas_filter_stats: dict = {}
+    n_pas_before_filter = _count_bed_lines(posbed) + _count_bed_lines(negbed)
+    if atlas_filter or ip_filter or annot_filter:
+        import shutil
+
+        branch_posbed = out / "posbed.bed"
+        branch_negbed = out / "negbed.bed"
+        shutil.copy2(posbed, branch_posbed)
+        shutil.copy2(negbed, branch_negbed)
+
+        if atlas_filter:
+            log.info("reannotate PAS filter: atlas_filter (drop non-matching PAS)")
+            match_of = _load_or_compute_atlas_match(base, atlas, atlas_distance, out)
+            n_before = _count_bed_lines(branch_posbed) + _count_bed_lines(branch_negbed)
+            _drop_unmatched_pas(branch_posbed, match_of)
+            _drop_unmatched_pas(branch_negbed, match_of)
+            n_after = _count_bed_lines(branch_posbed) + _count_bed_lines(branch_negbed)
+            pas_filter_stats["atlas_filter"] = {
+                "n_before": n_before, "n_after": n_after, "n_dropped": n_before - n_after,
+            }
+
+        if ip_filter or annot_filter:
+            from ema.experimental.peak_filters import apply_filters
+
+            resolved_annotation_bed = (
+                str(annotation_bed) if annotation_bed else str(directory_config.endbed)
+            )
+            for strand_label, bed_path in (("pos", branch_posbed), ("neg", branch_negbed)):
+                tmp_out = bed_path.with_suffix(".pas_filter_tmp")
+                stats = apply_filters(
+                    input_bed=str(bed_path), output_bed=str(tmp_out),
+                    genome_fasta=str(genome_fasta) if genome_fasta else None,
+                    annotation_bed=resolved_annotation_bed if annot_filter else None,
+                    enable_internal_priming=ip_filter,
+                    enable_annotation_filter=annot_filter,
+                    ip_window_left=ip_window_left, ip_window_right=ip_window_right,
+                    ip_a_stretch=ip_a_stretch, ip_a_fraction=ip_a_fraction,
+                    ip_mode="filter",
+                )
+                import os
+                os.replace(tmp_out, bed_path)
+                pas_filter_stats.setdefault(strand_label, {})
+                pas_filter_stats[strand_label].update(stats)
+            log.info(
+                "reannotate PAS filter: ip_filter=%s annot_filter=%s (annotation_bed=%s)",
+                ip_filter, annot_filter, resolved_annotation_bed if annot_filter else None,
+            )
+
+        posbed, negbed = branch_posbed, branch_negbed
+    n_pas_after_filter = _count_bed_lines(posbed) + _count_bed_lines(negbed)
+    if pas_filter_stats:
+        log.info(
+            "reannotate PAS filters: %d -> %d PAS (%d dropped) before find_close",
+            n_pas_before_filter, n_pas_after_filter, n_pas_before_filter - n_pas_after_filter,
+        )
+
+    # 2. THE TRIM — re-run find_close on the (possibly filtered) unified PAS set.
     log.info(
         "find_close: max_distance=%d utr_multiplier=%.2f include_extended=%s",
         max_gene_distance, utr_multiplier, include_extended,
@@ -404,6 +594,15 @@ def reannotate_run(
             "min_read": min_read,
             "min_cells": min_cells,
             "min_pas_per_cell": min_pas_per_cell,
+        },
+        "pas_filters": {
+            "atlas_filter": atlas_filter,
+            "ip_filter": ip_filter,
+            "annot_filter": annot_filter,
+            "n_pas_before_filter": n_pas_before_filter,
+            "n_pas_after_filter": n_pas_after_filter,
+            "n_pas_dropped": n_pas_before_filter - n_pas_after_filter,
+            "stats": pas_filter_stats,
         },
         "datasets": results,
         "manifest_path": manifest_path,

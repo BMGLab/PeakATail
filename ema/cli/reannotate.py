@@ -74,6 +74,35 @@ log = logging.getLogger(__name__)
 @click.option("--min-read", "min_read", type=int, default=1500, show_default=True)
 @click.option("--min-cells", "min_cells", type=int, default=3, show_default=True)
 @click.option("--min-pas-per-cell", "min_pas_per_cell", type=int, default=50, show_default=True)
+# ── PAS filters (all default off — a branch with none set reproduces the
+# base run's downstream exactly; see ema/reannotate.py::reannotate_run docstring) ─
+@click.option("--atlas-filter", "atlas_filter", is_flag=True, default=False,
+              help="Drop PAS with no atlas match before trim/cluster (reuses the "
+                   "base run's cached unified/atlas_status.tsv when present, else "
+                   "recomputes from --atlas). Never touches the base run's own "
+                   "PAS results.")
+@click.option("--atlas", "atlas", type=click.Path(exists=True, dir_okay=False),
+              default=None,
+              help="Reference atlas BED — fallback recompute source for "
+                   "--atlas-filter when the base run has no cached atlas_status.tsv.")
+@click.option("--atlas-distance", "atlas_distance", type=int, default=50, show_default=True,
+              help="Max summit-to-atlas distance (bp) for a match (fallback recompute only).")
+@click.option("--ip-filter", "ip_filter", is_flag=True, default=False,
+              help="Drop PAS flagged as internal-priming (A-rich stretch) before "
+                   "trim/cluster (requires --genome-fasta). Recomputed fresh — cheap.")
+@click.option("--genome-fasta", "genome_fasta", type=click.Path(exists=True),
+              default=None, help="Genome FASTA (indexed with pyfaidx/.fai), required by --ip-filter.")
+@click.option("--ip-window-left", "ip_window_left", type=int, default=10, show_default=True)
+@click.option("--ip-window-right", "ip_window_right", type=int, default=30, show_default=True)
+@click.option("--ip-a-stretch", "ip_a_stretch", type=int, default=6, show_default=True)
+@click.option("--ip-a-fraction", "ip_a_fraction", type=float, default=0.7, show_default=True)
+@click.option("--annot-filter", "annot_filter", is_flag=True, default=False,
+              help="Drop PAS not overlapping --annotation-bed before trim/cluster "
+                   "(e.g. a 3'UTR-only BED). Recomputed fresh — cheap.")
+@click.option("--annotation-bed", "annotation_bed", type=click.Path(exists=True, dir_okay=False),
+              default=None,
+              help="Annotation BED for --annot-filter. Optional — defaults to the "
+                   "GTF-derived gene BED this branch already writes (gene_end.bed).")
 def reannotate(**kwargs) -> None:
     """Branch a completed `ema run` into a new trim/cluster variant, skipping
     peak calling."""
@@ -118,6 +147,17 @@ def reannotate(**kwargs) -> None:
                 min_cells=kwargs["min_cells"],
                 min_pas_per_cell=kwargs["min_pas_per_cell"],
                 threads=kwargs["threads"],
+                atlas_filter=kwargs["atlas_filter"],
+                atlas=kwargs["atlas"],
+                atlas_distance=kwargs["atlas_distance"],
+                ip_filter=kwargs["ip_filter"],
+                genome_fasta=kwargs["genome_fasta"],
+                ip_window_left=kwargs["ip_window_left"],
+                ip_window_right=kwargs["ip_window_right"],
+                ip_a_stretch=kwargs["ip_a_stretch"],
+                ip_a_fraction=kwargs["ip_a_fraction"],
+                annot_filter=kwargs["annot_filter"],
+                annotation_bed=kwargs["annotation_bed"],
             )
         except ReannotateError as e:
             raise click.ClickException(str(e))

@@ -359,3 +359,133 @@ class TestClusteringKnobsReachClustering:
         assert captured["random_seed"] == 99
         assert captured["tfidf_scale_factor"] == 12345.0
         assert captured["depth_corr_threshold"] == 0.33
+
+
+# --------------------------------------------------------------------------- #
+# PAS filters (atlas_filter / ip_filter / annot_filter) — the FILTER-EFFECT
+# experiment's mechanism: filter a COPY of the base run's posbed/negbed
+# before find_close(), never the base run's own PAS results.
+# --------------------------------------------------------------------------- #
+
+import json  # noqa: E402
+
+
+def _atlas_status_tsv(matches: dict) -> str:
+    lines = ["unified_pas_id\tatlas_match\tatlas_distance_bp"]
+    for pas_id, match in matches.items():
+        lines.append(f"{pas_id}\t{match}\t{0 if match else ''}")
+    return "\n".join(lines) + "\n"
+
+
+class TestPasFilters:
+    def test_no_filters_pas_filter_stats_are_all_off_and_nothing_dropped(
+        self, tmp_path, gtf,
+    ):
+        base = _build_base_run(tmp_path)
+        out = tmp_path / "branch_nofilter"
+        result = _invoke_reannotate(base, out, gtf)
+        assert result.exit_code == 0, result.output
+
+        manifest = json.loads((out / "branch_manifest.json").read_text())
+        pf = manifest["pas_filters"]
+        assert pf["atlas_filter"] is False
+        assert pf["ip_filter"] is False
+        assert pf["annot_filter"] is False
+        assert pf["n_pas_dropped"] == 0
+        assert pf["n_pas_before_filter"] == pf["n_pas_after_filter"] == 2
+
+        # Base run's own PAS results are untouched.
+        assert (base / "posbed.bed").read_text() == PASBED_TEXT
+
+    def test_atlas_filter_reuses_cached_status_and_drops_unmatched(self, tmp_path, gtf):
+        base = _build_base_run(tmp_path)
+        (base / "unified" / "atlas_status.tsv").write_text(
+            _atlas_status_tsv({"1": True, "2": False})
+        )
+        out = tmp_path / "branch_atlas_filter"
+        result = _invoke_reannotate(base, out, gtf, extra_args=["--atlas-filter"])
+        assert result.exit_code == 0, result.output
+
+        manifest = json.loads((out / "branch_manifest.json").read_text())
+        pf = manifest["pas_filters"]
+        assert pf["atlas_filter"] is True
+        assert pf["n_pas_before_filter"] == 2
+        assert pf["n_pas_after_filter"] == 1
+        assert pf["n_pas_dropped"] == 1
+
+        # Branch's own copy of posbed.bed reflects the filter; base run doesn't.
+        branch_posbed = (out / "posbed.bed").read_text()
+        assert "\t1\t" in branch_posbed
+        assert "\t2\t" not in branch_posbed
+        assert (base / "posbed.bed").read_text() == PASBED_TEXT
+
+        # Only PAS "1" survives into the clustering matrix.
+        import anndata as ad
+        a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
+        assert list(a.var_names) == ["1"]
+
+    def test_atlas_filter_without_cache_or_atlas_errors_clearly(self, tmp_path, gtf):
+        base = _build_base_run(tmp_path)  # no unified/atlas_status.tsv
+        out = tmp_path / "branch_atlas_filter_err"
+        result = _invoke_reannotate(base, out, gtf, extra_args=["--atlas-filter"])
+        assert result.exit_code != 0
+        assert "atlas" in str(result.output).lower() + str(result.exception).lower()
+
+    def test_annot_filter_drops_pas_outside_annotation_bed(self, tmp_path, gtf):
+        pytest.importorskip("pybedtools")
+        base = _build_base_run(tmp_path)
+        # Annotation BED covers only PAS "1"'s locus (chr1:1090-1110), not PAS "2"'s.
+        annotation_bed = tmp_path / "three_prime_utr.bed"
+        annotation_bed.write_text("chr1\t1090\t1110\tregion\t0\t+\n")
+
+        out = tmp_path / "branch_annot_filter"
+        result = _invoke_reannotate(
+            base, out, gtf,
+            extra_args=["--annot-filter", "--annotation-bed", str(annotation_bed)],
+        )
+        assert result.exit_code == 0, result.output
+
+        manifest = json.loads((out / "branch_manifest.json").read_text())
+        pf = manifest["pas_filters"]
+        assert pf["annot_filter"] is True
+        assert pf["n_pas_after_filter"] == 1
+
+        import anndata as ad
+        a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
+        assert list(a.var_names) == ["1"]
+
+    def test_ip_filter_drops_internally_primed_pas(self, tmp_path, gtf):
+        pytest.importorskip("pyfaidx")
+        base = _build_base_run(tmp_path)
+
+        # chr1 filler with no long A-run, except an A-rich stretch right
+        # after PAS "2" (chr1:27000-27001, + strand -> checked window is
+        # [26991:27031)) so only PAS "2" gets flagged internal-priming.
+        seq = list(("ACGT" * 10000)[:30000])
+        for i in range(27000, 27030):
+            seq[i] = "A"
+        fasta_path = tmp_path / "genome.fa"
+        fasta_path.write_text(">chr1\n" + "".join(seq) + "\n")
+
+        out = tmp_path / "branch_ip_filter"
+        result = _invoke_reannotate(
+            base, out, gtf,
+            extra_args=["--ip-filter", "--genome-fasta", str(fasta_path)],
+        )
+        assert result.exit_code == 0, result.output
+
+        manifest = json.loads((out / "branch_manifest.json").read_text())
+        pf = manifest["pas_filters"]
+        assert pf["ip_filter"] is True
+        assert pf["n_pas_after_filter"] == 1
+
+        import anndata as ad
+        a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
+        assert list(a.var_names) == ["1"]
+
+    def test_help_lists_pas_filter_options(self):
+        result = CliRunner().invoke(main, ["reannotate", "--help"])
+        assert result.exit_code == 0
+        for flag in ("--atlas-filter", "--atlas", "--atlas-distance",
+                     "--ip-filter", "--genome-fasta", "--annot-filter", "--annotation-bed"):
+            assert flag in result.output, f"{flag} missing from --help output"
