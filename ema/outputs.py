@@ -565,6 +565,7 @@ def write_pas_gene_artifacts(
     *,
     atlas_of: dict | None = None,
     ip_of: dict | None = None,
+    in_3utr_of: dict | None = None,
 ) -> tuple[Path, Path]:
     """Write ``pas_gene.tsv`` and ``annotatedpas.bed`` for one dataset.
 
@@ -574,10 +575,16 @@ def write_pas_gene_artifacts(
 
     ``annotatedpas.bed`` extends ``pasbed.bed`` with a trailing gene_id
     column, and (D9) three further trailing status columns --
-    ``atlas_match``, ``atlas_distance_bp``, ``internal_priming`` -- so the
-    "keep everything, annotate with match/no-match" atlas-snap and
-    internal-priming filters are queryable straight off the BED, not just
-    the PAS ledger. The first 6 columns stay plain BED6 so existing BED
+    ``atlas_match``, ``atlas_distance_bp``, ``internal_priming`` -- plus a
+    fourth, ``in_3utr`` -- so the "keep everything, annotate with
+    match/no-match" atlas-snap / internal-priming / 3'UTR-membership labels
+    are queryable straight off the BED, not just the PAS ledger. This BED
+    covers EVERY PAS this dataset's peak-calling produced (one row per
+    ``pasbed.bed`` line), independent of whether a PAS made it into the
+    clustering matrix -- a PAS excluded from clustering (see
+    ``ema.downstream_runner.run_one_dataset_downstream``'s
+    ``exclude_pas_ids``) still gets its full row here, just like every
+    other PAS. The first 6 columns stay plain BED6 so existing BED
     consumers (bedtools, etc.) still parse the file; extra columns are
     appended, never inserted. It depends on ``pasbed.bed`` having been
     written first (see :func:`write_per_dataset_beds`); if the pasbed
@@ -597,6 +604,10 @@ def write_pas_gene_artifacts(
             ``ema.experimental.peak_filters.apply_filters``'s
             ``"internal_priming_flags"`` stats key. PAS absent from the
             map get ``""``.
+        in_3utr_of: Optional ``{pas_id: in_3utr_bool}`` -- whether the PAS
+            overlaps an annotated transcript 3'UTR (see
+            ``ema.experimental.peak_filters.label_pas_in_bed``). PAS absent
+            from the map (label didn't run) get ``""``.
 
     Returns:
         ``(pas_gene_tsv_path, annotatedpas_bed_path)``.  The BED path
@@ -607,6 +618,7 @@ def write_pas_gene_artifacts(
 
     atlas_of = atlas_of or {}
     ip_of = ip_of or {}
+    in_3utr_of = in_3utr_of or {}
 
     pas_gene_tsv = directory_config.pas_gene_for(dataset_id)
     pas_gene_tsv.parent.mkdir(parents=True, exist_ok=True)
@@ -627,7 +639,8 @@ def write_pas_gene_artifacts(
                     gid = lookup.get(pas_id, "")
                     atlas_match, atlas_distance_bp = atlas_of.get(pas_id, ("", ""))
                     ip_flag = ip_of.get(pas_id, "")
-                    extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag)]
+                    in_3utr_flag = in_3utr_of.get(pas_id, "")
+                    extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag), str(in_3utr_flag)]
                     dst.write("\t".join(parts + extra) + "\n")
     else:
         log.warning(

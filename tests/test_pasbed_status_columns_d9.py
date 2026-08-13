@@ -33,12 +33,13 @@ def test_write_pas_gene_artifacts_appends_status_columns(tmp_path):
         pas_ids=["1", "2"], gene_ids=["ENSG1", "ENSG2"],
         atlas_of={"1": (True, 5), "2": (False, "")},
         ip_of={"1": False, "2": True},
+        in_3utr_of={"1": True, "2": False},
     )
 
     annot = directory_config.annotatedpas_for("dsA")
     lines = annot.read_text().splitlines()
-    assert lines[0].split("\t") == ["chr1", "10", "11", "1", "0", "+", "ENSG1", "True", "5", "False"]
-    assert lines[1].split("\t") == ["chr1", "20", "21", "2", "0", "-", "ENSG2", "False", "", "True"]
+    assert lines[0].split("\t") == ["chr1", "10", "11", "1", "0", "+", "ENSG1", "True", "5", "False", "True"]
+    assert lines[1].split("\t") == ["chr1", "20", "21", "2", "0", "-", "ENSG2", "False", "", "True", "False"]
 
 
 def test_write_pas_gene_artifacts_defaults_to_empty_status_when_not_supplied(tmp_path):
@@ -56,7 +57,7 @@ def test_write_pas_gene_artifacts_defaults_to_empty_status_when_not_supplied(tmp
 
     annot = directory_config.annotatedpas_for("dsB")
     line = annot.read_text().splitlines()[0]
-    assert line.split("\t") == ["chr1", "10", "11", "1", "0", "+", "ENSG1", "", "", ""]
+    assert line.split("\t") == ["chr1", "10", "11", "1", "0", "+", "ENSG1", "", "", "", ""]
 
 
 def test_run_pasbed_reads_extended_annotatedpas_bed(tmp_path):
@@ -90,6 +91,30 @@ def test_run_pasbed_reads_extended_annotatedpas_bed(tmp_path):
     assert list(df["pas_id"]) == [1, 2]
     assert list(df["gene_id"]) == ["ENSG1", "ENSG2"]
     assert list(df["atlas_match"]) == [True, False]
+
+
+def test_run_pasbed_reads_11col_annotatedpas_bed_with_in_3utr(tmp_path):
+    """The FILTER-EFFECT reannotate-mask feature's 11-column shape (BED6 +
+    gene_id + atlas_match + atlas_distance_bp + internal_priming + in_3utr)
+    parses correctly -- the newest column, appended last."""
+    from ema.data.run import Run
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run_manifest.json").write_text("{}")
+    (run_dir / "pasbed.bed").write_text(
+        "chr1\t10\t11\t1\t0\t+\tENSG1\tTrue\t5\tFalse\tTrue\n"
+        "chr1\t20\t21\t2\t0\t-\tENSG2\tFalse\t\tTrue\tFalse\n"
+    )
+
+    run = Run.from_dir(run_dir)
+    df = run.pasbed
+
+    assert list(df.columns) == [
+        "chrom", "start", "end", "pas_id", "score", "strand",
+        "gene_id", "atlas_match", "atlas_distance_bp", "internal_priming", "in_3utr",
+    ]
+    assert list(df["in_3utr"]) == [True, False]
 
 
 def test_run_pasbed_reads_legacy_bed6_unchanged(tmp_path):

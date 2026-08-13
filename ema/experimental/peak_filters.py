@@ -158,3 +158,60 @@ def _filter_by_annotation(bed_path: str, annotation_bed: str,
         "filtered": removed,
         "filtered_fraction": round(removed / max(total, 1), 4)
     }
+
+
+def label_pas_in_bed(input_bed: str, region_bed: str) -> dict:
+    """Label every PAS with whether it overlaps *region_bed* -- never drops.
+
+    Pure annotation overlay, same "keep everything, tag what's known"
+    contract as :func:`ema.datasets.atlas_annotate.annotate_pas_against_atlas`
+    and the internal-priming filter's ``mode="annotate"`` -- used by the
+    FILTER-EFFECT reannotate-mask feature to label 3'UTR membership
+    (``in_3utr``) without touching the PAS results, so the exclusion (if
+    any) can be applied later, only to the clustering matrix.
+
+    Args:
+        input_bed: BED6 PAS file (e.g. the unified ``posbed.bed``+
+            ``negbed.bed`` concatenation).
+        region_bed: Region BED to test overlap against (e.g. a 3'UTR-only
+            BED from ``scripts/build_3utr_bed.py``).
+
+    Returns:
+        Dict with ``{pas_id: bool}`` under ``"flags"``, plus ``total``/
+        ``n_in_region``/``n_not_in_region``/``in_region_fraction`` summary
+        stats. On a missing/empty *input_bed*, returns an empty flags map
+        and zeroed stats rather than raising.
+    """
+    import os
+
+    if not os.path.exists(input_bed) or os.path.getsize(input_bed) == 0:
+        return {"flags": {}, "total": 0, "n_in_region": 0, "n_not_in_region": 0,
+                "in_region_fraction": 0.0}
+
+    from pybedtools import BedTool
+
+    peaks = BedTool(input_bed)
+    region = BedTool(region_bed)
+
+    # -c: append an overlap-count column per input row -- keeps every row
+    # (never drops), lets us derive a bool per pas_id from the count.
+    counted = peaks.intersect(region, c=True)
+
+    flags: dict[str, bool] = {}
+    for row in counted:
+        fields = str(row).rstrip("\n").split("\t")
+        if len(fields) < 4:
+            continue
+        pas_id = fields[3]
+        n_overlaps = int(fields[-1])
+        flags[pas_id] = n_overlaps > 0
+
+    total = len(flags)
+    n_in = sum(1 for v in flags.values() if v)
+    return {
+        "flags": flags,
+        "total": total,
+        "n_in_region": n_in,
+        "n_not_in_region": total - n_in,
+        "in_region_fraction": round(n_in / total, 4) if total else 0.0,
+    }

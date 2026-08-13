@@ -119,14 +119,19 @@ def do_p2 = (params.phase == 'all' || params.phase == 'phase2')
 // only, `--phase phase3`) so a routine `bash run_sweep.sh -resume` NEVER
 // triggers it by surprise. Continues from phase2's already-computed 6-GSM
 // subset peak-calls (runs/grid/lg_annotate — lambda_gradient, atlas
-// annotate, ip annotate) via `ema reannotate` — NO re-peak-calling. Each
-// scenario flips exactly ONE PAS filter axis (atlas_filter / annot_filter
-// against a 3'UTR-only BED / ip_filter) applied to a COPY of lg_annotate's
-// posbed/negbed before find_close(); lg_annotate's own PAS results
-// (posbed.bed/negbed.bed/annotatedpas.bed) are never touched, so it stays
-// the "keeps everything" reference every scenario's PAS-count is compared
-// against. Output goes to a DEDICATED root (params.filter_effect_root) —
-// nothing under params.out_root/params.sweep_root is written by phase3.
+// annotate, ip annotate) via `ema reannotate` — NO re-peak-calling.
+//
+// Every scenario LABELS all three axes (atlas_match, internal_priming,
+// in_3utr) on every PAS -- annotatedpas.bed carries the FULL labeled PAS
+// set, identically, across all 4 scenarios (genuinely "keeps everything",
+// not just lg_annotate's own copy). Independently, each scenario flips
+// EXACTLY ONE `--exclude-*` flag (or none, for baseline), which narrows
+// ONLY the clustering matrix that scenario's own GEX-celltyping/diff/
+// length/trend re-run on -- see FILTER_EFFECT_BRANCH + ema/reannotate.py's
+// "PAS labels + clustering mask" for the full mechanism. lg_annotate's own
+// PAS results (posbed.bed/negbed.bed/annotatedpas.bed) are never touched.
+// Output goes to a DEDICATED root (params.filter_effect_root) — nothing
+// under params.out_root/params.sweep_root is written by phase3.
 def do_p3 = (params.phase == 'phase3')
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -388,10 +393,15 @@ process PREP_3UTR_BED {
 
 // 3.2 One `ema reannotate` branch per scenario, off the SAME saved
 //     lg_annotate peak-calls (params.filter_effect_base_run) — NEVER
-//     re-peak-calls. `baseline` sets no filter flags (reproduces
-//     lg_annotate's own downstream byte-for-byte, the "keeps everything"
-//     reference); the other 3 flip exactly one filter axis. Every branch's
-//     `--out` is under params.filter_effect_out — lg_annotate's own dir
+//     re-peak-calls. EVERY branch labels ALL THREE axes (atlas_match,
+//     internal_priming, in_3utr) via --atlas/--genome-fasta/--annotation-bed
+//     -- annotatedpas.bed carries the FULL labeled PAS set identically
+//     across all 4 scenarios (the "keeps everything" contract). `baseline`
+//     sets no --exclude-* flag (reproduces lg_annotate's own downstream
+//     byte-for-byte); the other 3 each flip exactly ONE exclude flag, which
+//     narrows ONLY the clustering matrix that scenario's GEX/diff/length/
+//     trend re-run on. Every branch's `--out` is under
+//     params.filter_effect_out — lg_annotate's own dir
 //     (params.filter_effect_base_run) is read-only, never written.
 process FILTER_EFFECT_BRANCH {
     tag { row.name }
@@ -401,16 +411,16 @@ process FILTER_EFFECT_BRANCH {
     output:
     val "${params.filter_effect_out}/${row.name}", emit: run
     script:
-    def atlasflag = row.atlas_filter ? '--atlas-filter' : ''
-    def ipflag    = row.ip_filter ? "--ip-filter --genome-fasta ${params.genome_fasta}" : ''
-    def annotflag = row.annot_filter ? "--annot-filter --annotation-bed ${three_utr_bed}" : ''
+    def labelFlags = "--atlas ${params.atlas} --atlas-distance ${params.atlas_distance} " +
+                     "--genome-fasta ${params.genome_fasta} --annotation-bed ${three_utr_bed}"
+    def excludeFlag = row.exclude ? "--exclude-${row.exclude}" : ''
     """
     export TMPDIR=${params.tmpbase}/\$\$ && mkdir -p \$TMPDIR
     ${params.ema} reannotate \
         --base-run ${base_run} \
         --out ${params.filter_effect_out}/${row.name} \
         --gtf ${params.gtf} \
-        ${atlasflag} ${ipflag} ${annotflag} \
+        ${labelFlags} ${excludeFlag} \
         --threads ${task.cpus}
     """
 }
@@ -483,11 +493,15 @@ workflow {
         ]
         subset_id2grp = id2grp.subMap(subset_ids)
 
+        // `exclude` maps to `--exclude-<value>` on ema reannotate (empty = no
+        // exclusion, i.e. baseline). Every scenario labels all 3 axes
+        // regardless (see FILTER_EFFECT_BRANCH's labelFlags) -- only which
+        // ONE label (if any) also excludes from clustering differs.
         scenarios = [
-            [name: 'baseline',          atlas_filter: false, ip_filter: false, annot_filter: false],
-            [name: 'atlas_filter',      atlas_filter: true,  ip_filter: false, annot_filter: false],
-            [name: 'annot_filter_3utr', atlas_filter: false, ip_filter: false, annot_filter: true],
-            [name: 'ip_filter',         atlas_filter: false, ip_filter: true,  annot_filter: false],
+            [name: 'baseline',          exclude: ''],
+            [name: 'atlas_filter',      exclude: 'atlas-nonmatch'],
+            [name: 'annot_filter_3utr', exclude: 'not-in-3utr'],
+            [name: 'ip_filter',         exclude: 'internal-priming'],
         ]
 
         // FILTER_EFFECT_BRANCH/GEX_CELLTYPE/SWITCH_COMBINE reuse the exact

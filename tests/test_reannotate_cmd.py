@@ -362,9 +362,10 @@ class TestClusteringKnobsReachClustering:
 
 
 # --------------------------------------------------------------------------- #
-# PAS filters (atlas_filter / ip_filter / annot_filter) — the FILTER-EFFECT
-# experiment's mechanism: filter a COPY of the base run's posbed/negbed
-# before find_close(), never the base run's own PAS results.
+# PAS labels + clustering-only exclusion mask — the FILTER-EFFECT experiment's
+# mechanism: LABEL every PAS (atlas_match / internal_priming / in_3utr) in
+# annotatedpas.bed, always, regardless of exclusion; independently, the
+# exclude_* flags narrow ONLY the matrix preprocessing()/clustering() sees.
 # --------------------------------------------------------------------------- #
 
 import json  # noqa: E402
@@ -377,84 +378,149 @@ def _atlas_status_tsv(matches: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-class TestPasFilters:
-    def test_no_filters_pas_filter_stats_are_all_off_and_nothing_dropped(
-        self, tmp_path, gtf,
-    ):
+def _annotatedpas_rows(out: Path, ds: str = "ds1") -> dict:
+    """{pas_id: [trailing columns after strand]} from a dataset's annotatedpas.bed."""
+    path = out / "03_gtf_annotation" / ds / "annotatedpas.bed"
+    rows = {}
+    for line in path.read_text().splitlines():
+        fields = line.split("\t")
+        rows[fields[3]] = fields[6:]
+    return rows
+
+
+# Both synthetic PAS need --include-extended + a wide enough --max-gene-distance
+# to survive find_close()'s gene assignment (PAS "2" is TIER_3-only by default,
+# per the GTF fixture comment above) -- these tests need BOTH PAS present so
+# the clustering-exclusion mask has something to narrow.
+_BOTH_PAS_ARGS = ["--include-extended", "--max-gene-distance", "5000"]
+
+
+class TestPasLabelsAndClusteringMask:
+    def test_no_labels_no_mask_reproduces_default_exactly(self, tmp_path, gtf):
         base = _build_base_run(tmp_path)
-        out = tmp_path / "branch_nofilter"
-        result = _invoke_reannotate(base, out, gtf)
+        out = tmp_path / "branch_nolabel"
+        result = _invoke_reannotate(base, out, gtf, extra_args=_BOTH_PAS_ARGS)
         assert result.exit_code == 0, result.output
 
         manifest = json.loads((out / "branch_manifest.json").read_text())
-        pf = manifest["pas_filters"]
-        assert pf["atlas_filter"] is False
-        assert pf["ip_filter"] is False
-        assert pf["annot_filter"] is False
-        assert pf["n_pas_dropped"] == 0
-        assert pf["n_pas_before_filter"] == pf["n_pas_after_filter"] == 2
+        pm = manifest["pas_labels_and_mask"]
+        assert pm["exclude_atlas_nonmatch"] is False
+        assert pm["exclude_internal_priming"] is False
+        assert pm["exclude_not_in_3utr"] is False
+        assert pm["n_excluded_for_clustering"] == 0
+        assert pm["n_kept_in_results"] == pm["n_used_for_clustering"] == 2
 
         # Base run's own PAS results are untouched.
         assert (base / "posbed.bed").read_text() == PASBED_TEXT
+        # No --out posbed/negbed copies are written when nothing is labeled.
+        assert not (out / "posbed.bed").exists()
 
-    def test_atlas_filter_reuses_cached_status_and_drops_unmatched(self, tmp_path, gtf):
+        import anndata as ad
+        a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
+        assert sorted(a.var_names) == ["1", "2"]
+
+    def test_atlas_exclude_masks_clustering_but_keeps_full_annotatedpas(self, tmp_path, gtf):
         base = _build_base_run(tmp_path)
         (base / "unified" / "atlas_status.tsv").write_text(
             _atlas_status_tsv({"1": True, "2": False})
         )
-        out = tmp_path / "branch_atlas_filter"
-        result = _invoke_reannotate(base, out, gtf, extra_args=["--atlas-filter"])
-        assert result.exit_code == 0, result.output
-
-        manifest = json.loads((out / "branch_manifest.json").read_text())
-        pf = manifest["pas_filters"]
-        assert pf["atlas_filter"] is True
-        assert pf["n_pas_before_filter"] == 2
-        assert pf["n_pas_after_filter"] == 1
-        assert pf["n_pas_dropped"] == 1
-
-        # Branch's own copy of posbed.bed reflects the filter; base run doesn't.
-        branch_posbed = (out / "posbed.bed").read_text()
-        assert "\t1\t" in branch_posbed
-        assert "\t2\t" not in branch_posbed
-        assert (base / "posbed.bed").read_text() == PASBED_TEXT
-
-        # Only PAS "1" survives into the clustering matrix.
-        import anndata as ad
-        a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
-        assert list(a.var_names) == ["1"]
-
-    def test_atlas_filter_without_cache_or_atlas_errors_clearly(self, tmp_path, gtf):
-        base = _build_base_run(tmp_path)  # no unified/atlas_status.tsv
-        out = tmp_path / "branch_atlas_filter_err"
-        result = _invoke_reannotate(base, out, gtf, extra_args=["--atlas-filter"])
-        assert result.exit_code != 0
-        assert "atlas" in str(result.output).lower() + str(result.exception).lower()
-
-    def test_annot_filter_drops_pas_outside_annotation_bed(self, tmp_path, gtf):
-        pytest.importorskip("pybedtools")
-        base = _build_base_run(tmp_path)
-        # Annotation BED covers only PAS "1"'s locus (chr1:1090-1110), not PAS "2"'s.
-        annotation_bed = tmp_path / "three_prime_utr.bed"
-        annotation_bed.write_text("chr1\t1090\t1110\tregion\t0\t+\n")
-
-        out = tmp_path / "branch_annot_filter"
+        out = tmp_path / "branch_atlas_excl"
         result = _invoke_reannotate(
-            base, out, gtf,
-            extra_args=["--annot-filter", "--annotation-bed", str(annotation_bed)],
+            base, out, gtf, extra_args=[*_BOTH_PAS_ARGS, "--exclude-atlas-nonmatch"],
         )
         assert result.exit_code == 0, result.output
 
         manifest = json.loads((out / "branch_manifest.json").read_text())
-        pf = manifest["pas_filters"]
-        assert pf["annot_filter"] is True
-        assert pf["n_pas_after_filter"] == 1
+        pm = manifest["pas_labels_and_mask"]
+        assert pm["exclude_atlas_nonmatch"] is True
+        assert pm["n_kept_in_results"] == 2          # BOTH PAS still in the results
+        assert pm["n_used_for_clustering"] == 1       # only the matched one clustered
+        assert pm["n_excluded_for_clustering"] == 1
+        assert pm["labels"]["atlas"]["n_matched"] == 1
+
+        # annotatedpas.bed carries BOTH PAS, both labeled (never dropped there).
+        rows = _annotatedpas_rows(out)
+        assert set(rows) == {"1", "2"}
+        assert rows["1"][1] == "True"   # atlas_match
+        assert rows["2"][1] == "False"
+
+        # Base run untouched.
+        assert (base / "posbed.bed").read_text() == PASBED_TEXT
+
+        # Only PAS "1" (atlas-matched) survives into the clustering matrix.
+        import anndata as ad
+        a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
+        assert list(a.var_names) == ["1"]
+
+    def test_atlas_label_without_exclude_flag_labels_but_does_not_mask(self, tmp_path, gtf):
+        """--atlas alone (no --exclude-atlas-nonmatch) labels every PAS but
+        clusters on the full set -- labeling and exclusion are independent."""
+        base = _build_base_run(tmp_path)
+        (base / "unified" / "atlas_status.tsv").write_text(
+            _atlas_status_tsv({"1": True, "2": False})
+        )
+        out = tmp_path / "branch_atlas_label_only"
+        # cache is auto-detected, no exclude flag needed
+        result = _invoke_reannotate(base, out, gtf, extra_args=_BOTH_PAS_ARGS)
+        assert result.exit_code == 0, result.output
+
+        rows = _annotatedpas_rows(out)
+        assert rows["1"][1] == "True"
+        assert rows["2"][1] == "False"
+
+        manifest = json.loads((out / "branch_manifest.json").read_text())
+        assert manifest["pas_labels_and_mask"]["n_used_for_clustering"] == 2
+
+    def test_exclude_atlas_nonmatch_without_cache_or_atlas_errors_clearly(self, tmp_path, gtf):
+        base = _build_base_run(tmp_path)  # no unified/atlas_status.tsv
+        out = tmp_path / "branch_atlas_excl_err"
+        result = _invoke_reannotate(base, out, gtf, extra_args=["--exclude-atlas-nonmatch"])
+        assert result.exit_code != 0
+        assert "atlas" in str(result.output).lower() + str(result.exception).lower()
+
+    def test_exclude_not_in_3utr_masks_clustering_but_keeps_full_annotatedpas(
+        self, tmp_path, gtf,
+    ):
+        pytest.importorskip("pybedtools")
+        base = _build_base_run(tmp_path)
+        # Region BED covers only PAS "1"'s locus (chr1:1090-1110), not PAS "2"'s.
+        region_bed = tmp_path / "three_prime_utr.bed"
+        region_bed.write_text("chr1\t1090\t1110\tregion\t0\t+\n")
+
+        out = tmp_path / "branch_3utr_excl"
+        result = _invoke_reannotate(
+            base, out, gtf,
+            extra_args=[*_BOTH_PAS_ARGS, "--annotation-bed", str(region_bed),
+                        "--exclude-not-in-3utr"],
+        )
+        assert result.exit_code == 0, result.output
+
+        manifest = json.loads((out / "branch_manifest.json").read_text())
+        pm = manifest["pas_labels_and_mask"]
+        assert pm["exclude_not_in_3utr"] is True
+        assert pm["n_kept_in_results"] == 2
+        assert pm["n_used_for_clustering"] == 1
+
+        rows = _annotatedpas_rows(out)
+        assert set(rows) == {"1", "2"}
+        assert rows["1"][4] == "True"    # in_3utr
+        assert rows["2"][4] == "False"
 
         import anndata as ad
         a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
         assert list(a.var_names) == ["1"]
 
-    def test_ip_filter_drops_internally_primed_pas(self, tmp_path, gtf):
+    def test_exclude_not_in_3utr_without_annotation_bed_errors_clearly(self, tmp_path, gtf):
+        base = _build_base_run(tmp_path)
+        out = tmp_path / "branch_3utr_excl_err"
+        result = _invoke_reannotate(base, out, gtf, extra_args=["--exclude-not-in-3utr"])
+        assert result.exit_code != 0
+        assert "3utr" in str(result.output).lower() + str(result.exception).lower() or \
+               "annotation-bed" in str(result.output).lower() + str(result.exception).lower()
+
+    def test_exclude_internal_priming_masks_clustering_but_keeps_full_annotatedpas(
+        self, tmp_path, gtf,
+    ):
         pytest.importorskip("pyfaidx")
         base = _build_base_run(tmp_path)
 
@@ -467,25 +533,41 @@ class TestPasFilters:
         fasta_path = tmp_path / "genome.fa"
         fasta_path.write_text(">chr1\n" + "".join(seq) + "\n")
 
-        out = tmp_path / "branch_ip_filter"
+        out = tmp_path / "branch_ip_excl"
         result = _invoke_reannotate(
             base, out, gtf,
-            extra_args=["--ip-filter", "--genome-fasta", str(fasta_path)],
+            extra_args=[*_BOTH_PAS_ARGS, "--genome-fasta", str(fasta_path),
+                        "--exclude-internal-priming"],
         )
         assert result.exit_code == 0, result.output
 
         manifest = json.loads((out / "branch_manifest.json").read_text())
-        pf = manifest["pas_filters"]
-        assert pf["ip_filter"] is True
-        assert pf["n_pas_after_filter"] == 1
+        pm = manifest["pas_labels_and_mask"]
+        assert pm["exclude_internal_priming"] is True
+        assert pm["n_kept_in_results"] == 2
+        assert pm["n_used_for_clustering"] == 1
+
+        rows = _annotatedpas_rows(out)
+        assert set(rows) == {"1", "2"}
+        assert rows["1"][3] == "False"   # internal_priming
+        assert rows["2"][3] == "True"
 
         import anndata as ad
         a = ad.read_h5ad(out / "07_clustering" / "ds1" / "clusters.h5ad")
         assert list(a.var_names) == ["1"]
 
-    def test_help_lists_pas_filter_options(self):
+    def test_exclude_internal_priming_without_genome_fasta_errors_clearly(self, tmp_path, gtf):
+        base = _build_base_run(tmp_path)
+        out = tmp_path / "branch_ip_excl_err"
+        result = _invoke_reannotate(base, out, gtf, extra_args=["--exclude-internal-priming"])
+        assert result.exit_code != 0
+        assert "genome-fasta" in str(result.output).lower() + str(result.exception).lower() or \
+               "internal_priming" in str(result.output).lower() + str(result.exception).lower()
+
+    def test_help_lists_pas_label_and_mask_options(self):
         result = CliRunner().invoke(main, ["reannotate", "--help"])
         assert result.exit_code == 0
-        for flag in ("--atlas-filter", "--atlas", "--atlas-distance",
-                     "--ip-filter", "--genome-fasta", "--annot-filter", "--annotation-bed"):
+        for flag in ("--atlas", "--atlas-distance", "--genome-fasta", "--annotation-bed",
+                     "--exclude-atlas-nonmatch", "--exclude-internal-priming",
+                     "--exclude-not-in-3utr"):
             assert flag in result.output, f"{flag} missing from --help output"

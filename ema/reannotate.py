@@ -52,17 +52,11 @@ def _require(path: Path, what: str) -> Path:
     return path
 
 
-def _count_bed_lines(path: Path) -> int:
-    if not Path(path).exists():
-        return 0
-    with open(path) as fh:
-        return sum(1 for ln in fh if ln.strip())
-
-
 def _load_or_compute_atlas_match(
     base: Path, atlas: str | Path | None, atlas_distance: int, out: Path,
-) -> dict[str, bool]:
-    """``{pas_id: atlas_match_bool}`` for every PAS in the base run's unified set.
+) -> dict[str, tuple]:
+    """``{pas_id: (atlas_match_bool, atlas_distance_bp)}`` for every PAS in the
+    base run's unified set.
 
     Prefers ``<base>/unified/atlas_status.tsv`` -- already computed by the
     base run when it used ``--atlas-mode annotate`` (the default), so this
@@ -74,18 +68,18 @@ def _load_or_compute_atlas_match(
     """
     cached = base / "unified" / "atlas_status.tsv"
     if cached.exists():
-        log.info("atlas_filter: reusing cached %s", cached)
+        log.info("atlas label: reusing cached %s", cached)
         status_path = cached
     else:
         if not atlas:
             raise ReannotateError(
-                "--atlas-filter is enabled but the base run has no cached "
-                f"{cached} (it wasn't atlas-annotated) and no --atlas was "
-                "given to recompute match status from."
+                "--exclude-atlas-nonmatch is enabled but the base run has no "
+                f"cached {cached} (it wasn't atlas-annotated) and no --atlas "
+                "was given to recompute match status from."
             )
         from ema.datasets.atlas_annotate import annotate_pas_against_atlas
 
-        unified_tmp = out / "_atlas_filter_check" / "unified_pas.bed"
+        unified_tmp = out / "_atlas_label_check" / "unified_pas.bed"
         unified_tmp.parent.mkdir(parents=True, exist_ok=True)
         with open(unified_tmp, "w") as f:
             for src in (base / "posbed.bed", base / "negbed.bed"):
@@ -97,38 +91,18 @@ def _load_or_compute_atlas_match(
             distance=atlas_distance,
             output_dir=unified_tmp.parent,
         )
-        log.info("atlas_filter: recomputed match status -> %s", status_path)
+        log.info("atlas label: recomputed match status -> %s", status_path)
 
     import pandas as pd
 
     df = pd.read_csv(status_path, sep="\t", dtype=str)
     return {
-        row["unified_pas_id"]: str(row["atlas_match"]).strip().lower() == "true"
+        row["unified_pas_id"]: (
+            str(row["atlas_match"]).strip().lower() == "true",
+            row.get("atlas_distance_bp", ""),
+        )
         for _, row in df.iterrows()
     }
-
-
-def _drop_unmatched_pas(bed_path: Path, match_of: dict[str, bool]) -> None:
-    """Rewrite *bed_path* in place, keeping only rows whose col-4 id matches.
-
-    A PAS absent from *match_of* (id not covered by the atlas-status source)
-    is treated as unmatched -- dropped, same as an explicit ``False`` --
-    since a PAS this filter can't confirm a match for should not survive a
-    "keep only atlas-confirmed PAS" filter.
-    """
-    bed_path = Path(bed_path)
-    if not bed_path.exists():
-        return
-    kept = []
-    with open(bed_path) as fh:
-        for line in fh:
-            if not line.strip():
-                continue
-            fields = line.rstrip("\n").split("\t")
-            pas_id = fields[3] if len(fields) > 3 else None
-            if pas_id is not None and match_of.get(pas_id, False):
-                kept.append(line)
-    bed_path.write_text("".join(kept))
 
 
 def reannotate_run(
@@ -153,32 +127,39 @@ def reannotate_run(
     min_cells: int = 3,
     min_pas_per_cell: int = 50,
     threads: int | None = None,
-    atlas_filter: bool = False,
     atlas: str | Path | None = None,
     atlas_distance: int = 50,
-    ip_filter: bool = False,
     genome_fasta: str | Path | None = None,
     ip_window_left: int = 10,
     ip_window_right: int = 30,
     ip_a_stretch: int = 6,
     ip_a_fraction: float = 0.7,
-    annot_filter: bool = False,
     annotation_bed: str | Path | None = None,
+    exclude_atlas_nonmatch: bool = False,
+    exclude_internal_priming: bool = False,
+    exclude_not_in_3utr: bool = False,
 ) -> dict[str, Any]:
-    """Branch ``base_run`` into ``out`` with new trim / filter / cluster params.
+    """Branch ``base_run`` into ``out`` with new trim / label / mask / cluster params.
 
     Validates the base run's artifacts exist BEFORE importing anything heavy
     (mirrors ``scripts/reannotate_from_run.py``), then:
 
-      0. (NEW, all optional/default-off) Apply PAS-level filters to COPIES of
-         the base run's unified ``posbed.bed``/``negbed.bed`` -- never the
-         base run's own files -- so the base run's PAS results are untouched
-         and reusable by every other branch. See "PAS filters" below.
+      0. (NEW, all optional/default-off) LABEL every PAS -- atlas_match,
+         internal_priming, in_3utr -- from *atlas*/*genome_fasta*/
+         *annotation_bed* when given. Labels always cover every PAS in the
+         base run's unified set and are written into every dataset's
+         ``annotatedpas.bed`` (never drops a row there). Independently, the
+         ``exclude_*`` flags turn a label into a CLUSTERING-ONLY exclusion:
+         the flagged PAS still get their full labeled ``annotatedpas.bed``
+         row, but are masked out of the matrix ``preprocessing()``/
+         ``clustering()`` (and therefore every downstream switch step) sees.
+         See "PAS labels + clustering mask" below.
       1. Re-derives ``gene_end.bed`` / UTR lengths from ``gtf`` (two-tier
          cached — near-instant on repeat).
-      2. Re-runs ``find_close`` (the trim) on the base run's unified PAS set.
+      2. Re-runs ``find_close`` (the trim) on the base run's unified PAS set
+         -- ALWAYS the full, unfiltered set; labels/masking never touch this.
       3. Re-runs ``run_one_dataset_downstream`` per dataset (annotate ->
-         preprocess -> cluster), producing a fresh
+         [clustering-mask] -> preprocess -> cluster), producing a fresh
          ``07_clustering/<ds>/clusters.h5ad`` per dataset.
       4. Reconciles the per-dataset E3 provenance ledgers into
          ``provenance/by_dataset/{pas,cell}_ledger.tsv`` +
@@ -216,40 +197,43 @@ def reannotate_run(
             singleton (same mechanism ``ema/cli/run.py`` uses), so the
             downstream per-dataset ``Pool`` respects it. ``None`` leaves the
             existing/auto-detected ceiling untouched.
-        atlas_filter: Drop PAS with no atlas match before trim/cluster (all
-            default False -- a branch with none of these set reproduces the
-            base run's downstream exactly, byte-for-byte, same guarantee as
-            the trim/cluster knobs above). Applied to a COPY of the base
-            run's ``posbed.bed``/``negbed.bed`` written under ``out`` --
-            the base run's own files, and its ``annotatedpas.bed``/PAS
-            ledger, are never touched, so the base run stays a valid
-            "keeps everything" reference for every other branch. Prefers
-            ``<base_run>/unified/atlas_status.tsv`` (already computed when
-            the base run used ``--atlas-mode annotate``) over recomputing;
-            falls back to a fresh :func:`ema.datasets.atlas_annotate.
-            annotate_pas_against_atlas` pass when that sidecar is absent
-            (requires *atlas*).
-        atlas: Reference atlas BED, used only as the fallback recompute
-            source for *atlas_filter* (or to validate distance) when the
-            base run has no cached ``atlas_status.tsv``.
+        atlas: Reference atlas BED. When given (or when the base run has a
+            cached ``unified/atlas_status.tsv`` from its own ``--atlas-mode
+            annotate``), every PAS is labeled ``atlas_match``/
+            ``atlas_distance_bp`` in ``annotatedpas.bed`` -- pure
+            annotation, nothing is ever dropped by this alone. Required
+            (unless the cache exists) when *exclude_atlas_nonmatch* is set.
         atlas_distance: Max summit-to-atlas distance (bp) for a match, used
-            only by the fallback recompute path.
-        ip_filter: Drop PAS flagged as internal-priming artifacts (A-rich
-            downstream stretch) before trim/cluster. Recomputed fresh via
-            :func:`ema.experimental.peak_filters.apply_filters` (mode=
-            "filter") against *genome_fasta* -- cheap (a genome-FASTA scan
-            over ~10^4-10^5 already-called PAS, not a re-peak-call).
+            only by the fallback recompute path (cache miss).
         genome_fasta, ip_window_left, ip_window_right, ip_a_stretch,
-            ip_a_fraction: Forwarded verbatim to ``apply_filters`` when
-            *ip_filter* is set; same defaults as ``ema run``'s schema.
-        annot_filter: Drop PAS not overlapping *annotation_bed* before
-            trim/cluster (e.g. a 3'UTR-only BED, for "keep only PAS inside
-            an annotated transcript 3'UTR"). Recomputed fresh via
-            :func:`ema.experimental.peak_filters.apply_filters`.
-        annotation_bed: Annotation BED for *annot_filter*. Defaults to the
-            GTF-derived gene-body BED this branch already writes
-            (``directory_config.endbed``, from step 1) when unset -- same
-            fallback ``ema run`` uses.
+            ip_a_fraction: When *genome_fasta* is given, every PAS is
+            labeled ``internal_priming`` (A-rich downstream stretch) in
+            ``annotatedpas.bed`` via :func:`ema.experimental.
+            internal_priming.filter_internal_priming` (mode="annotate" --
+            label only, nothing dropped). Required when
+            *exclude_internal_priming* is set. The other four are forwarded
+            verbatim; same defaults as ``ema run``'s schema.
+        annotation_bed: A region BED (e.g. a 3'UTR-only BED, for "PAS inside
+            an annotated transcript 3'UTR"). When given, every PAS is
+            labeled ``in_3utr`` in ``annotatedpas.bed`` via
+            :func:`ema.experimental.peak_filters.label_pas_in_bed` (label
+            only, nothing dropped). Required when *exclude_not_in_3utr* is
+            set.
+        exclude_atlas_nonmatch, exclude_internal_priming,
+            exclude_not_in_3utr: All default False -- a branch with none of
+            these set reproduces the base run's downstream exactly,
+            byte-for-byte, same guarantee as the trim/cluster knobs above.
+            When set, the corresponding label EXCLUDES that PAS from the
+            CLUSTERING matrix only (see ``ema.downstream_runner.
+            run_one_dataset_downstream``'s ``exclude_pas_ids``) -- every
+            dataset's ``annotatedpas.bed`` still carries the FULL labeled
+            PAS set regardless of which (if any) exclude flags are set.
+            Multiple exclude flags OR together (a PAS matching any one is
+            excluded). A PAS with no computed label for an active exclude
+            flag (label source didn't cover it) is treated as excluded
+            (conservative: can't confirm it belongs, so it doesn't survive
+            a "keep only confirmed-X" mask) -- mirrors *atlas*'s existing
+            "absent = unmatched" convention.
 
     Returns:
         The branch manifest dict written to ``<out>/branch_manifest.json``
@@ -312,69 +296,108 @@ def reannotate_run(
     )
     log.info("utr_lengths: %d genes", len(utr_lengths))
 
-    # 1.5 PAS FILTERS (all optional, default off) — applied to COPIES of the
-    #     base run's unified posbed/negbed under `out`, so the base run's own
-    #     PAS results (posbed.bed/negbed.bed/annotatedpas.bed) are NEVER
-    #     touched and stay a valid "keeps everything" reference for other
-    #     branches. `posbed`/`negbed` are reassigned below to point at the
-    #     (possibly filtered) copies find_close() actually consumes.
-    pas_filter_stats: dict = {}
-    n_pas_before_filter = _count_bed_lines(posbed) + _count_bed_lines(negbed)
-    if atlas_filter or ip_filter or annot_filter:
-        import shutil
+    # 0. PAS LABELS (all optional, default off) — computed ONCE from the base
+    #    run's unified posbed.bed/negbed.bed, keyed by the same pas_id
+    #    namespace those beds (and find_close()'s output) use. NEVER mutates
+    #    posbed/negbed or drops a row -- find_close() below always runs on
+    #    the base run's ORIGINAL, full, unfiltered beds, so annotatedpas.bed
+    #    for every dataset carries the FULL labeled PAS set regardless of
+    #    which (if any) exclude_* flags are set.
+    label_stats: dict = {}
+    atlas_of: dict = {}
+    ip_of: dict = {}
+    in_3utr_of: dict = {}
 
-        branch_posbed = out / "posbed.bed"
-        branch_negbed = out / "negbed.bed"
-        shutil.copy2(posbed, branch_posbed)
-        shutil.copy2(negbed, branch_negbed)
-
-        if atlas_filter:
-            log.info("reannotate PAS filter: atlas_filter (drop non-matching PAS)")
-            match_of = _load_or_compute_atlas_match(base, atlas, atlas_distance, out)
-            n_before = _count_bed_lines(branch_posbed) + _count_bed_lines(branch_negbed)
-            _drop_unmatched_pas(branch_posbed, match_of)
-            _drop_unmatched_pas(branch_negbed, match_of)
-            n_after = _count_bed_lines(branch_posbed) + _count_bed_lines(branch_negbed)
-            pas_filter_stats["atlas_filter"] = {
-                "n_before": n_before, "n_after": n_after, "n_dropped": n_before - n_after,
-            }
-
-        if ip_filter or annot_filter:
-            from ema.experimental.peak_filters import apply_filters
-
-            resolved_annotation_bed = (
-                str(annotation_bed) if annotation_bed else str(directory_config.endbed)
-            )
-            for strand_label, bed_path in (("pos", branch_posbed), ("neg", branch_negbed)):
-                tmp_out = bed_path.with_suffix(".pas_filter_tmp")
-                stats = apply_filters(
-                    input_bed=str(bed_path), output_bed=str(tmp_out),
-                    genome_fasta=str(genome_fasta) if genome_fasta else None,
-                    annotation_bed=resolved_annotation_bed if annot_filter else None,
-                    enable_internal_priming=ip_filter,
-                    enable_annotation_filter=annot_filter,
-                    ip_window_left=ip_window_left, ip_window_right=ip_window_right,
-                    ip_a_stretch=ip_a_stretch, ip_a_fraction=ip_a_fraction,
-                    ip_mode="filter",
-                )
-                import os
-                os.replace(tmp_out, bed_path)
-                pas_filter_stats.setdefault(strand_label, {})
-                pas_filter_stats[strand_label].update(stats)
-            log.info(
-                "reannotate PAS filter: ip_filter=%s annot_filter=%s (annotation_bed=%s)",
-                ip_filter, annot_filter, resolved_annotation_bed if annot_filter else None,
-            )
-
-        posbed, negbed = branch_posbed, branch_negbed
-    n_pas_after_filter = _count_bed_lines(posbed) + _count_bed_lines(negbed)
-    if pas_filter_stats:
+    if atlas or (base / "unified" / "atlas_status.tsv").exists():
+        atlas_of = _load_or_compute_atlas_match(base, atlas, atlas_distance, out)
+        n_matched = sum(1 for v in atlas_of.values() if v[0])
+        label_stats["atlas"] = {
+            "n_labeled": len(atlas_of), "n_matched": n_matched,
+            "n_unmatched": len(atlas_of) - n_matched,
+        }
         log.info(
-            "reannotate PAS filters: %d -> %d PAS (%d dropped) before find_close",
-            n_pas_before_filter, n_pas_after_filter, n_pas_before_filter - n_pas_after_filter,
+            "PAS label: atlas_match -- %d/%d matched", n_matched, len(atlas_of),
         )
 
-    # 2. THE TRIM — re-run find_close on the (possibly filtered) unified PAS set.
+    if genome_fasta:
+        from ema.experimental.internal_priming import filter_internal_priming
+
+        unified_tmp = out / "_ip_label_check" / "unified_pas.bed"
+        unified_tmp.parent.mkdir(parents=True, exist_ok=True)
+        with open(unified_tmp, "w") as f:
+            for src in (posbed, negbed):
+                if src.exists():
+                    f.write(src.read_text())
+        ip_discard = unified_tmp.parent / "unified_pas.ip_annotated.bed"
+        ip_stats = filter_internal_priming(
+            str(unified_tmp), str(genome_fasta), str(ip_discard),
+            window_left=ip_window_left, window_right=ip_window_right,
+            a_stretch=ip_a_stretch, a_fraction=ip_a_fraction,
+            mode="annotate",
+        )
+        ip_of = ip_stats.get("flags") or {}
+        n_flagged = sum(1 for v in ip_of.values() if v)
+        label_stats["internal_priming"] = {
+            "n_labeled": len(ip_of), "n_flagged": n_flagged,
+        }
+        log.info(
+            "PAS label: internal_priming -- %d/%d flagged", n_flagged, len(ip_of),
+        )
+
+    if annotation_bed:
+        from ema.experimental.peak_filters import label_pas_in_bed
+
+        unified_tmp = out / "_3utr_label_check" / "unified_pas.bed"
+        unified_tmp.parent.mkdir(parents=True, exist_ok=True)
+        with open(unified_tmp, "w") as f:
+            for src in (posbed, negbed):
+                if src.exists():
+                    f.write(src.read_text())
+        label_result = label_pas_in_bed(str(unified_tmp), str(annotation_bed))
+        in_3utr_of = label_result.get("flags") or {}
+        label_stats["in_3utr"] = {
+            "n_labeled": label_result["total"], "n_in_3utr": label_result["n_in_region"],
+            "n_not_in_3utr": label_result["n_not_in_region"],
+        }
+        log.info(
+            "PAS label: in_3utr -- %d/%d inside a 3'UTR",
+            label_result["n_in_region"], label_result["total"],
+        )
+
+    # Independent of labeling: which labels ALSO exclude from clustering.
+    if exclude_atlas_nonmatch and not atlas_of:
+        raise ReannotateError(
+            "--exclude-atlas-nonmatch is enabled but no atlas label was computed "
+            "(no --atlas and no cached unified/atlas_status.tsv on the base run)."
+        )
+    if exclude_internal_priming and not ip_of:
+        raise ReannotateError(
+            "--exclude-internal-priming is enabled but no --genome-fasta was given "
+            "to compute the internal_priming label."
+        )
+    if exclude_not_in_3utr and not in_3utr_of:
+        raise ReannotateError(
+            "--exclude-not-in-3utr is enabled but no --annotation-bed was given "
+            "to compute the in_3utr label."
+        )
+
+    exclude_pas_ids: set = set()
+    if exclude_atlas_nonmatch:
+        exclude_pas_ids |= {pid for pid, (matched, _dist) in atlas_of.items() if not matched}
+    if exclude_internal_priming:
+        exclude_pas_ids |= {pid for pid, flagged in ip_of.items() if flagged}
+    if exclude_not_in_3utr:
+        exclude_pas_ids |= {pid for pid, in_utr in in_3utr_of.items() if not in_utr}
+    if exclude_pas_ids:
+        log.info(
+            "clustering-exclusion mask: %d PAS excluded (atlas_nonmatch=%s "
+            "internal_priming=%s not_in_3utr=%s)",
+            len(exclude_pas_ids), exclude_atlas_nonmatch,
+            exclude_internal_priming, exclude_not_in_3utr,
+        )
+
+    # 2. THE TRIM — re-run find_close on the base run's FULL, unfiltered
+    #    unified PAS set (labels/exclusion never touch posbed/negbed).
     log.info(
         "find_close: max_distance=%d utr_multiplier=%.2f include_extended=%s",
         max_gene_distance, utr_multiplier, include_extended,
@@ -438,6 +461,15 @@ def reannotate_run(
         cluster_n_svd_components=n_svd_components,
         cluster_n_top_hvg=n_top_hvg,
     )
+    # PAS labels + clustering-exclusion mask (step 0 above) -- forwarded
+    # verbatim to every dataset's run_one_dataset_downstream() call. Full,
+    # unified maps: write_pas_gene_artifacts() looks each PAS up by id, so
+    # every dataset's annotatedpas.bed gets the same labels regardless of
+    # which cells/PAS that dataset happens to carry.
+    prov_kwargs = dict(
+        atlas_of=atlas_of, ip_of=ip_of, in_3utr_of=in_3utr_of,
+        exclude_pas_ids=exclude_pas_ids,
+    )
 
     # 4. Run the tested per-dataset downstream worker for each dataset.
     worker_specs: list[tuple[str, list[int], list[str]]] = []
@@ -464,7 +496,7 @@ def reannotate_run(
                 ds_id, sub_indices, sub_cbs,
                 str(unified_mtx), str(out), genes_pkl,
                 min_read, min_cells, min_pas_per_cell,
-                **cluster_kwargs,
+                **cluster_kwargs, **prov_kwargs,
             )
             results.append(stats)
     else:
@@ -477,7 +509,9 @@ def reannotate_run(
                 ds_id, sub_indices, sub_cbs,
                 str(unified_mtx), str(out), genes_pkl,
                 min_read, min_cells, min_pas_per_cell,
-                None, None, cluster_kwargs,  # log_queue, progress_client, cluster_kwargs
+                # log_queue, progress_client, cluster_kwargs, plot_engines, prov_kwargs
+                # (14-arg downstream_worker_star shape -- see its docstring)
+                None, None, cluster_kwargs, None, prov_kwargs,
             )
             for ds_id, sub_indices, sub_cbs in worker_specs
         ]
@@ -595,14 +629,19 @@ def reannotate_run(
             "min_cells": min_cells,
             "min_pas_per_cell": min_pas_per_cell,
         },
-        "pas_filters": {
-            "atlas_filter": atlas_filter,
-            "ip_filter": ip_filter,
-            "annot_filter": annot_filter,
-            "n_pas_before_filter": n_pas_before_filter,
-            "n_pas_after_filter": n_pas_after_filter,
-            "n_pas_dropped": n_pas_before_filter - n_pas_after_filter,
-            "stats": pas_filter_stats,
+        "pas_labels_and_mask": {
+            "exclude_atlas_nonmatch": exclude_atlas_nonmatch,
+            "exclude_internal_priming": exclude_internal_priming,
+            "exclude_not_in_3utr": exclude_not_in_3utr,
+            # Aggregate across datasets -- every dataset's annotatedpas.bed
+            # carries the FULL labeled set (n_kept_in_results); the
+            # clustering matrix only sees n_used_for_clustering.
+            "n_kept_in_results": sum(int(r.get("n_kept_in_results", 0)) for r in results),
+            "n_used_for_clustering": sum(int(r.get("n_used_for_clustering", 0)) for r in results),
+            "n_excluded_for_clustering": sum(
+                int(r.get("n_excluded_for_clustering", 0)) for r in results
+            ),
+            "labels": label_stats,
         },
         "datasets": results,
         "manifest_path": manifest_path,

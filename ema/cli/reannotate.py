@@ -74,35 +74,46 @@ log = logging.getLogger(__name__)
 @click.option("--min-read", "min_read", type=int, default=1500, show_default=True)
 @click.option("--min-cells", "min_cells", type=int, default=3, show_default=True)
 @click.option("--min-pas-per-cell", "min_pas_per_cell", type=int, default=50, show_default=True)
-# ── PAS filters (all default off — a branch with none set reproduces the
-# base run's downstream exactly; see ema/reannotate.py::reannotate_run docstring) ─
-@click.option("--atlas-filter", "atlas_filter", is_flag=True, default=False,
-              help="Drop PAS with no atlas match before trim/cluster (reuses the "
-                   "base run's cached unified/atlas_status.tsv when present, else "
-                   "recomputes from --atlas). Never touches the base run's own "
-                   "PAS results.")
+# ── PAS labels + clustering-only exclusion mask (all default off — a branch
+# with none set reproduces the base run's downstream exactly; see
+# ema/reannotate.py::reannotate_run docstring, "PAS labels + clustering
+# mask"). Labels always cover EVERY PAS in annotatedpas.bed once their
+# source is given -- the exclude-* flags separately decide whether a label
+# ALSO narrows the clustering matrix. The base run's own PAS results are
+# never touched either way. ─────────────────────────────────────────────
 @click.option("--atlas", "atlas", type=click.Path(exists=True, dir_okay=False),
               default=None,
-              help="Reference atlas BED — fallback recompute source for "
-                   "--atlas-filter when the base run has no cached atlas_status.tsv.")
+              help="Reference atlas BED. Labels every PAS atlas_match/"
+                   "atlas_distance_bp (reuses the base run's cached "
+                   "unified/atlas_status.tsv when present, else recomputes). "
+                   "Required (unless the cache exists) for --exclude-atlas-nonmatch.")
 @click.option("--atlas-distance", "atlas_distance", type=int, default=50, show_default=True,
               help="Max summit-to-atlas distance (bp) for a match (fallback recompute only).")
-@click.option("--ip-filter", "ip_filter", is_flag=True, default=False,
-              help="Drop PAS flagged as internal-priming (A-rich stretch) before "
-                   "trim/cluster (requires --genome-fasta). Recomputed fresh — cheap.")
 @click.option("--genome-fasta", "genome_fasta", type=click.Path(exists=True),
-              default=None, help="Genome FASTA (indexed with pyfaidx/.fai), required by --ip-filter.")
+              default=None,
+              help="Genome FASTA (indexed with pyfaidx/.fai). Labels every PAS "
+                   "internal_priming (A-rich downstream stretch). Required for "
+                   "--exclude-internal-priming.")
 @click.option("--ip-window-left", "ip_window_left", type=int, default=10, show_default=True)
 @click.option("--ip-window-right", "ip_window_right", type=int, default=30, show_default=True)
 @click.option("--ip-a-stretch", "ip_a_stretch", type=int, default=6, show_default=True)
 @click.option("--ip-a-fraction", "ip_a_fraction", type=float, default=0.7, show_default=True)
-@click.option("--annot-filter", "annot_filter", is_flag=True, default=False,
-              help="Drop PAS not overlapping --annotation-bed before trim/cluster "
-                   "(e.g. a 3'UTR-only BED). Recomputed fresh — cheap.")
 @click.option("--annotation-bed", "annotation_bed", type=click.Path(exists=True, dir_okay=False),
               default=None,
-              help="Annotation BED for --annot-filter. Optional — defaults to the "
-                   "GTF-derived gene BED this branch already writes (gene_end.bed).")
+              help="Region BED (e.g. a 3'UTR-only BED). Labels every PAS in_3utr "
+                   "(overlaps this BED). Required for --exclude-not-in-3utr.")
+@click.option("--exclude-atlas-nonmatch", "exclude_atlas_nonmatch", is_flag=True, default=False,
+              help="Exclude PAS with no atlas match from the CLUSTERING matrix only "
+                   "(requires --atlas or a cached atlas_status.tsv). Still fully "
+                   "labeled in annotatedpas.bed.")
+@click.option("--exclude-internal-priming", "exclude_internal_priming", is_flag=True, default=False,
+              help="Exclude PAS flagged internal-priming from the CLUSTERING matrix "
+                   "only (requires --genome-fasta). Still fully labeled in "
+                   "annotatedpas.bed.")
+@click.option("--exclude-not-in-3utr", "exclude_not_in_3utr", is_flag=True, default=False,
+              help="Exclude PAS NOT overlapping --annotation-bed from the CLUSTERING "
+                   "matrix only (requires --annotation-bed). Still fully labeled in "
+                   "annotatedpas.bed.")
 def reannotate(**kwargs) -> None:
     """Branch a completed `ema run` into a new trim/cluster variant, skipping
     peak calling."""
@@ -147,17 +158,17 @@ def reannotate(**kwargs) -> None:
                 min_cells=kwargs["min_cells"],
                 min_pas_per_cell=kwargs["min_pas_per_cell"],
                 threads=kwargs["threads"],
-                atlas_filter=kwargs["atlas_filter"],
                 atlas=kwargs["atlas"],
                 atlas_distance=kwargs["atlas_distance"],
-                ip_filter=kwargs["ip_filter"],
                 genome_fasta=kwargs["genome_fasta"],
                 ip_window_left=kwargs["ip_window_left"],
                 ip_window_right=kwargs["ip_window_right"],
                 ip_a_stretch=kwargs["ip_a_stretch"],
                 ip_a_fraction=kwargs["ip_a_fraction"],
-                annot_filter=kwargs["annot_filter"],
                 annotation_bed=kwargs["annotation_bed"],
+                exclude_atlas_nonmatch=kwargs["exclude_atlas_nonmatch"],
+                exclude_internal_priming=kwargs["exclude_internal_priming"],
+                exclude_not_in_3utr=kwargs["exclude_not_in_3utr"],
             )
         except ReannotateError as e:
             raise click.ClickException(str(e))
