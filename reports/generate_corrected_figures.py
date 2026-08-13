@@ -716,6 +716,163 @@ def fig_gene_sets() -> None:
     save(fig, "11_gene_sets")
 
 
+# ===========================================================================
+# 12. Differential-strategy comparison (replaces switch_strategy_real_data.png)
+# ===========================================================================
+def fig_diff_strategy() -> None:
+    summ = load(EXTRA, "diff_strategy_summary.tsv")
+    ov = load(EXTRA, "diff_strategy_overlap.tsv")
+    if summ is None:
+        _skipped.append("12_diff_strategy")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.3), layout="constrained")
+
+    # a) significance rate by strategy
+    ax = axes[0]
+    data, labels = [], []
+    for strat, g in summ.groupby("strategy"):
+        data.append(g["frac_sig"])
+        labels.append(f"{strat}\n(n={len(g)})")
+    bp = ax.boxplot(data, tick_labels=labels, showmeans=True, patch_artist=True)
+    for patch, c in zip(bp["boxes"], ["#C44E52", "#4C72B0", "#55A868"]):
+        patch.set_facecolor(c); patch.set_alpha(0.6)
+    ax.axhline(0.05, color="k", ls=":", lw=1.5, label="0.05 (nominal FDR)")
+    ax.set_ylabel("fraction of PAS called significant")
+    ax.legend(fontsize=7)
+    ax.set_title("a  Significance rate per strategy")
+
+    # b) tests performed vs hits, per cell type
+    ax = axes[1]
+    for strat, g in summ.groupby("strategy"):
+        ax.scatter(g["n_tested"], g["n_sig"], s=18, alpha=0.7, label=strat)
+    lim = [max(summ["n_tested"].min(), 1), summ["n_tested"].max()]
+    ax.plot(lim, lim, "--", color="k", lw=1, label="all tests significant")
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.set_xlabel("PAS tested"); ax.set_ylabel("PAS significant (FDR<0.05)")
+    ax.legend(fontsize=7)
+    ax.set_title("b  Hits scale with tests, not with effect")
+
+    # c) agreement between the two strategies
+    ax = axes[2]
+    if ov is not None and len(ov):
+        ax.hist(ov["jaccard"], bins=20, color="#8172B3", edgecolor="white")
+        med = ov["jaccard"].median()
+        ax.axvline(med, color="crimson", ls="--", lw=1.5, label=f"median {med:.3f}")
+        ax.set_xlabel("Jaccard(fisher significant, nb_multi significant)")
+        ax.set_ylabel("cell types")
+        ax.legend(fontsize=7)
+        ax.set_title("c  The two strategies barely agree")
+    fig.suptitle(
+        "Differential-APA strategies on the corrected cohort — fisher vs nb_multi "
+        "(nb_pairwise was not run in this sweep)", fontsize=9)
+    save(fig, "12_diff_strategy")
+
+
+# ===========================================================================
+# 13. Length-strategy comparison (replaces length_strategy_real_data.png)
+# ===========================================================================
+def fig_length_strategy() -> None:
+    ls = load(EXTRA, "length_strategy_summary.tsv")
+    if ls is None:
+        _skipped.append("13_length_strategy")
+        return
+    ls = ls[ls["mean_cov"] >= 0].copy()
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.3), layout="constrained")
+
+    # a) how much of each table is zero-coverage padding
+    ax = axes[0]
+    data, labels, colors = [], [], []
+    for strat, g in ls.groupby("strategy"):
+        data.append(g["frac_zero_cov"] * 100)
+        labels.append(strat)
+    bp = ax.boxplot(data, tick_labels=labels, showmeans=True, patch_artist=True)
+    for patch, c in zip(bp["boxes"], ["#C44E52", "#4C72B0", "#55A868"]):
+        patch.set_facecolor(c); patch.set_alpha(0.6)
+    ax.set_ylabel("% of rows with zero gene coverage")
+    ax.set_title("a  Every strategy is dominated by empty rows")
+
+    # b) the score, as reported vs conditioned on coverage
+    ax = axes[1]
+    x = np.arange(len(labels))
+    w = 0.38
+    m_all = [ls[ls["strategy"] == s]["mean_all"].mean() for s in labels]
+    m_cov = [ls[ls["strategy"] == s]["mean_cov"].mean() for s in labels]
+    ax.bar(x - w / 2, m_all, w, label="all rows (as reported)", color="#C44E52")
+    ax.bar(x + w / 2, m_cov, w, label="rows with >=1 read", color="#4C72B0")
+    for xx, (a, b) in enumerate(zip(m_all, m_cov)):
+        ax.text(xx - w / 2, a, f"{a:.3f}", ha="center", va="bottom", fontsize=7)
+        ax.text(xx + w / 2, b, f"{b:.3f}", ha="center", va="bottom", fontsize=7)
+    ax.set_xticks(x, labels)
+    ax.set_ylabel("mean score")
+    ax.legend(fontsize=7)
+    ax.set_title("b  Conditioning moves every metric")
+
+    # c) stage trend per strategy, conditioned
+    ax = axes[2]
+    stages = [s for s in STAGE_ORDER if s in set(ls["stage"])]
+    for strat, c in zip(labels, ["#C44E52", "#4C72B0", "#55A868"]):
+        g = ls[ls["strategy"] == strat].groupby("stage")["mean_cov"].mean()
+        g = g.reindex(stages)
+        ax.plot(np.arange(len(stages)), g.values, "o-", color=c, label=strat)
+    ax.set_xticks(np.arange(len(stages)), stages, rotation=20)
+    ax.set_ylabel("mean score (>=1 read)")
+    ax.legend(fontsize=7)
+    ax.set_title("c  No stage trend survives in any metric")
+
+    fig.suptitle(
+        "3'UTR length metrics on the corrected cohort — the choice of metric does not "
+        "rescue the stage signal", fontsize=9)
+    save(fig, "13_length_strategy")
+
+
+# ===========================================================================
+# 14. Gene-level PAS tracks (replaces the gene_walk_* figures)
+# ===========================================================================
+GENE_LABEL = {
+    "ENSG00000092820": "EZR",
+    "ENSG00000188641": "DPYD",
+    "ENSG00000112137": "PHACTR1",
+}
+
+
+def fig_gene_walk() -> None:
+    gw = load(EXTRA, "gene_walk_tracks.tsv")
+    if gw is None or gw.empty:
+        _skipped.append("14_gene_walk")
+        return
+    genes = [g for g in GENE_LABEL if g in set(gw["gene_id"])] or sorted(gw["gene_id"].unique())[:3]
+    stages = [s for s in STAGE_ORDER if s in set(gw["stage"])]
+
+    fig, axes = plt.subplots(1, len(genes), figsize=(5.0 * len(genes), 4.3),
+                             squeeze=False, layout="constrained")
+    axes = axes[0]
+    for ax, gene in zip(axes, genes):
+        g = gw[gw["gene_id"] == gene]
+        # pool cell types: one bar group per PAS, split by stage, normalised within stage
+        piv = g.pivot_table(index="pas_id", columns="stage", values="reads", aggfunc="sum")
+        piv = piv.reindex(columns=stages).fillna(0.0)
+        pos = g.groupby("pas_id")["start"].min().reindex(piv.index)
+        piv = piv.loc[pos.sort_values().index]
+        frac = piv.div(piv.sum(axis=0).replace(0, np.nan), axis=1)
+        x = np.arange(len(piv))
+        w = 0.8 / max(len(stages), 1)
+        for j, st in enumerate(stages):
+            ax.bar(x + j * w - 0.4, frac[st].fillna(0), w, label=st)
+        ax.set_xticks(x, [f"{int(p):,}" for p in pos.sort_values()], rotation=60, fontsize=6)
+        ax.set_xlabel("PAS position (bp)")
+        ax.set_ylabel("share of the gene's reads at that PAS")
+        ax.legend(fontsize=6)
+        total = int(piv.to_numpy().sum())
+        ax.set_title(f"{GENE_LABEL.get(gene, gene)}\n{gene} — {total:,} reads, "
+                     f"{len(piv)} PAS")
+    fig.suptitle(
+        "Per-gene PAS usage by stage, corrected sweep — read share within each stage, "
+        "pooled over cell types", fontsize=9)
+    save(fig, "14_gene_walk")
+
+
 FIGURES = [
     fig_strategy_benchmark,
     fig_atlas_saturation,
@@ -728,6 +885,9 @@ FIGURES = [
     fig_recurrence,
     fig_lost_distal_elements,
     fig_gene_sets,
+    fig_diff_strategy,
+    fig_length_strategy,
+    fig_gene_walk,
 ]
 
 
