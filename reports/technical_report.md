@@ -594,7 +594,7 @@ This produces a vector of proportions summing to 1.0 per (gene, cell). In the lo
 > and 100.0000% of them have `proportion` exactly equal to `1/n_PAS`.** Uncovered
 > (gene, cell) pairs are not omitted and not marked missing — they are emitted with
 > a uniform prior. **98.2% of the table is synthetic.** Only 141,745 rows (1.8%)
-> carry any reads, and 99.5% of (gene, cell) pairs — 2,604,936 of 2,727,582 — have
+> carry any reads, and 95.5% of (gene, cell) pairs — 2,604,936 of 2,727,582 — have
 > zero total coverage.
 >
 > **Two column-level defects follow, and they block the obvious workarounds:**
