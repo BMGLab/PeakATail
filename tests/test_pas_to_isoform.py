@@ -20,7 +20,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ema.quantification.pas_to_isoform import map_pas_to_isoforms
+import pandas as pd
+
+from ema.quantification.pas_to_isoform import (
+    map_pas_to_isoforms,
+    rank_pas_by_genomic_position,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -291,3 +296,101 @@ class TestEdgeCases:
     def test_nonexistent_pasbed_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             map_pas_to_isoforms(tmp_path / "nonexistent.bed", {})
+
+
+# ---------------------------------------------------------------------------
+# rank_pas_by_genomic_position — used by the run_length per_gene synthesis
+# path, which has no transcript/UTR model, only raw pasbed coordinates.
+#
+# Regression coverage for the previously-hardcoded (gene_id, "_gene_", 0, 1,
+# 1) sentinel: every PAS of every gene reported rank=1/total=1, which is
+# indistinguishable from a real single-PAS gene and silently broke
+# classic's per_gene proximal/distal selection and the proportion
+# strategy's rank column.
+# ---------------------------------------------------------------------------
+
+class TestRankPasByGenomicPosition:
+    def test_plus_strand_ascending_coordinate_is_distal(self):
+        """+ strand: distal PAS = HIGHER genomic coordinate -> rank N."""
+        df = pd.DataFrame({
+            "pas_id": [10, 11, 12],
+            "gene_id": ["G1", "G1", "G1"],
+            "start": [500, 100, 900],   # unsorted on purpose
+            "strand": ["+", "+", "+"],
+        })
+        out = rank_pas_by_genomic_position(df).set_index("pas_id")
+        assert out.loc[11, "rank"] == 1   # start=100 -> most proximal
+        assert out.loc[10, "rank"] == 2   # start=500 -> middle
+        assert out.loc[12, "rank"] == 3   # start=900 -> most distal
+        assert (out["total"] == 3).all()
+
+    def test_minus_strand_descending_coordinate_is_distal(self):
+        """- strand: distal PAS = LOWER genomic coordinate -> rank N."""
+        df = pd.DataFrame({
+            "pas_id": [20, 21, 22],
+            "gene_id": ["G2", "G2", "G2"],
+            "start": [500, 100, 900],
+            "strand": ["-", "-", "-"],
+        })
+        out = rank_pas_by_genomic_position(df).set_index("pas_id")
+        assert out.loc[22, "rank"] == 1   # start=900 -> most proximal (- strand)
+        assert out.loc[20, "rank"] == 2   # start=500 -> middle
+        assert out.loc[21, "rank"] == 3   # start=100 -> most distal (- strand)
+        assert (out["total"] == 3).all()
+
+    def test_1_based_1_to_n(self):
+        """Ranks within a gene are exactly {1, ..., N} — 1-based, unlike
+        the bedtools/UTR path's 0-based ``_assign_ranks`` (documented
+        divergence; the two paths never populate the same map)."""
+        df = pd.DataFrame({
+            "pas_id": [1, 2, 3, 4],
+            "gene_id": ["G1"] * 4,
+            "start": [10, 40, 20, 30],
+            "strand": ["+"] * 4,
+        })
+        out = rank_pas_by_genomic_position(df)
+        assert sorted(out["rank"].tolist()) == [1, 2, 3, 4]
+
+    def test_single_pas_gene_rank_1_total_1(self):
+        df = pd.DataFrame({
+            "pas_id": [1], "gene_id": ["G1"], "start": [100], "strand": ["+"],
+        })
+        out = rank_pas_by_genomic_position(df)
+        assert out.iloc[0]["rank"] == 1
+        assert out.iloc[0]["total"] == 1
+
+    def test_multiple_genes_ranked_independently(self):
+        df = pd.DataFrame({
+            "pas_id": [1, 2, 3, 4],
+            "gene_id": ["G1", "G1", "G2", "G2"],
+            "start": [100, 200, 500, 400],
+            "strand": ["+", "+", "-", "-"],
+        })
+        out = rank_pas_by_genomic_position(df).set_index("pas_id")
+        assert out.loc[1, "rank"] == 1 and out.loc[2, "rank"] == 2
+        assert out.loc[1, "total"] == 2 and out.loc[2, "total"] == 2
+        # G2 is '-' strand: start=500 (higher) is proximal -> rank 1
+        assert out.loc[3, "rank"] == 1 and out.loc[4, "rank"] == 2
+        assert out.loc[3, "total"] == 2 and out.loc[4, "total"] == 2
+
+    def test_missing_coordinates_do_not_raise_and_sort_last(self):
+        """A PAS with no known genomic coordinate must not crash the
+        ranking — it should still get a valid rank (sorted after the
+        coordinate-known PAS of its gene) rather than raising."""
+        df = pd.DataFrame({
+            "pas_id": [1, 2, 3],
+            "gene_id": ["G1", "G1", "G1"],
+            "start": [100.0, None, 50.0],
+            "strand": ["+", None, "+"],
+        })
+        out = rank_pas_by_genomic_position(df).set_index("pas_id")
+        assert out.loc[3, "rank"] == 1   # start=50, known coord, most proximal
+        assert out.loc[1, "rank"] == 2   # start=100, known coord
+        assert out.loc[2, "rank"] == 3   # unknown coord -> sorts last
+        assert (out["total"] == 3).all()
+
+    def test_empty_input(self):
+        df = pd.DataFrame({"pas_id": [], "gene_id": [], "start": [], "strand": []})
+        out = rank_pas_by_genomic_position(df)
+        assert out.empty
+        assert "rank" in out.columns and "total" in out.columns

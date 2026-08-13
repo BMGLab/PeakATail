@@ -16,6 +16,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
@@ -638,6 +639,32 @@ def run_length(
             log.info("run_length: PDUI skipped (no strategy)")
             continue
 
+        # Look up pasbed near the h5ad input. Loaded HERE (before the
+        # pas_isoform_map is built) so the per_gene synthesis below can use
+        # real genomic coordinates for strand-aware proximal->distal PAS
+        # ranking instead of a hardcoded rank sentinel. Also reused further
+        # down to decorate each output row with genomic coordinates. Same
+        # walk-up logic as the per_isoform branch below.
+        _pasbed_cols: pd.DataFrame | None = None
+        try:
+            pb_candidates: list[Path] = []
+            sr = Path(h5ad_path).resolve().parent
+            for _ in range(4):
+                pb_candidates.append(sr / "pasbed.bed")
+                sr = sr.parent
+            _pb = next((p for p in pb_candidates if p.exists()), None)
+            if _pb is not None:
+                _pasbed_cols = pd.read_csv(
+                    _pb, sep="\t", header=None,
+                    names=["chrom", "start", "end", "pas_id", "score", "strand"],
+                    usecols=["chrom", "start", "end", "pas_id", "strand"],
+                    dtype={"pas_id": str, "chrom": str, "strand": str,
+                           "start": "Int64", "end": "Int64"},
+                ).set_index("pas_id")[["chrom", "start", "end", "strand"]]
+        except Exception as _e:
+            log.warning("run_length: could not read pasbed coords: %s", _e)
+            _pasbed_cols = None
+
         # Build pas_isoform_map. Per_isoform needs the GTF (transcript-level
         # UTRs); per_gene only needs the PAS->gene assignment which now lives
         # directly on adata.var (written by ema.matrixfilter.preprocessing when
@@ -701,11 +728,21 @@ def run_length(
             isoform_agg = "per_gene"
 
         # Per_gene path: synthesise a minimal pas_isoform_map from adata.var.
-        # Each PAS maps to a single (gene, "_gene_", rank=1) entry — enough
-        # for the strategy's per_gene aggregation, which collapses isoforms.
+        # Each PAS maps to a single (gene, "_gene_", rank, total) entry —
+        # enough for the strategy's per_gene aggregation, which collapses
+        # isoforms. `rank`/`total` are computed from real genomic
+        # coordinates (pasbed.bed, via `_pasbed_cols` loaded above) with
+        # `rank_pas_by_genomic_position` — strand-aware, 1-based,
+        # proximal(1)->distal(N). This REPLACES the previous hardcoded
+        # `(gene_id, "_gene_", 0, 1, 1)` sentinel, under which every PAS of
+        # every gene reported the same rank=1/total=1 regardless of how many
+        # PAS the gene actually had — silently breaking every rank-dependent
+        # consumer (classic per_gene proximal/distal selection, the
+        # proportion strategy's rank column, and the distal-PAS trend).
         if isoform_agg == "per_gene" and not pas_isoform_map:
             if "gene_id" in adata.var.columns:
                 gene_id_col = adata.var["gene_id"]
+                recs: list[tuple[int, str]] = []
                 for pas_id_str, gene_id in gene_id_col.items():
                     if not gene_id or (isinstance(gene_id, float) and pd.isna(gene_id)):
                         continue
@@ -713,12 +750,57 @@ def run_length(
                         pas_id_int = int(pas_id_str)
                     except (TypeError, ValueError):
                         continue
-                    pas_isoform_map[pas_id_int] = [
-                        (str(gene_id), "_gene_", 0, 1, 1)
-                    ]
+                    recs.append((pas_id_int, str(gene_id)))
+
+                if recs:
+                    from ema.quantification.pas_to_isoform import (
+                        rank_pas_by_genomic_position,
+                    )
+
+                    pas_gene_df = pd.DataFrame(recs, columns=["pas_id", "gene_id"])
+                    n_missing = len(pas_gene_df)
+                    try:
+                        if _pasbed_cols is not None:
+                            coords = _pasbed_cols.reindex(
+                                pas_gene_df["pas_id"].astype(str)
+                            )
+                            pas_gene_df["start"] = coords["start"].to_numpy()
+                            pas_gene_df["strand"] = coords["strand"].to_numpy()
+                        else:
+                            pas_gene_df["start"] = pd.NA
+                            pas_gene_df["strand"] = pd.NA
+                        n_missing = int(pas_gene_df["start"].isna().sum())
+                        ranked = rank_pas_by_genomic_position(pas_gene_df)
+                    except Exception as _e:
+                        log.warning(
+                            "run_length: genomic-position ranking failed (%s); "
+                            "falling back to input-order rank within gene.",
+                            _e,
+                        )
+                        pas_gene_df["_orig_order"] = np.arange(len(pas_gene_df))
+                        pas_gene_df["rank"] = (
+                            pas_gene_df.groupby("gene_id").cumcount() + 1
+                        )
+                        pas_gene_df["total"] = pas_gene_df.groupby("gene_id")[
+                            "pas_id"
+                        ].transform("count")
+                        ranked = pas_gene_df
+
+                    for row in ranked.itertuples(index=False):
+                        pas_isoform_map[int(row.pas_id)] = [
+                            (row.gene_id, "_gene_", 0, int(row.rank), int(row.total))
+                        ]
+                    if n_missing:
+                        log.warning(
+                            "run_length: %d/%d PAS had no pasbed coordinates for "
+                            "rank ordering; ranked after coordinate-known PAS "
+                            "within their gene (input order as tiebreak).",
+                            n_missing, len(pas_gene_df),
+                        )
                 log.info(
                     "run_length: per_gene map built from adata.var['gene_id']: "
-                    "%d PAS mapped",
+                    "%d PAS mapped (rank = strand-aware genomic "
+                    "proximal->distal order, 1-based)",
                     len(pas_isoform_map),
                 )
             else:
@@ -745,29 +827,10 @@ def run_length(
             @contextmanager
             def _threadpool_limits(limits=1):  # type: ignore[misc]
                 yield
-        # Look up pasbed near the h5ad input so we can decorate each row
-        # with genomic coordinates.  Same walk-up logic as the per_isoform
-        # branch above, but applied unconditionally — even per_gene runs
-        # benefit from coords-per-PAS.
-        _pasbed_cols: pd.DataFrame | None = None
-        try:
-            pb_candidates: list[Path] = []
-            sr = Path(h5ad_path).resolve().parent
-            for _ in range(4):
-                pb_candidates.append(sr / "pasbed.bed")
-                sr = sr.parent
-            _pb = next((p for p in pb_candidates if p.exists()), None)
-            if _pb is not None:
-                _pasbed_cols = pd.read_csv(
-                    _pb, sep="\t", header=None,
-                    names=["chrom", "start", "end", "pas_id", "score", "strand"],
-                    usecols=["chrom", "start", "end", "pas_id", "strand"],
-                    dtype={"pas_id": str, "chrom": str, "strand": str,
-                           "start": "Int64", "end": "Int64"},
-                ).set_index("pas_id")[["chrom", "start", "end", "strand"]]
-        except Exception as _e:
-            log.warning("run_length: could not read pasbed coords: %s", _e)
-            _pasbed_cols = None
+        # `_pasbed_cols` (genomic coordinates per PAS) was already loaded
+        # above, before the pas_isoform_map was built, so both the per_gene
+        # rank synthesis AND the row-decoration below (`_augment_pdui_df`)
+        # share the same lookup — no second read of pasbed.bed.
 
         # Cell -> cluster map from the AnnData (typically "leiden", but
         # honour whatever the user passed via --cluster-key).
