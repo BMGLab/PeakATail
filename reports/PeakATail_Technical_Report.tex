@@ -841,6 +841,94 @@ library-size at every resolution'' rested on the withdrawn single-run ARI and is
 not re-established here.
 
 % ─────────────────────────────────────────────────────────────────────────────
+
+\subsection{Single-Cell Visualisation --- UMAP and PAS-Cluster $\rightarrow$ Cell-Type Flow}
+
+All panels are built from real run artifacts on the analysis host:
+\texttt{07\_clustering/<dataset>/clusters.h5ad} supplies \texttt{obsm['X\_umap']}
+and \texttt{obs['leiden']}; \texttt{B2\_gex\_celltyping/<dataset>\_pas\_labeled.h5ad}
+supplies \texttt{obs['celltype']}. Cell types are the 28 signature-scored labels,
+cleaned to display names. Regenerate with
+\texttt{python reports/generate\_clustering\_figures.py}.
+
+\begin{quote}
+\textbf{Read every panel with the labelling rate in view.} Cell-type calls exist
+for \textbf{53.0\% of the 55,422 clustered cells} cohort-wide, and the per-dataset
+rate ranges from \textbf{27\% to 87\%}. The unlabelled remainder is drawn in grey
+rather than dropped: discarding it would make the PAS-cluster $\rightarrow$
+cell-type mapping look far cleaner than it is.
+\end{quote}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/15_umap_cohort_stages.png}
+  \caption{Cohort UMAP, one dataset per stage. Top row coloured by PAS-Leiden
+    cluster, bottom row by GEX cell type --- same cells, same embedding.}
+  \label{fig:umap_stages}
+\end{figure}
+
+The PAS-space embedding is structured, not noise: cells form discrete islands and
+the cell-type colouring lands coherently on them. That is the qualitative
+counterpart to the ARI 0.463 / AMI 0.626 reported above --- real but partial
+agreement.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/16_umap_clustering_grid.png}
+  \caption{The six clustering variants on one shared dataset
+    (GSM3516666-Normal). The embedding is essentially fixed; what changes is how
+    finely it is cut.}
+  \label{fig:umap_variants}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/17_sankey_clustering_grid.png}
+  \caption{PAS cluster $\rightarrow$ GEX cell type per clustering variant, on the
+    shared dataset. Left nodes are PAS clusters, right nodes cell types, ribbon
+    width is cells.}
+  \label{fig:sankey_variants}
+\end{figure}
+
+\textbf{Each panel is a single dataset, deliberately.} \texttt{leiden} ids are
+assigned per dataset, so cluster ``0'' in one GSM is unrelated to cluster ``0'' in
+another; pooling the 17 datasets merges unrelated clusters into one node and
+produces a picture that cannot be read.
+
+Most PAS clusters map predominantly to \emph{one} cell type: across all
+experiments the median cluster sends \textbf{79\% of its labelled cells to a
+single type}. The mapping is many-to-one rather than one-to-one --- several PAS
+clusters resolve the same cell type, which is what an AMI well above the ARI
+predicts. Purity rises with resolution (0.75 at res 0.5, 0.81 at res 1.0, 0.84 at
+res 2.0), but \textbf{this is not evidence that res 2.0 is better}: purity
+increases mechanically as clusters shrink, and at the limit every singleton
+cluster is perfectly pure.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/18_sankey_peak_strategies.png}
+  \caption{The same flow per peak-calling strategy, on the shared grid dataset.
+    The cluster $\rightarrow$ cell-type structure is preserved across
+    lambda\_gradient, lambda\_poisson and sierra\_iterative, and under the
+    internal-priming filter.}
+  \label{fig:sankey_strategies}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{figures/corrected/19_cluster_sizes.png}
+  \caption{Cluster structure across all 19 experiments --- cluster count per
+    dataset (a), size distribution across clustering variants (b), and
+    fragmentation against cluster count (c).}
+  \label{fig:cluster_sizes_corrected}
+\end{figure}
+
+Across every experiment the median dataset yields \textbf{15 clusters (range
+7--29)}. Cluster-count differences track the resolution parameter, and the size
+distributions are smooth rather than one dominant cluster plus fragments ---
+consistent with the trim-insensitivity reported earlier.
+
+
 \section{Differential APA --- Switch Test}
 \label{sec:switch_test}
 % ─────────────────────────────────────────────────────────────────────────────

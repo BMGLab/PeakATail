@@ -444,6 +444,78 @@ Note also that `leiden_libsize` yields more clusters than `leiden_tfidf`
 normalisations; the earlier claim that "TF-IDF beats library-size at every
 resolution" rested on the withdrawn single-run ARI and is not re-established here.
 
+
+### 7.2 Single-cell visualisation — UMAP and PAS-cluster → cell-type flow
+
+All panels below are built from real run artifacts on the analysis host:
+`07_clustering/<dataset>/clusters.h5ad` supplies `obsm['X_umap']` and
+`obs['leiden']`; `B2_gex_celltyping/<dataset>_pas_labeled.h5ad` supplies
+`obs['celltype']`. Cell types are the 28 signature-scored labels, cleaned to
+display names (`CELL_TYPES_WANSLEEBEN_HOGAN_2013:MACROPHAGE_M2` → *Macrophage M2*).
+Regenerate with `python reports/generate_clustering_figures.py`.
+
+> **Read every panel with the labelling rate in view.** Cell-type calls exist for
+> **53.0% of the 55,422 clustered cells** cohort-wide, and the per-dataset rate
+> ranges from **27% to 87%**. The unlabelled remainder is drawn in grey rather than
+> dropped: discarding it would make the PAS-cluster → cell-type mapping look far
+> cleaner than it is.
+
+![UMAP across stages](figures/corrected/15_umap_cohort_stages.png)
+
+*Figure C15: cohort UMAP, one dataset per stage. Top row coloured by PAS-Leiden
+cluster, bottom row by GEX cell type — the same cells and the same embedding,
+so the two rows are directly comparable.*
+
+The PAS-space embedding is **structured, not noise**: cells form discrete islands,
+and the cell-type colouring lands coherently on them rather than scattering. That
+is the qualitative counterpart to the ARI 0.463 / AMI 0.626 in §7.1 — real but
+partial agreement.
+
+![Clustering variants](figures/corrected/16_umap_clustering_grid.png)
+
+*Figure C16: the six clustering variants on one shared dataset (GSM3516666-Normal).
+The embedding is essentially fixed; what changes is how finely it is cut.*
+
+![Sankey per clustering variant](figures/corrected/17_sankey_clustering_grid.png)
+
+*Figure C17: PAS cluster → GEX cell type per clustering variant, on the shared
+dataset. Left nodes are PAS clusters, right nodes are cell types, ribbon width is
+cells.*
+
+**Each panel is a single dataset, and that is deliberate.** `leiden` ids are
+assigned per dataset, so cluster "0" in one GSM is unrelated to cluster "0" in
+another; pooling the 17 datasets — as a first draft of this figure did — merges
+unrelated clusters into one node and produces a picture that cannot be read.
+
+What the flow shows: most PAS clusters map predominantly to **one** cell type.
+Across all experiments the median cluster sends **79% of its labelled cells to a
+single type**. The mapping is many-to-one rather than one-to-one — several PAS
+clusters resolve the same cell type, which is what an AMI well above the ARI
+predicts (§7.1).
+
+Purity rises with resolution — 0.75 at res 0.5, 0.81 at res 1.0, 0.84 at res 2.0.
+**This is not evidence that res 2.0 is better.** Purity increases mechanically as
+clusters shrink; at the limit every singleton cluster is perfectly pure. It is
+reported to show the trade-off, not to select a resolution.
+
+![Sankey per peak strategy](figures/corrected/18_sankey_peak_strategies.png)
+
+*Figure C18: the same flow per peak-calling strategy, on the shared grid dataset.
+The cluster → cell-type structure is preserved across lambda_gradient,
+lambda_poisson and sierra_iterative, and under the internal-priming filter.*
+
+![Cluster sizes](figures/corrected/19_cluster_sizes.png)
+
+*Figure C19: cluster structure across all 19 experiments — cluster count per
+dataset (a), size distribution across the clustering variants (b), and
+fragmentation against cluster count (c).*
+
+Across every experiment the median dataset yields **15 clusters (range 7–29)**.
+Cluster-count differences track the resolution parameter, as expected, and the
+size distributions are smooth rather than showing one dominant cluster plus
+fragments — consistent with the trim-insensitivity already reported in §6.4.
+
+---
 ---
 
 ## 8. Differential APA — Switch Test
