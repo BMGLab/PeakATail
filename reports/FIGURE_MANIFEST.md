@@ -94,11 +94,28 @@ so the result reads as a test rather than a description.
 
 ## Status and caveats for the assembler
 
-1. **14 is provisional.** It currently renders from 9 of 24 cell types; the
-   geneview pass over the 57 GB `proportion.tsv` set is still running. It is the
-   only figure not yet committed. Regenerate with
-   `python reports/generate_corrected_figures.py` once
-   `extra/gene_walk_tracks.tsv` is final — no code change needed.
+1. **14 is deliberately ABSENT, not missing.** Its input pass (geneview, over the
+   57 GB `proportion.tsv` set) is still running, so any file rendered now would
+   cover only 9 of 24 cell types. I generated and verified it at that partial
+   coverage — it renders correctly — then **deleted the file so a provisional
+   figure cannot be swept into a commit and shipped as final.**
+
+   To produce the final version, once
+   `reports/cumulative_analysis/extra/gene_walk_tracks.tsv` stops growing
+   (the server pass writes it incrementally; it is final when
+   `pgrep -f s4_strategy` returns nothing on the analysis host):
+
+   ```
+   scp amiramiritabat@155.223.31.208:/mnt/ssd2/Laugney_Aligned/peakatail_experiments/\
+   RERUN_2026-08_fixed/analysis_extra/gene_walk_tracks.tsv \
+     reports/cumulative_analysis/extra/
+   python reports/generate_corrected_figures.py
+   ```
+
+   No code change is needed — the generator skips 14 cleanly while the input is
+   absent, and every other figure is unaffected. If the report must ship before
+   the pass lands, omit 14 rather than substituting the old `gene_walk_*` panels,
+   which are pre-fix.
 2. **No figure is known to be wrong.** Three were wrong during development and
    are fixed: the Sankey pooled datasets with incomparable cluster ids; the UMAP
    buried cell types under the unlabelled grey; `13` presented `proportion` in a
