@@ -28,6 +28,43 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @dataclass
+class TranscriptRegions:
+    """Typed sub-exon segments for one transcript's gene model.
+
+    ``exons`` is the plain exon span (same shape as the legacy
+    ``load_isoforms_for_gene`` output) and is always populated when the
+    transcript has any ``exon`` lines -- it's the fallback the renderers use
+    when a transcript has no CDS/UTR annotation (e.g. a non-coding
+    transcript) and doubles as the intron-backbone span.
+
+    ``cds``, ``utr5`` and ``utr3`` are the coding and untranslated exon
+    *portions* pulled from ``CDS`` / ``five_prime_utr`` / ``three_prime_utr``
+    GTF features. For a protein-coding transcript their union approximates
+    ``exons`` (each exon is split into a UTR part and a CDS part at the
+    start/stop codon); the renderer draws these instead of the plain exon
+    blocks when they're present, so the reader sees the real gene model
+    instead of uniform boxes.
+
+    Attributes:
+        transcript_id: Ensembl transcript identifier.
+        exons: [(start, end), ...] BED-style half-open exon spans.
+        cds: [(start, end), ...] coding-sequence spans.
+        utr5: [(start, end), ...] 5'UTR spans.
+        utr3: [(start, end), ...] 3'UTR spans -- the APA-relevant region.
+    """
+    transcript_id: str
+    exons: list[tuple[int, int]] = field(default_factory=list)
+    cds: list[tuple[int, int]] = field(default_factory=list)
+    utr5: list[tuple[int, int]] = field(default_factory=list)
+    utr3: list[tuple[int, int]] = field(default_factory=list)
+
+    @property
+    def has_typed_regions(self) -> bool:
+        """True when CDS/UTR annotation was found (not just plain exons)."""
+        return bool(self.cds or self.utr5 or self.utr3)
+
+
+@dataclass
 class GenePanel:
     """All data needed to render one gene's track view.
 
@@ -61,6 +98,12 @@ class GenePanel:
     reads_per_cell: np.ndarray
     proportions: np.ndarray
     isoforms: list[tuple[str, list[tuple[int, int]]]] = field(default_factory=list)
+    # Optional richer gene-model structure: one entry per transcript carrying
+    # typed sub-exon segments (CDS / 5'UTR / 3'UTR) in addition to the plain
+    # exon span. Populated by ``load_isoform_regions_for_gene`` when the GTF
+    # has CDS/UTR feature lines; empty (falls back to ``isoforms``) when the
+    # richer structure wasn't loaded or the GTF lacks that annotation.
+    isoform_regions: list["TranscriptRegions"] = field(default_factory=list)
     # Actual genomic span of each PAS region (BED half-open).  Same length
     # and order as ``pas_ids`` / ``pas_positions``.  When the merger widens
     # a PAS, ``pas_ends - pas_starts`` reflects that.  The rendering layer
@@ -168,7 +211,113 @@ def pas_distance_table(panel: "GenePanel") -> pd.DataFrame:
         ]
         df["n_utr"] = [len(panel.pas_isoforms.get(int(p), [])) for p in df["pas_id"]]
         cols += ["n_utr", "utr_transcripts"]
+    else:
+        # No explicit per-isoform assignment was supplied (--isoform-map
+        # wasn't run). Fall back to the geometric overlap against the GTF
+        # gene-model regions, when loaded, so the column isn't just blank --
+        # a PAS sitting in a transcript's 3'UTR should say so.
+        fallback = pas_region_labels(panel)
+        if fallback:
+            df["utr_transcripts"] = [fallback.get(int(p), "") for p in df["pas_id"]]
+            df["n_utr"] = [
+                len(fallback[int(p)].split(";")) if fallback.get(int(p)) else 0
+                for p in df["pas_id"]
+            ]
+            cols += ["n_utr", "utr_transcripts"]
     return df[cols]
+
+
+def _region_overlap_label(regions: "TranscriptRegions", start: int, end: int) -> str | None:
+    """Which of *regions*' typed segments the [start, end) interval overlaps.
+
+    Checked in priority order 3'UTR > 5'UTR > CDS: 3'UTR is what an APA
+    reader cares about first, so it wins when a PAS interval (usually wide
+    from merging) happens to straddle more than one segment type of the same
+    transcript.
+    """
+    def _hits(intervals: list[tuple[int, int]]) -> bool:
+        return any(start < e and end > s for s, e in intervals)
+
+    if _hits(regions.utr3):
+        return f"{regions.transcript_id} (3'UTR)"
+    if _hits(regions.utr5):
+        return f"{regions.transcript_id} (5'UTR)"
+    if _hits(regions.cds):
+        return f"{regions.transcript_id} (CDS)"
+    return None
+
+
+def pas_region_labels(panel: "GenePanel") -> dict[int, str]:
+    """Per-PAS region-overlap label computed from ``isoform_regions`` geometry.
+
+    Fallback used when the pipeline didn't supply an explicit PAS->isoform
+    assignment (``panel.pas_isoforms``, populated from ``switch length
+    --isoform-agg per_isoform``): for each PAS, which transcript UTR/CDS its
+    genomic interval overlaps, formatted as ``"<transcript_id> (3'UTR)"``
+    (joined with ``;`` across transcripts). This is *not* a replacement for
+    the per-isoform quantification -- it's pure genomic overlap -- but it's
+    strictly better than leaving the field blank when the GTF gene model was
+    loaded and the dedicated assignment step wasn't run.
+
+    Returns:
+        ``{pas_id: "T1 (3'UTR);T2 (3'UTR)"}`` for PAS overlapping at least one
+        region; PAS with no overlap are omitted. ``{}`` when
+        ``panel.isoform_regions`` is empty.
+    """
+    if not panel.isoform_regions:
+        return {}
+    n = len(panel.pas_ids)
+    starts = list(panel.pas_starts) if len(panel.pas_starts) == n else list(panel.pas_positions)
+    ends = (
+        list(panel.pas_ends) if len(panel.pas_ends) == n
+        else [p + 1 for p in panel.pas_positions]
+    )
+    out: dict[int, str] = {}
+    for pid, s, e in zip(panel.pas_ids, starts, ends):
+        labels = [
+            lbl for lbl in (
+                _region_overlap_label(regions, int(s), int(e))
+                for regions in panel.isoform_regions
+            )
+            if lbl
+        ]
+        if labels:
+            out[int(pid)] = ";".join(labels)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Human-readable count formatting (shared by both viz backends)
+# ---------------------------------------------------------------------------
+
+def format_count(v: float | int | None) -> str:
+    """Human-readable count: thousands separators + k/M suffix.
+
+    Used for read-count fields (raw reads, reads/cell, cluster totals) in
+    both the plotly hover and the matplotlib axis labels, so a reader sees
+    ``"12.3k"`` instead of having to parse an unscaled ``"12345.0"`` digit by
+    digit.
+
+    Examples: ``12345 -> "12.3k"``, ``1234567 -> "1.23M"``, ``235.8 ->
+    "235.8"``. Values with magnitude < 1 (``reads/cell`` is frequently sub-1)
+    get 3 decimals instead of 1 so they don't collapse to an uninformative
+    ``"0.0"``.
+    """
+    try:
+        if v is None or not np.isfinite(v):
+            return "—"
+    except TypeError:
+        return "—"
+    v = float(v)
+    av = abs(v)
+    sign = "-" if v < 0 else ""
+    if av >= 1_000_000:
+        return f"{sign}{av / 1_000_000:,.2f}M"
+    if av >= 1_000:
+        return f"{sign}{av / 1_000:,.1f}k"
+    if av >= 1 or av == 0:
+        return f"{sign}{av:,.1f}"
+    return f"{sign}{av:,.3f}"
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +382,7 @@ def build_gene_panel(
     subtitle: str = "",
     show_distance_table: bool = False,
     pas_isoforms: dict[int, list[str]] | None = None,
+    isoform_regions: list["TranscriptRegions"] | None = None,
 ) -> GenePanel | None:
     """Build a :class:`GenePanel` for one gene.
 
@@ -342,6 +492,7 @@ def build_gene_panel(
         reads_per_cell=rpc,
         proportions=proportions,
         isoforms=isoforms or [],
+        isoform_regions=isoform_regions or [],
         cluster_key=str(cluster_key),
         subtitle=str(subtitle),
         group_conditions=group_conditions,
@@ -423,6 +574,87 @@ def load_isoforms_for_gene(
         log.warning("load_isoforms_for_gene: could not read %s: %s", gtf_path, exc)
         return []
     return [(t, sorted(exons)) for t, exons in isoforms.items()]
+
+
+# Feature types collected per region kind. GTF flavours disagree on
+# underscore vs. UPPER-case for the UTR feature name (Ensembl uses
+# ``five_prime_utr`` / ``three_prime_utr``; some other producers emit
+# ``five_prime_UTR`` / ``three_prime_UTR``), so both spellings are accepted.
+_CDS_FEATURES = frozenset({"CDS"})
+_UTR5_FEATURES = frozenset({"five_prime_utr", "five_prime_UTR"})
+_UTR3_FEATURES = frozenset({"three_prime_utr", "three_prime_UTR"})
+_EXON_FEATURES = frozenset({"exon"})
+
+
+def load_isoform_regions_for_gene(
+    gtf_path: Path,
+    gene_id: str,
+) -> list[TranscriptRegions]:
+    """Return the full typed gene model for *gene_id*: exon/CDS/5'UTR/3'UTR.
+
+    Single GTF pass (same cost as :func:`load_isoforms_for_gene`) collecting,
+    per transcript, the ``exon``, ``CDS``, ``five_prime_utr``/``UTR`` and
+    ``three_prime_utr``/``UTR`` feature intervals. This is what lets the
+    renderer draw a real gene model (CDS tall, UTR short, 3'UTR highlighted)
+    instead of one uniform block per exon.
+
+    Args:
+        gtf_path: Path to a GTF annotation file.
+        gene_id: Ensembl gene ID to extract.
+
+    Returns:
+        One :class:`TranscriptRegions` per transcript of *gene_id*, each
+        list of intervals sorted by start ascending. Empty transcripts (no
+        exon lines matched) are not included. Returns ``[]`` on read error
+        or when the gene has no matching lines.
+    """
+    gene_id_str = str(gene_id)
+    by_transcript: dict[str, TranscriptRegions] = {}
+    try:
+        with open(gtf_path) as fh:
+            for line in fh:
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 9:
+                    continue
+                feature = parts[2]
+                if (
+                    feature not in _EXON_FEATURES
+                    and feature not in _CDS_FEATURES
+                    and feature not in _UTR5_FEATURES
+                    and feature not in _UTR3_FEATURES
+                ):
+                    continue
+                attrs = parts[8]
+                if gene_id_str not in attrs:
+                    continue
+                gid = _gtf_attr(attrs, "gene_id")
+                if gid != gene_id_str:
+                    continue
+                tid = _gtf_attr(attrs, "transcript_id") or "unknown"
+                rec = by_transcript.setdefault(tid, TranscriptRegions(transcript_id=tid))
+                interval = (int(parts[3]) - 1, int(parts[4]))
+                if feature in _CDS_FEATURES:
+                    rec.cds.append(interval)
+                elif feature in _UTR5_FEATURES:
+                    rec.utr5.append(interval)
+                elif feature in _UTR3_FEATURES:
+                    rec.utr3.append(interval)
+                else:  # exon
+                    rec.exons.append(interval)
+    except OSError as exc:
+        log.warning("load_isoform_regions_for_gene: could not read %s: %s", gtf_path, exc)
+        return []
+
+    out: list[TranscriptRegions] = []
+    for tid, rec in by_transcript.items():
+        rec.exons.sort()
+        rec.cds.sort()
+        rec.utr5.sort()
+        rec.utr3.sort()
+        out.append(rec)
+    return out
 
 
 def _gtf_attr(attr_field: str, key: str) -> str:
