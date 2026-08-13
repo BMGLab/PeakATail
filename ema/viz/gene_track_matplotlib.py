@@ -32,7 +32,7 @@ from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_matplotlib
 from ema.viz._meta import write_figure_meta
-from ema.viz._gene_track_helpers import pas_distance_table
+from ema.viz._gene_track_helpers import format_count, pas_distance_table
 
 log = logging.getLogger(__name__)
 
@@ -298,8 +298,11 @@ class GeneTrackMatplotlib(VizStrategy):
                     r, g, b = mcolors.to_rgb(cond_colours[cond])
                     ax.set_facecolor((r, g, b, 0.07))
             ax.set_xlim(x_min, x_max)
+            # Same human-readable count formatting as the plotly hover
+            # ("12.3k" / "1.23M") rather than raw/scientific digits, so the
+            # two backends read consistently.
             ax.yaxis.set_major_formatter(
-                matplotlib.ticker.FormatStrFormatter("%.2g")  # type: ignore[attr-defined]
+                matplotlib.ticker.FuncFormatter(lambda v, _: format_count(v))  # type: ignore[attr-defined]
             )
 
         # --- shared x-axis ---
@@ -439,6 +442,7 @@ class GeneTrackMatplotlib(VizStrategy):
                 "n_pas": n_pas,
                 "n_clusters_rendered": n_clusters_rendered,
                 "n_isoforms": n_isoforms,
+                "gene_model_regions_available": bool(panel.isoform_regions),
                 "top_proportion_per_cluster": top_prop_per_cluster,
             },
         )
@@ -596,8 +600,34 @@ def _draw_gene_structure(
     intron_colour = "#888888"
     exon_height = 0.6  # fraction of the row height
 
+    # Gene-model region colours -- matched to gene_track_plotly's palette so
+    # the two backends render the same picture.
+    cds_colour = "#3a6b91"
+    utr5_colour = "#a9c4d8"
+    utr3_colour = "#f2b56b"
+    utr3_outline = "#c8781f"
+    cds_height = 0.75    # CDS tall
+    utr_height = 0.40    # UTR short
+
     view_span = max(x_max - x_min, 1)
     min_visible_exon_w = max(view_span * 0.004, 1)
+
+    regions_by_tid = {r.transcript_id: r for r in getattr(panel, "isoform_regions", [])}
+
+    def _draw_block(start: int, end: int, y_centre: float, height: float,
+                     facecolour: str, edgecolour: str = "none", lw: float = 0.0) -> None:
+        visual_width = max(end - start, min_visible_exon_w)
+        rect = mpatches.FancyBboxPatch(
+            (start, y_centre - height / 2),
+            visual_width,
+            height,
+            boxstyle="square,pad=0",
+            facecolor=facecolour,
+            edgecolor=edgecolour,
+            linewidth=lw,
+            zorder=3,
+        )
+        ax.add_patch(rect)
 
     for row_idx, (tid, exons) in enumerate(panel.isoforms):
         y_centre = row_idx + 0.5
@@ -630,20 +660,30 @@ def _draw_gene_structure(
                 ),
             )
 
-        # Draw exon rectangles.  Visual width is clamped up to a minimum so
-        # tiny exons remain visible; actual coordinates are unaltered.
-        for exon_start, exon_end in exons:
-            visual_width = max(exon_end - exon_start, min_visible_exon_w)
-            rect = mpatches.FancyBboxPatch(
-                (exon_start, y_centre - exon_height / 2),
-                visual_width,
-                exon_height,
-                boxstyle="square,pad=0",
-                facecolor=exon_colour,
-                edgecolor="none",
-                zorder=3,
-            )
-            ax.add_patch(rect)
+        regions = regions_by_tid.get(tid)
+        if regions is not None and regions.has_typed_regions:
+            # Full gene model: CDS tall, UTRs short, 3'UTR distinctly
+            # coloured + outlined + labelled (the APA-relevant region).
+            for seg_start, seg_end in regions.cds:
+                _draw_block(seg_start, seg_end, y_centre, cds_height, cds_colour)
+            for seg_start, seg_end in regions.utr5:
+                _draw_block(seg_start, seg_end, y_centre, utr_height, utr5_colour)
+            for seg_start, seg_end in regions.utr3:
+                _draw_block(seg_start, seg_end, y_centre, utr_height, utr3_colour,
+                             edgecolour=utr3_outline, lw=0.9)
+                centre = (seg_start + seg_end) / 2.0
+                ax.text(
+                    centre, y_centre + utr_height / 2 + 0.03, "3'UTR",
+                    ha="center", va="bottom", fontsize=4.5, color=utr3_outline,
+                    clip_on=False,
+                )
+        else:
+            # Legacy fallback: uniform exon rectangles.  Visual width is
+            # clamped up to a minimum so tiny exons remain visible; actual
+            # coordinates are unaltered.
+            for exon_start, exon_end in exons:
+                _draw_block(exon_start, exon_end, y_centre, exon_height, exon_colour)
+
         # Label with transcript id (abbreviated).
         short_tid = tid if len(tid) <= 18 else tid[:15] + "..."
         ax.text(

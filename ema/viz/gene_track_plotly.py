@@ -7,8 +7,12 @@ static view shows, plus controls a reader can drive in the browser.
 
 Rendered elements (mirroring ``gene_track_matplotlib``)
 ------------------------------------------------------
-  1. **Gene structure track** — one row per isoform: exon blocks on a thin
-     intron backbone with strand-direction arrows and the transcript id.
+  1. **Gene structure track** — one row per isoform: a thin intron backbone
+     with strand-direction arrows and the transcript id, overlaid with the
+     typed gene model when CDS/UTR annotation is available (tall CDS boxes,
+     short 5'UTR boxes, a distinctly-coloured/outlined + labelled 3'UTR —
+     the APA-relevant region). Falls back to uniform exon blocks when only
+     plain ``exon`` features were loaded.
   2. **Per-cluster PAS tracks** — one subplot row per cluster; bar colour is
      the within-gene proportion (Viridis, shared 0..1 colour axis), matching
      the static figure.
@@ -67,7 +71,9 @@ from ema.viz import register_viz_strategy
 from ema.viz.base import VizStrategy
 from ema.viz._io import save_plotly
 from ema.viz._meta import write_figure_meta
-from ema.viz._gene_track_helpers import GenePanel, pas_distance_table
+from ema.viz._gene_track_helpers import (
+    GenePanel, TranscriptRegions, format_count, pas_distance_table,
+)
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +91,16 @@ _ISOFORM_COLORS: list[str] = [
 # position across every cluster row.
 _PAS_BAND_COLOR = "rgba(214, 39, 40, 0.10)"
 _PAS_BAND_LINE = "rgba(214, 39, 40, 0.55)"
+
+# Gene-model region colours (matched to gene_track_matplotlib's palette).
+# CDS: tall, neutral slate-blue -- the coding backbone of the transcript.
+_CDS_COLOR = "#3a6b91"
+# 5'UTR: short, muted -- present but not the focus of an APA view.
+_UTR5_COLOR = "#a9c4d8"
+# 3'UTR: short but distinctly coloured + outlined -- this is the region APA
+# acts on, so it needs to read as "different" at a glance, not just "smaller".
+_UTR3_COLOR = "#f2b56b"
+_UTR3_OUTLINE = "#c8781f"
 
 # Bar opacity for PAS filtered OUT by the proportion slider. Not zero: a
 # filtered PAS is de-emphasised, not hidden — hiding it would silently change
@@ -191,6 +207,7 @@ class GeneTrackPlotly(VizStrategy):
             "n_pas": len(panel.pas_ids),
             "n_clusters_rendered": len(cluster_indices),
             "n_isoforms": len(panel.isoforms),
+            "gene_model_regions_available": bool(panel.isoform_regions),
             "cluster_key": panel.cluster_key,
             "metrics_available": [m[0] for m in _METRICS],
             "proportion_filter_steps": _PROP_STEPS,
@@ -387,10 +404,22 @@ class GeneTrackPlotly(VizStrategy):
 
     @staticmethod
     def _add_isoform_traces(fig: go.Figure, panel: GenePanel, row: int) -> None:
-        """Exon blocks + intron backbone + strand arrows, one row per isoform."""
+        """Gene model per isoform: intron backbone + strand arrows + region blocks.
+
+        When ``panel.isoform_regions`` is populated (GTF had CDS/UTR feature
+        lines) draws the standard gene-model shape per transcript: thin UTR
+        boxes, tall CDS boxes, and a distinctly-coloured/outlined 3'UTR (the
+        APA-relevant region). Falls back to the legacy uniform exon block
+        when regions aren't available for a transcript (e.g. non-coding
+        transcripts with exon-only annotation), or for the whole gene when
+        ``isoform_regions`` wasn't loaded at all.
+        """
+        regions_by_tid = {r.transcript_id: r for r in panel.isoform_regions}
+
         for iso_idx, (transcript_id, exons) in enumerate(panel.isoforms):
             color = _ISOFORM_COLORS[iso_idx % len(_ISOFORM_COLORS)]
             y_val = iso_idx
+            regions = regions_by_tid.get(transcript_id)
 
             if exons:
                 iso_min = min(s for s, _ in exons)
@@ -425,25 +454,28 @@ class GeneTrackPlotly(VizStrategy):
                         row=row, col=1,
                     )
 
-            # Exon blocks.
-            for exon_start, exon_end in exons:
-                fig.add_trace(
-                    go.Scatter(
-                        x=[exon_start, exon_end, exon_end, exon_start, exon_start],
-                        y=[y_val - 0.32, y_val - 0.32, y_val + 0.32, y_val + 0.32, y_val - 0.32],
-                        mode="lines",
-                        fill="toself",
-                        fillcolor=color,
-                        line=dict(color=color, width=0),
-                        hoverinfo="text",
-                        hovertext=(
-                            f"<b>{transcript_id}</b><br>exon {exon_start:,}-{exon_end:,}"
-                            f"<br>width: {exon_end - exon_start:,} bp"
+            if regions is not None and regions.has_typed_regions:
+                GeneTrackPlotly._add_region_blocks(fig, regions, transcript_id, y_val, row)
+            else:
+                # Legacy fallback: uniform exon blocks.
+                for exon_start, exon_end in exons:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[exon_start, exon_end, exon_end, exon_start, exon_start],
+                            y=[y_val - 0.32, y_val - 0.32, y_val + 0.32, y_val + 0.32, y_val - 0.32],
+                            mode="lines",
+                            fill="toself",
+                            fillcolor=color,
+                            line=dict(color=color, width=0),
+                            hoverinfo="text",
+                            hovertext=(
+                                f"<b>{transcript_id}</b><br>exon {exon_start:,}-{exon_end:,}"
+                                f"<br>width: {exon_end - exon_start:,} bp"
+                            ),
+                            showlegend=False,
                         ),
-                        showlegend=False,
-                    ),
-                    row=row, col=1,
-                )
+                        row=row, col=1,
+                    )
 
         fig.update_yaxes(
             row=row, col=1,
@@ -454,6 +486,52 @@ class GeneTrackPlotly(VizStrategy):
             range=[-0.7, len(panel.isoforms) - 0.3],
             showgrid=False, zeroline=False,
         )
+
+    @staticmethod
+    def _add_region_blocks(
+        fig: go.Figure,
+        regions: TranscriptRegions,
+        transcript_id: str,
+        y_val: float,
+        row: int,
+    ) -> None:
+        """Draw CDS / 5'UTR / 3'UTR boxes for one transcript's gene model.
+
+        CDS is drawn tall (y +/- 0.34), UTRs short (y +/- 0.18) -- the
+        standard gene-model convention -- and 3'UTR gets its own colour plus
+        a thicker outline and a text label since it's the region APA acts on.
+        """
+        specs = [
+            ("cds", regions.cds, "CDS", _CDS_COLOR, _CDS_COLOR, 0.34, 0, False),
+            ("utr5", regions.utr5, "5'UTR", _UTR5_COLOR, _UTR5_COLOR, 0.18, 0, False),
+            ("utr3", regions.utr3, "3'UTR", _UTR3_COLOR, _UTR3_OUTLINE, 0.18, 1.4, True),
+        ]
+        for kind, intervals, label, fill, outline, half_h, outline_w, annotate in specs:
+            for seg_start, seg_end in intervals:
+                fig.add_trace(
+                    go.Scatter(
+                        x=[seg_start, seg_end, seg_end, seg_start, seg_start],
+                        y=[y_val - half_h, y_val - half_h, y_val + half_h, y_val + half_h, y_val - half_h],
+                        mode="lines",
+                        fill="toself",
+                        fillcolor=fill,
+                        line=dict(color=outline, width=outline_w),
+                        hoverinfo="text",
+                        hovertext=(
+                            f"<b>{transcript_id}</b><br>{label} {seg_start:,}-{seg_end:,}"
+                            f"<br>width: {seg_end - seg_start:,} bp"
+                        ),
+                        showlegend=False,
+                    ),
+                    row=row, col=1,
+                )
+                if annotate:
+                    fig.add_annotation(
+                        x=(seg_start + seg_end) / 2, y=y_val + half_h,
+                        text=label, showarrow=False, yshift=7,
+                        font=dict(size=7, color=_UTR3_OUTLINE),
+                        row=row, col=1,
+                    )
 
     @staticmethod
     def _add_cluster_bar_traces(
@@ -484,6 +562,11 @@ class GeneTrackPlotly(VizStrategy):
         min_w = max(int(gene_span * 0.005), 1)
         bar_widths = [max(int(m["end"] - m["start"]), min_w) for m in pas_meta]
 
+        # Read-count fields go through format_count() into customdata as
+        # already-formatted strings ("12.3k", "1.23M") -- raw magnitudes like
+        # "235.8" or "12345.0" force the reader to count digits/commas
+        # themselves. Proportion stays a plotly-formatted percentage (:.1%)
+        # since 0-100% is unambiguous on its own.
         customdata: list[list[Any]] = []
         for j in range(n_pas):
             m = pas_meta[j]
@@ -491,8 +574,8 @@ class GeneTrackPlotly(VizStrategy):
                 m["pas_id"], panel.chrom, m["start"], m["end"], m["width"], m["summit"],
                 m["rank"], m["gap_to_next"], m["summit_dist_to_next"], m["utr"],
                 cluster_label, n_cells, condition or "—",
-                float(panel.reads[ci, j]), float(panel.reads_per_cell[ci, j]),
-                prop_vals[j], cluster_total_reads,
+                format_count(panel.reads[ci, j]), format_count(panel.reads_per_cell[ci, j]),
+                prop_vals[j], format_count(cluster_total_reads),
             ])
 
         hovertemplate = (
@@ -503,9 +586,9 @@ class GeneTrackPlotly(VizStrategy):
             "UTR: %{customdata[9]}<br>"
             "<b>cluster %{customdata[10]}</b> · cells: %{customdata[11]}"
             " · condition: %{customdata[12]}<br>"
-            "reads: %{customdata[13]:.1f} · reads/cell: %{customdata[14]:.4f}<br>"
-            "within-gene proportion: %{customdata[15]:.1%}"
-            " (cluster total reads: %{customdata[16]:.0f})"
+            "reads: %{customdata[13]} · reads/cell: %{customdata[14]}<br>"
+            "within-gene proportion (0–100%): %{customdata[15]:.1%}"
+            " (cluster total reads: %{customdata[16]})"
             "<extra></extra>"
         )
 
