@@ -431,9 +431,16 @@ def celltype_stage_pdui_matrix(trend_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def harvest_fisher_hit_counts(
-    sweep_root: Path, fdr: float = 0.05, run_dir: Optional[Path] = None
+    sweep_root: Path, fdr: float = 0.05, run_dir: Optional[Path] = None, strategy: str = "fisher"
 ) -> pd.DataFrame:
-    """n significant PAS (qvalue < fdr) per celltype x stage-contrast, from Fisher pairwise TSVs.
+    """n significant PAS (qvalue < fdr) per celltype x stage-contrast, from diff-strategy pairwise TSVs.
+
+    Despite the name (kept for backward compat — this originally only read
+    Fisher output), *strategy* selects which ``diff/<celltype>/<strategy>/``
+    subdir + ``<strategy>_*_vs_*.tsv`` naming to read — e.g. ``mwu_percell``
+    reads the per-cell Mann-Whitney output instead. Both write a ``qvalue``
+    column via the same generic runner path (``ema/switch_test/runner.py``),
+    so no other logic needs to change.
 
     Only the ``qvalue`` column is read from each TSV (``usecols``) to keep
     memory bounded; these per-contrast tables are small compared to the raw
@@ -444,11 +451,11 @@ def harvest_fisher_hit_counts(
     diff_dir = base / "B3_switch" / "diff"
     rows = []
     for ct in _list_celltypes(sweep_root, run_dir=run_dir):
-        fisher_dir = diff_dir / ct / "fisher" / "differential"
+        fisher_dir = diff_dir / ct / strategy / "differential"
         if not fisher_dir.exists():
             continue
-        for tsv in sorted(fisher_dir.glob("fisher_*_vs_*.tsv")):
-            contrast = tsv.stem.replace("fisher_", "")
+        for tsv in sorted(fisher_dir.glob(f"{strategy}_*_vs_*.tsv")):
+            contrast = tsv.stem.replace(f"{strategy}_", "")
             try:
                 df = pd.read_csv(tsv, sep="\t", usecols=["qvalue"])
             except (ValueError, pd.errors.EmptyDataError) as exc:
@@ -1047,12 +1054,12 @@ def harvest_filter_effect_clustering(scenario_dirs: dict) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def harvest_filter_effect_fisher(scenario_dirs: dict, fdr: float = 0.05) -> pd.DataFrame:
-    """Per scenario x celltype x stage-contrast Fisher significant-hit counts."""
+def harvest_filter_effect_fisher(scenario_dirs: dict, fdr: float = 0.05, strategy: str = "fisher") -> pd.DataFrame:
+    """Per scenario x celltype x stage-contrast diff-strategy significant-hit counts."""
     frames = []
     for name, d in scenario_dirs.items():
         d = Path(d)
-        df = harvest_fisher_hit_counts(d, fdr=fdr, run_dir=d)
+        df = harvest_fisher_hit_counts(d, fdr=fdr, run_dir=d, strategy=strategy)
         if df.empty:
             continue
         df.insert(0, "scenario", name)
@@ -1128,7 +1135,7 @@ def write_filter_effect_markdown(summary: dict, output_path: Path) -> None:
         lines.append("_no clustering stats found_")
     lines.append("")
 
-    lines.append("## 3. Differential APA (Fisher significant hits, FDR<0.05)")
+    lines.append(f"## 3. Differential APA ({summary.get('diff_strategy', 'fisher')} significant hits, FDR<0.05)")
     fh = summary.get("fisher_summary") or []
     if fh:
         lines.append("| scenario | n_celltypes | total_tests | total_sig | mean frac sig |")
@@ -1196,6 +1203,7 @@ def analyze_filter_effect(
     *,
     baseline: str = "baseline",
     fdr: float = 0.05,
+    diff_strategy: str = "fisher",
 ) -> dict:
     """Compare N named scenario run dirs (filter-effect experiment).
 
@@ -1234,8 +1242,8 @@ def analyze_filter_effect(
     clus_df = harvest_filter_effect_clustering(scenario_dirs)
     clus_df.to_csv(tables_dir / "filter_effect_clustering.csv", index=False)
 
-    log.info("analyze_filter_effect: 3/4 Fisher differential hits")
-    fisher_df = harvest_filter_effect_fisher(scenario_dirs, fdr=fdr)
+    log.info("analyze_filter_effect: 3/4 differential hits (strategy=%s)", diff_strategy)
+    fisher_df = harvest_filter_effect_fisher(scenario_dirs, fdr=fdr, strategy=diff_strategy)
     fisher_df.to_csv(tables_dir / "filter_effect_fisher_hits.csv", index=False)
     fisher_summary_df = summarize_filter_effect_fisher(fisher_df)
     fisher_summary_df.to_csv(tables_dir / "filter_effect_fisher_summary.csv", index=False)
@@ -1258,6 +1266,7 @@ def analyze_filter_effect(
         "scenario_dirs": {k: str(v) for k, v in scenario_dirs.items()},
         "scenarios": list(scenario_dirs.keys()),
         "baseline": baseline,
+        "diff_strategy": diff_strategy,
         "pas_counts": pas_df.to_dict(orient="records"),
         "clustering": clus_df.to_dict(orient="records"),
         "fisher_summary": fisher_summary_df.to_dict(orient="records"),
@@ -1315,6 +1324,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--filter-effect-baseline", default="baseline",
         help="Scenario name (from --scenario) treated as the keep-everything reference",
     )
+    parser.add_argument(
+        "--diff-strategy", default="fisher",
+        help="FILTER-EFFECT mode: diff/<celltype>/<strategy> subdir to harvest significant-hit "
+             "counts from (default 'fisher'; e.g. 'mwu_percell' for the per-cell Mann-Whitney "
+             "strategy that replaces pseudoreplicated fisher).",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug-level logging")
     args = parser.parse_args(argv)
 
@@ -1337,6 +1352,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         analyze_filter_effect(
             scenario_dirs, out_dir, baseline=args.filter_effect_baseline, fdr=args.fdr,
+            diff_strategy=args.diff_strategy,
         )
         log.info("Filter-effect analysis complete: %s", out_dir / "filter_effect_summary.json")
         return 0

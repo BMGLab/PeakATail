@@ -235,8 +235,14 @@ process SWITCH_COMBINE {
     """
 }
 
-// 1.4 per cell type: differential APA (fisher + nb_multi omnibus across stages),
-//     3'UTR length (classic PDUI + proportion + shannon), ordered-stage trend.
+// 1.4 per cell type: differential APA (fisher + mwu_percell + nb_multi omnibus
+//     across stages), 3'UTR length (classic PDUI + proportion + shannon),
+//     ordered-stage trend.
+//     mwu_percell (per-cell Mann-Whitney) replaces fisher as the trustworthy
+//     significance readout — fisher is pseudoreplicated over reads (power
+//     scales with read count, not cell count; see research_stats_validity_bugs
+//     memory note). Kept alongside fisher/nb_multi (not instead of) for
+//     backward comparison, same as the nb_multi-vs-fisher precedent.
 process SWITCH_CELLTYPE {
     tag { h5.baseName }
     cpus 6
@@ -253,11 +259,17 @@ process SWITCH_CELLTYPE {
     // drop the others (WARN is visible in the log, not silently swallowed).
     """
     export TMPDIR=${params.tmpbase}/\$\$ && mkdir -p \$TMPDIR
-    # diff — fisher = exhaustive within-gene screen; nb_multi = omnibus LRT over all stages
+    # diff — fisher = exhaustive within-gene screen (pseudoreplicated, kept for
+    # comparison); mwu_percell = per-cell Mann-Whitney (the trustworthy one);
+    # nb_multi = omnibus LRT over all stages
     ${params.ema} switch diff -i ${h5} --pasbed ${pb} --gtf ${params.gtf} \
         --cluster-key stage --strategy fisher --marker-top-n 0 --fdr 0.05 \
         --threads ${task.cpus} --no-progress --no-plots -o ${out}/diff/${sl}/fisher \
         || echo "WARN diff/fisher failed for ${sl}"
+    ${params.ema} switch diff -i ${h5} --pasbed ${pb} --gtf ${params.gtf} \
+        --cluster-key stage --strategy mwu_percell --marker-top-n 0 --fdr 0.05 \
+        --threads ${task.cpus} --no-progress --no-plots -o ${out}/diff/${sl}/mwu_percell \
+        || echo "WARN diff/mwu_percell failed for ${sl}"
     ${params.ema} switch diff -i ${h5} --pasbed ${pb} --gtf ${params.gtf} \
         --cluster-key stage --strategy nb_multi --marker-top-n 200 --fdr 0.05 \
         --threads ${task.cpus} --no-progress --no-plots -o ${out}/diff/${sl}/nb_multi \
