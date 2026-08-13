@@ -883,20 +883,36 @@ def fig_gene_walk() -> None:
         # pool cell types: one bar group per PAS, split by stage, normalised within stage
         piv = g.pivot_table(index="pas_id", columns="stage", values="reads", aggfunc="sum")
         piv = piv.reindex(columns=stages).fillna(0.0)
+        # DPYD carries 112 PAS; every site as its own bar is unreadable, so keep
+        # the best-supported sites and pool the rest into one honest "other" bar
+        # rather than dropping them.
+        MAX_PAS = 12
+        n_all = len(piv)
+        if n_all > MAX_PAS:
+            keep = piv.sum(axis=1).nlargest(MAX_PAS).index
+            other = piv.drop(index=keep).sum(axis=0)
+            piv = piv.loc[keep]
+        else:
+            other = None
         pos = g.groupby("pas_id")["start"].min().reindex(piv.index)
         piv = piv.loc[pos.sort_values().index]
+        if other is not None:
+            piv.loc[f"other ({n_all - MAX_PAS} PAS)"] = other
+            pos = pd.concat([pos.sort_values(), pd.Series({f"other ({n_all - MAX_PAS} PAS)": np.nan})])
         frac = piv.div(piv.sum(axis=0).replace(0, np.nan), axis=1)
         x = np.arange(len(piv))
         w = 0.8 / max(len(stages), 1)
         for j, st in enumerate(stages):
-            ax.bar(x + j * w - 0.4, frac[st].fillna(0), w, label=st)
-        ax.set_xticks(x, [f"{int(p):,}" for p in pos.sort_values()], rotation=60, fontsize=6)
+            # centre the group on the tick: offsets must be symmetric about 0
+            ax.bar(x + (j - (len(stages) - 1) / 2) * w, frac[st].fillna(0), w, label=st)
+        ticks = [("other" if pd.isna(v) else f"{int(v):,}") for v in pos.reindex(piv.index)]
+        ax.set_xticks(x, ticks, rotation=60, fontsize=6)
         ax.set_xlabel("PAS position (bp)")
         ax.set_ylabel("share of the gene's reads at that PAS")
         ax.legend(fontsize=6)
         total = int(piv.to_numpy().sum())
         ax.set_title(f"{GENE_LABEL.get(gene, gene)}\n{gene} — {total:,} reads, "
-                     f"{len(piv)} PAS")
+                     f"{n_all} PAS" + (f" (top {MAX_PAS} shown)" if other is not None else ""))
     fig.suptitle(
         "Per-gene PAS usage by stage, corrected sweep — read share within each stage, "
         "pooled over cell types", fontsize=9)
