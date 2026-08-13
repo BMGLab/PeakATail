@@ -1103,14 +1103,14 @@ single scalar per gene is sufficient and the gene set of interest is mostly 2-PA
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.85\textwidth]{figures/length_pdui_distribution_classic.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure~fig:length_strategy for the corrected-sweep equivalent. Classic PDUI distribution across all quantified genes on the v9 dataset, produced by \texttt{ema switch length --strategy classic}. The bimodal shape (peaks near 0 and 1) reflects the proximal-dominant vs distal-dominant gene populations expected of pseudo-bulk APA.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C13 in the figure index for the corrected-sweep equivalent. Classic PDUI distribution across all quantified genes on the v9 dataset, produced by \texttt{ema switch length --strategy classic}. The bimodal shape (peaks near 0 and 1) reflects the proximal-dominant vs distal-dominant gene populations expected of pseudo-bulk APA.}
   \label{fig:length_pdui_dist}
 \end{figure}
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/length_shifts_classic_cluster_pairs.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure~fig:length_strategy for the corrected-sweep equivalent. Per-gene PDUI shift across every cluster pair (rows = genes, columns = cluster pairs). Red indicates \emph{lengthening} (higher PDUI in the first cluster of the pair); blue indicates \emph{shortening}. This is the canonical visualisation of 3\textquotesingle UTR shorten/lengthen signal across the clustered cell population. Output of the \texttt{length\_shifts} viz strategy that fires automatically after \texttt{ema switch length --strategy classic}.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C13 in the figure index for the corrected-sweep equivalent. Per-gene PDUI shift across every cluster pair (rows = genes, columns = cluster pairs). Red indicates \emph{lengthening} (higher PDUI in the first cluster of the pair); blue indicates \emph{shortening}. This is the canonical visualisation of 3\textquotesingle UTR shorten/lengthen signal across the clustered cell population. Output of the \texttt{length\_shifts} viz strategy that fires automatically after \texttt{ema switch length --strategy classic}.}
   \label{fig:length_shifts}
 \end{figure}
 
@@ -1143,7 +1143,7 @@ substantially.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/length_proportion_heatmap.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure~fig:length_strategy for the corrected-sweep equivalent. Proportion-per-gene heatmap from \texttt{ema switch length --strategy proportion}. Each row is a (gene, PAS) entry; each column is a cluster; cell colour is the mean within-gene proportion of that PAS in that cluster. Genes with strong cluster-specific PAS choice appear as horizontal bands of contrasting colour.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C13 in the figure index for the corrected-sweep equivalent. Proportion-per-gene heatmap from \texttt{ema switch length --strategy proportion}. Each row is a (gene, PAS) entry; each column is a cluster; cell colour is the mean within-gene proportion of that PAS in that cluster. Genes with strong cluster-specific PAS choice appear as horizontal bands of contrasting colour.}
   \label{fig:length_proportion_heatmap}
 \end{figure}
 
@@ -1230,7 +1230,7 @@ $0.14 \pm 0.39$ bits. 1,372 genes showed inter-cluster entropy shift $> 0.1$ bit
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.85\textwidth]{figures/length_entropy_distribution_shannon.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure~fig:length_strategy for the corrected-sweep equivalent. Shannon entropy distribution across all (gene, cell) pairs on the v9 dataset, produced by \texttt{ema switch length --strategy shannon}. Heavy concentration near 0 bits indicates most cells use a single dominant PAS per gene; the right tail captures cells with diversified usage.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C13 in the figure index for the corrected-sweep equivalent. Shannon entropy distribution across all (gene, cell) pairs on the v9 dataset, produced by \texttt{ema switch length --strategy shannon}. Heavy concentration near 0 bits indicates most cells use a single dominant PAS per gene; the right tail captures cells with diversified usage.}
   \label{fig:length_entropy_dist}
 \end{figure}
 
@@ -1571,7 +1571,7 @@ the cluster panels alone.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/geneview_with_isoforms_DPYD.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure~fig:gene_walk for the corrected-sweep equivalent. Raw output of \texttt{ema switch geneview -i clusters.h5ad --gene-id ENSG00000188641 --gtf Homo\_sapiens.GRCh38.99.gtf} on the v9 dataset (\texttt{lambda\_gradient} peak calling). Top: five DPYD isoforms with their exon-intron-3\textquotesingle UTR structure. Below: eleven cluster rows showing within-gene PAS proportions across the 20 PAS detected for DPYD. Clusters 1, 8, 9, and 10 concentrate strongly on a single PAS (37--45\%), while cluster 0 distributes usage more broadly. This is the same figure produced inline by \texttt{ema switch diff}'s auto-top-N block but with the isoform structure added because \texttt{--gtf} was supplied.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C14 in the figure index for the corrected-sweep equivalent. Raw output of \texttt{ema switch geneview -i clusters.h5ad --gene-id ENSG00000188641 --gtf Homo\_sapiens.GRCh38.99.gtf} on the v9 dataset (\texttt{lambda\_gradient} peak calling). Top: five DPYD isoforms with their exon-intron-3\textquotesingle UTR structure. Below: eleven cluster rows showing within-gene PAS proportions across the 20 PAS detected for DPYD. Clusters 1, 8, 9, and 10 concentrate strongly on a single PAS (37--45\%), while cluster 0 distributes usage more broadly. This is the same figure produced inline by \texttt{ema switch diff}'s auto-top-N block but with the isoform structure added because \texttt{--gtf} was supplied.}
   \label{fig:geneview_dpyd_isoforms}
 \end{figure}
 
@@ -1586,7 +1586,7 @@ axis stays in kilobase units rather than megabase units.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{figures/geneview_CLIC2_3pas.png}
-  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure~fig:gene_walk for the corrected-sweep equivalent. Raw output of \texttt{ema switch geneview --gene-id ENSG00000155962 --gtf ...} on the same v9 lambda\_gradient run. CLIC2 (chrX, minus strand) has three PAS in its 3\textquotesingle UTR; the gene structure track shows the full 58~kb GTF span (now visible because the renderer takes the union of pasbed coordinates and the GTF exon backbone -- the older pasbed-only axis would have clipped the 5\textquotesingle\ end). PAS regions are overlaid as translucent red stripes with their \texttt{pas\_id} numbers above the structure; per-cluster coverage bars are drawn at the PAS's actual genomic width (post-merger) so a 200-bp merged peak visibly differs from a 50-bp singleton. The colour ramp encodes within-gene proportion (0--1) so a few clusters that favour the proximal PAS while others favour the distal one are immediately legible.}
+  \caption{\textbf{[PRE-FIX RUN --- illustrative only.]} Values predate the cell-doubling and atlas-snap fixes and must not be cited; see figure C14 in the figure index for the corrected-sweep equivalent. Raw output of \texttt{ema switch geneview --gene-id ENSG00000155962 --gtf ...} on the same v9 lambda\_gradient run. CLIC2 (chrX, minus strand) has three PAS in its 3\textquotesingle UTR; the gene structure track shows the full 58~kb GTF span (now visible because the renderer takes the union of pasbed coordinates and the GTF exon backbone -- the older pasbed-only axis would have clipped the 5\textquotesingle\ end). PAS regions are overlaid as translucent red stripes with their \texttt{pas\_id} numbers above the structure; per-cluster coverage bars are drawn at the PAS's actual genomic width (post-merger) so a 200-bp merged peak visibly differs from a 50-bp singleton. The colour ramp encodes within-gene proportion (0--1) so a few clusters that favour the proximal PAS while others favour the distal one are immediately legible.}
   \label{fig:geneview_clic2}
 \end{figure}
 

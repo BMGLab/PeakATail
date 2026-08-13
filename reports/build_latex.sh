@@ -3,13 +3,12 @@
 set -euo pipefail
 # Resolve the report directory BEFORE any cd so $(dirname ...) doesn't drift.
 REPORTS_DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILDDIR=/tmp/latex_build
-# Clear .aux/.toc/.out between builds. Carrying them over makes pdflatex
-# converge from the previous run's page numbering instead of from scratch, which
-# silently changed the reported page count across edits and hid the fact that a
-# section had moved into the appendix.
-rm -rf "$BUILDDIR"
-mkdir -p "$BUILDDIR"
+# A fresh directory per build. Reusing one carries .aux/.toc across runs, so
+# pdflatex converges from the previous run's page numbering instead of from
+# scratch -- that made the reported page count drift between edits (48 vs 45 for
+# identical content) and masked a section having moved into the appendix.
+BUILDDIR=$(mktemp -d "${TMPDIR:-/tmp}/latex_build.XXXXXX")
+trap 'rm -f "$BUILDDIR"/*.aux "$BUILDDIR"/*.toc "$BUILDDIR"/*.out 2>/dev/null || true' EXIT
 cp -r "$REPORTS_DIR/figures" "$BUILDDIR/"
 cp "$REPORTS_DIR/PeakATail_Technical_Report.tex" "$BUILDDIR/"
 cd "$BUILDDIR"
