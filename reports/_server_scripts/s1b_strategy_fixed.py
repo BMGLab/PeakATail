@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 """Count-controlled re-analysis of the peak-calling strategy comparison.
 
-Supersedes ``s1_strategy.py``, which parsed the wrong column out of
-``bedtools closest`` output (the tool emits 18 columns for this atlas and the
-distance is the last one; the reader asked pandas for ``usecols=[-1]``, which is
-not a valid column selector, so every distance came back NaN).
+Supersedes an earlier ``s1_strategy.py`` (removed), which parsed the wrong column
+out of ``bedtools closest`` output: the tool emits 18 columns for this atlas and
+the distance is the last one, but the reader asked pandas for ``usecols=[-1]``,
+which is not a valid column selector, so every distance came back NaN. The
+distance is now extracted with awk on ``$NF`` rather than a hardcoded index.
 
 It is also restructured to be roughly 20x cheaper.  The previous version ran
 ``bedtools closest`` against the 1.2 GB PolyASite v3 BED once per rarefaction
