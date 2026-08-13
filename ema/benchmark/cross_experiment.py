@@ -581,69 +581,142 @@ def celltype_assignment_shift(
 # ---------------------------------------------------------------------------
 
 
-def switch_depth_confound(switch_dir: Path, stage_order: Sequence[str]) -> pd.DataFrame:
+# The per-cell PDUI tables are ~100 GB across cell types, so the aggregation is
+# a single streaming pass in awk. Pandas needs ~90 min and several GB of RSS for
+# the same numbers; awk needs a few minutes and bounded memory.
+_PDUI_AWK = r"""
+BEGIN { FS = OFS = "\t" }
+NR == 1 {
+    for (i = 1; i <= NF; i++) col[$i] = i
+    next
+}
+{
+    s = $col["cluster"]
+    p = $col["pdui"] + 0
+    t = $col["total_reads"] + 0
+    n[s]++
+    sum_pdui[s] += p
+    if (p == 0) zero[s]++
+    sum_reads[s] += t
+    if (t > 0) { inf[s]++; sum_pdui_inf[s] += p }
+    if (!((s SUBSEP $col["cell"]) in seen_cell)) { seen_cell[s SUBSEP $col["cell"]]; cells[s]++ }
+    if (!((s SUBSEP $col["gene_id"]) in seen_gene)) { seen_gene[s SUBSEP $col["gene_id"]]; genes[s]++ }
+}
+END {
+    for (s in n)
+        print s, n[s], cells[s], genes[s], sum_pdui[s], zero[s], sum_reads[s], \
+              inf[s] + 0, sum_pdui_inf[s] + 0
+}
+"""
+
+
+def _aggregate_pdui_awk(pdui_path: Path) -> Optional[pd.DataFrame]:
+    """One streaming pass over a per-cell PDUI table -> per-stage aggregates."""
+    import shutil
+    import subprocess
+
+    if shutil.which("awk") is None:
+        return None
+    try:
+        proc = subprocess.run(
+            ["awk", _PDUI_AWK, str(pdui_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        logger.warning("awk aggregation failed for %s: %s", pdui_path, exc)
+        return None
+    rows = []
+    for line in proc.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 9:
+            continue
+        stage, n, cells, genes, sum_pdui, zero, sum_reads, inf, sum_pdui_inf = parts
+        n = float(n)
+        inf = float(inf)
+        if n <= 0:
+            continue
+        rows.append(
+            {
+                "stage": stage,
+                "n_gene_cell_pairs": int(n),
+                "n_cells": int(cells or 0),
+                "n_genes": int(genes or 0),
+                "mean_pdui": round(float(sum_pdui or 0) / n, 5),
+                "mean_pdui_informative": (
+                    round(float(sum_pdui_inf) / inf, 5) if inf > 0 else np.nan
+                ),
+                "frac_pdui_zero": round(float(zero or 0) / n, 5),
+                "frac_uninformative": round(1.0 - inf / n, 5),
+                "mean_total_reads": round(float(sum_reads or 0) / n, 4),
+            }
+        )
+    return pd.DataFrame(rows) if rows else None
+
+
+def switch_depth_confound(
+    switch_dir: Path, stage_order: Sequence[str], use_awk: bool = True
+) -> pd.DataFrame:
     """Per cell type x stage: PDUI, its zero-fraction, cell count and depth.
 
     The reported "global 3'UTR shortening" is a slope through per-stage mean
     PDUI. PDUI is 0 whenever a gene's distal PAS has no reads in that cell, so
     a stage with fewer reads per cell has mechanically lower mean PDUI. This
     table puts the slope and the thing that could fake it side by side.
+
+    ``use_awk`` streams the aggregation (see ``_aggregate_pdui_awk``); set it
+    False to force the pandas path on small inputs.
     """
     switch_dir = Path(switch_dir)
     length_dir = switch_dir / "length"
     if not length_dir.exists():
         return pd.DataFrame()
-    rows = []
+    frames = []
     for ct_dir in sorted(p for p in length_dir.iterdir() if p.is_dir()):
         pdui_path = ct_dir / "classic" / "pdui_classic.tsv"
         if not pdui_path.exists():
             continue
-        try:
-            pdui = pd.read_csv(
-                pdui_path,
-                sep="\t",
-                usecols=[
-                    "gene_id",
-                    "cell",
-                    "pdui",
-                    "proximal_reads",
-                    "distal_reads",
-                    "total_reads",
-                    "cluster",
-                ],
-            )
-        except (OSError, ValueError) as exc:
-            logger.warning("cannot read %s: %s", pdui_path, exc)
+        agg = _aggregate_pdui_awk(pdui_path) if use_awk else None
+        if agg is None:
+            try:
+                pdui = pd.read_csv(
+                    pdui_path,
+                    sep="\t",
+                    usecols=["gene_id", "cell", "pdui", "total_reads", "cluster"],
+                )
+            except (OSError, ValueError) as exc:
+                logger.warning("cannot read %s: %s", pdui_path, exc)
+                continue
+            rows = []
+            for stage, grp in pdui.groupby("cluster"):
+                informative = grp["total_reads"] > 0
+                rows.append(
+                    {
+                        "stage": str(stage),
+                        "n_gene_cell_pairs": int(len(grp)),
+                        "n_cells": int(grp["cell"].nunique()),
+                        "n_genes": int(grp["gene_id"].nunique()),
+                        "mean_pdui": round(float(grp["pdui"].mean()), 5),
+                        "mean_pdui_informative": (
+                            round(float(grp.loc[informative, "pdui"].mean()), 5)
+                            if informative.any()
+                            else np.nan
+                        ),
+                        "frac_pdui_zero": round(float((grp["pdui"] == 0).mean()), 5),
+                        "frac_uninformative": round(float((~informative).mean()), 5),
+                        "mean_total_reads": round(float(grp["total_reads"].mean()), 4),
+                    }
+                )
+            agg = pd.DataFrame(rows)
+        if agg is None or agg.empty:
             continue
-        for stage, grp in pdui.groupby("cluster"):
-            informative = grp["total_reads"] > 0
-            rows.append(
-                {
-                    "celltype": ct_dir.name,
-                    "stage": str(stage),
-                    "n_cells": int(grp["cell"].nunique()),
-                    "n_genes": int(grp["gene_id"].nunique()),
-                    "n_gene_cell_pairs": int(len(grp)),
-                    "mean_pdui": round(float(grp["pdui"].mean()), 5),
-                    # the honest version: PDUI only where the gene was seen
-                    "mean_pdui_informative": (
-                        round(float(grp.loc[informative, "pdui"].mean()), 5)
-                        if informative.any()
-                        else np.nan
-                    ),
-                    "frac_pdui_zero": round(float((grp["pdui"] == 0).mean()), 5),
-                    "frac_uninformative": round(float((~informative).mean()), 5),
-                    "mean_total_reads": round(float(grp["total_reads"].mean()), 4),
-                    "median_total_reads_informative": (
-                        float(grp.loc[informative, "total_reads"].median())
-                        if informative.any()
-                        else np.nan
-                    ),
-                }
-            )
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
+        agg.insert(0, "celltype", ct_dir.name)
+        frames.append(agg)
+        logger.info("aggregated %s (%d stages)", ct_dir.name, len(agg))
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
     order = {s: i for i, s in enumerate(stage_order)}
     df["stage_index"] = df["stage"].map(order)
     return df.sort_values(["celltype", "stage_index"]).reset_index(drop=True)
