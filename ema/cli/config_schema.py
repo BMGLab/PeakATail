@@ -725,9 +725,20 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--isoform-agg", yaml_key="isoform_agg",
             skip_legacy_bridge=True,
-            choice=("per_gene", "per_isoform"),
-            description="Isoform aggregation level for PDUI (per_gene / per_isoform).",
-            applies_to=frozenset({"switch_length"}),
+            choice=("per_gene", "within_utr", "between_utr", "per_isoform"),
+            description=(
+                "Aggregation/scope level. For `switch length` (PDUI): "
+                "per_gene / per_isoform. For `switch diff`: per_gene (default; "
+                "each PAS tested against the rest of its GENE) / within_utr "
+                "(each PAS tested against the other PAS sharing its 3'UTR "
+                "isoform -- tandem-UTR APA; `per_isoform` is accepted as a "
+                "legacy alias) / between_utr (collapse PAS to 3'UTR-level "
+                "counts and test differential 3'UTR PREFERENCE between "
+                "groups; genes with >=2 UTRs only). Combine with "
+                "--cluster-key to contrast ANY obs column (stage, celltype, "
+                "leiden, ...) and --cluster-pairs to select specific pairs."
+            ),
+            applies_to=frozenset({"switch_diff", "switch_length"}),
         ),
     )
     isoform_collapse: str = field(
@@ -751,6 +762,22 @@ class RunConfig:
                 "original behaviour; raise to e.g. 1.0 to avoid NaN on zero-count cells."
             ),
             applies_to=frozenset({"switch_length"}),
+        ),
+    )
+    utr_unmatched: str = field(
+        default="gene",
+        metadata=_spec(
+            cli_flag="--utr-unmatched", yaml_key="utr_unmatched",
+            skip_legacy_bridge=True,
+            choice=("drop", "gene"),
+            description=(
+                "How to handle PAS that overlap no annotated UTR under "
+                "isoform_agg=per_isoform (switch length) or "
+                "within_utr/between_utr (switch diff). 'gene' (default) KEEPS "
+                "them via a gene-level fallback (UTR-agnostic); 'drop' "
+                "restores the old drop-if-no-UTR behaviour."
+            ),
+            applies_to=frozenset({"switch_diff", "switch_length"}),
         ),
     )
 

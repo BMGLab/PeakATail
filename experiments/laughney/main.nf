@@ -290,6 +290,58 @@ process SWITCH_CELLTYPE {
     """
 }
 
+// 1.4b UTR-LEVEL (per_isoform) length + nb_pairwise diff. Separate process so a
+//      -resume does NOT re-run the working per_gene switch. per_isoform maps PAS
+//      to isoform 3'UTRs; --utr-unmatched gene KEEPS PAS that overlap no annotated
+//      UTR (assigned to their gene) instead of dropping them, and a PAS overlapping
+//      multiple UTRs maps to all of them. length auto-resolves the staged pasbed by
+//      walking up from the h5ad; per_isoform additionally needs --gtf.
+process SWITCH_CELLTYPE_UTR {
+    tag { h5.baseName }
+    cpus 6
+    input:
+    tuple val(cohort), path(h5), path(pb)
+    output:
+    val "${h5.baseName}", emit: done
+    script:
+    def sl  = h5.baseName
+    def out = "${cohort}/B3_switch"
+    """
+    export TMPDIR=${params.tmpbase}/\$\$ && mkdir -p \$TMPDIR
+    # per_isoform (UTR-level) length — classic PDUI + proportion + shannon, keep-unmatched
+    for S in classic proportion shannon; do
+      ${params.ema} switch length -i ${h5} --gtf ${params.gtf} \
+          --cluster-key stage --strategy \$S --isoform-agg per_isoform --utr-unmatched gene \
+          --pdui-pseudocount 1.0 --threads ${task.cpus} --no-progress --no-plots \
+          -o ${out}/length_per_isoform/${sl}/\$S || echo "WARN length_per_isoform/\$S failed for ${sl}"
+    done
+    # nb_pairwise — per-stage-pair NB differential (completes the diff set)
+    ${params.ema} switch diff -i ${h5} --pasbed ${pb} --gtf ${params.gtf} \
+        --cluster-key stage --strategy nb_pairwise --marker-top-n 200 --fdr 0.05 \
+        --threads ${task.cpus} --no-progress --no-plots -o ${out}/diff/${sl}/nb_pairwise \
+        || echo "WARN diff/nb_pairwise failed for ${sl}"
+    # UTR-SCOPED diff — within_utr (tandem PAS in one 3'UTR) + between_utr (which UTR
+    # is preferred). --utr-unmatched gene keeps PAS with no UTR overlap. Contrast axis
+    # is --cluster-key (here stage; swap to celltype/leiden/any obs col as needed).
+    for SCOPE in within_utr between_utr; do
+      for ST in fisher mwu_percell nb_multi; do
+        MTN=0; [ "\$ST" = "nb_multi" ] && MTN=200
+        ${params.ema} switch diff -i ${h5} --pasbed ${pb} --gtf ${params.gtf} \
+            --cluster-key stage --strategy \$ST --isoform-agg \$SCOPE --utr-unmatched gene \
+            --marker-top-n \$MTN --fdr 0.05 --threads ${task.cpus} --no-progress --no-plots \
+            -o ${out}/diff_\${SCOPE}/${sl}/\$ST || echo "WARN diff_\${SCOPE}/\$ST failed for ${sl}"
+      done
+    done
+    # UTR-level trend (shorten/lengthen on the per_isoform PDUI)
+    PDUI=\$(find ${out}/length_per_isoform/${sl}/classic -name 'pdui_classic.tsv' 2>/dev/null | head -1)
+    if [ -n "\$PDUI" ]; then
+      ${params.ema} switch trend --pdui "\$PDUI" \
+          --stage-order ${params.stage_order} --stage-col cluster --value-col pdui \
+          --no-progress -o ${out}/trend_per_isoform/${sl} || echo "WARN trend_per_isoform failed for ${sl}"
+    fi
+    """
+}
+
 // 1.5 cross-dataset cell-type matching (native package check vs the GEX typing).
 process SWITCH_MATCH {
     tag 'cohort-match'
@@ -504,6 +556,7 @@ workflow {
                         .collect { tuple(cohort, it, pb) }
                 }
         SWITCH_CELLTYPE(ct)
+        SWITCH_CELLTYPE_UTR(ct)   // UTR-level per_isoform length + nb_pairwise
         SWITCH_MATCH(cohort_ch)
     }
 

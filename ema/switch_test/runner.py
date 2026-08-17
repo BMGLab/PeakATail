@@ -43,17 +43,309 @@ def parse_cell_combinations(s: str) -> list[tuple[str, str]]:
     return out
 
 
-def build_count_dfs(adata: ad.AnnData):
-    """Return (pdui_df, diff_df, cell_index, pas_index)."""
-    X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
+def build_count_dfs(adata: ad.AnnData, which: str = "both"):
+    """Return ``(pdui_df, diff_df, cell_index, pas_index)``.
+
+    ``which`` selects which dense count frame(s) to materialize, so a caller
+    that needs only one does not pay for a second full dense copy of the
+    matrix (the switch tests densify ``adata.X`` via ``.toarray()``; for the
+    largest cell types that copy is tens of GB, and holding both frames at
+    once is what pushed parallel ``ema switch`` tasks into OOM):
+
+    - ``"both"`` (default): both frames, byte-identical to the original
+      behaviour — ``pdui_df`` (PAS x cells) and ``diff_df`` (cells x PAS),
+      both derived from the same densified ``X``.
+    - ``"pdui"``: only ``pdui_df`` (used by :func:`run_length`); ``diff_df``
+      is ``None``.  Densifies the transpose directly, never holding the
+      cells x PAS copy.
+    - ``"diff"``: only ``diff_df`` (used by :func:`run_diff`); ``pdui_df`` is
+      ``None``.
+
+    ``cell_index`` / ``pas_index`` are always returned.  Whichever frame(s)
+    are built are numerically identical to the ``"both"`` path.
+    """
+    if which not in ("both", "pdui", "diff"):
+        raise ValueError(f"which must be 'both'|'pdui'|'diff', got {which!r}")
     try:
         pas_index = [int(v) for v in adata.var_names]
     except (TypeError, ValueError):
         pas_index = list(adata.var_names)
     cell_index = list(adata.obs_names)
-    pdui_df = pd.DataFrame(X.T, index=pas_index, columns=cell_index)
-    diff_df = pd.DataFrame(X, index=cell_index, columns=pas_index)
+    pdui_df = None
+    diff_df = None
+    if which in ("both", "diff"):
+        X = adata.X.toarray() if sp.issparse(adata.X) else adata.X
+        diff_df = pd.DataFrame(X, index=cell_index, columns=pas_index)
+    if which == "both":
+        # Reuse the already-densified X so the default path is unchanged.
+        pdui_df = pd.DataFrame(X.T, index=pas_index, columns=cell_index)
+    elif which == "pdui":
+        Xt = adata.X.T.toarray() if sp.issparse(adata.X) else adata.X.T
+        pdui_df = pd.DataFrame(Xt, index=pas_index, columns=cell_index)
     return pdui_df, diff_df, cell_index, pas_index
+
+
+def _build_gene_fallback_map(
+    adata: ad.AnnData,
+) -> dict[int, list[tuple[str, str, int, int, int]]]:
+    """Synthesize a minimal PAS -> gene map from ``adata.var['gene_id']``.
+
+    Each PAS maps to a single ``(gene_id, "_gene_", transcript_pos=0, rank=1,
+    total=1)`` entry — enough for the strategy's per-gene aggregation, which
+    collapses isoforms.  Used by:
+
+    - the ``per_gene`` aggregation branch of :func:`run_length` (always), and
+    - the ``per_isoform`` branch when ``utr_unmatched="gene"``, to keep PAS
+      that overlap no annotated UTR (UTR-agnostic gene-level fallback)
+      instead of silently dropping them.
+
+    Args:
+        adata: Loaded AnnData with a PAS->gene assignment on ``adata.var``.
+
+    Returns:
+        Dict keyed by integer PAS id (``adata.var_names`` entries that fail
+        to parse as ``int`` or have no/NaN ``gene_id`` are skipped). Empty
+        dict if ``adata.var`` has no ``gene_id`` column.
+    """
+    fallback: dict[int, list[tuple[str, str, int, int, int]]] = {}
+    if "gene_id" not in adata.var.columns:
+        return fallback
+    for pas_id_str, gene_id in adata.var["gene_id"].items():
+        if not gene_id or (isinstance(gene_id, float) and pd.isna(gene_id)):
+            continue
+        try:
+            pas_id_int = int(pas_id_str)
+        except (TypeError, ValueError):
+            continue
+        fallback[pas_id_int] = [(str(gene_id), "_gene_", 0, 1, 1)]
+    return fallback
+
+
+_LEGACY_DIFF_AGG = {"per_isoform": "within_utr"}
+
+
+def _build_diff_isoform_groups(
+    adata: ad.AnnData,
+    diff_df: pd.DataFrame,
+    h5ad_path: str,
+    gtf: str,
+    pasbed_path: Path,
+    isoform_agg: str,
+    utr_unmatched: str,
+    n_jobs: int,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Build the UTR-scoped test matrix + group list for ``run_diff``'s
+    ``within_utr`` / ``between_utr`` aggregation scopes.
+
+    This is the SINGLE shared grouping switch consumed by :func:`_run_grouped_diff`
+    (in turn consumed by all four diff strategies -- fisher, nb_multi,
+    nb_pairwise, mwu_percell -- via the normal ``strategy.test()`` interface;
+    no per-strategy code is touched). Mirrors ``run_length``'s ``per_isoform``
+    PAS -> UTR mapping (same GTF-cache + ``bedtools intersect`` via
+    :func:`~ema.quantification.pas_to_isoform.map_pas_to_isoforms`) without
+    modifying ``run_length`` itself.
+
+    Scopes:
+      - ``within_utr``: the unit stays PAS.  Returned matrix IS ``diff_df``
+        unchanged; each group is one 3'UTR isoform, ``bg_cols``/``report_cols``
+        = the PAS assigned to it.  A PAS overlapping >=1 UTR gets one group
+        per UTR (tested once per UTR -> one output row per UTR).  Under
+        ``utr_unmatched="gene"`` a PAS with NO UTR overlap gets a single
+        fallback group (``"<gene>::_gene_"``) whose ``bg_cols`` is the PAS's
+        WHOLE GENE (so it is genuinely "tested at gene level") but whose
+        ``report_cols`` is just itself, so UTR-mapped PAS of that gene are
+        not double-reported under the fallback bucket too.  Under
+        ``utr_unmatched="drop"`` such PAS get no group at all (omitted).
+      - ``between_utr``: the unit changes to the 3'UTR itself.  Returns a
+        NEW cells x UTR matrix (each column = the summed counts of its
+        member PAS, including the ``utr_unmatched="gene"`` fallback bucket,
+        which collapses a gene's orphan PAS into one UTR-agnostic column).
+        Groups are keyed by GENE; a gene's ``bg_cols``/``report_cols`` are
+        its UTR columns.  Only genes with >= 2 UTR columns produce a group
+        (a single UTR has nothing to contrast against).
+
+    Returns:
+        ``(test_matrix, groups)``.  ``groups`` is a list of dicts with keys
+        ``group_id``, ``gene_id``, ``bg_cols``, ``report_cols``.
+    """
+    from ema.annotate.gtf2isoform_utr import parse_isoform_utrs
+    from ema.quantification.pas_to_isoform import map_pas_to_isoforms
+
+    if utr_unmatched not in ("drop", "gene"):
+        raise ValueError(f"utr_unmatched={utr_unmatched!r} invalid; expected drop|gene")
+    if isoform_agg not in ("within_utr", "between_utr"):
+        raise ValueError(
+            f"isoform_agg={isoform_agg!r} not handled by _build_diff_isoform_groups "
+            "(expected within_utr or between_utr)"
+        )
+
+    # Same GTF cache resolution as run_length's per_isoform branch, kept
+    # independent so run_length is never touched by this change.
+    _gtf_cache = Path(h5ad_path).resolve().parent
+    for _ in range(4):
+        if (_gtf_cache / "gtf_cache").exists() or (_gtf_cache / "run_config.json").exists():
+            _gtf_cache = _gtf_cache / "gtf_cache"
+            break
+        _gtf_cache = _gtf_cache.parent
+    else:
+        _gtf_cache = Path.home() / ".cache" / "peakatail" / "gtf"
+    _gtf_cache.mkdir(parents=True, exist_ok=True)
+
+    isoform_utrs = parse_isoform_utrs(Path(gtf), cache_dir=_gtf_cache, n_workers=min(n_jobs, 4))
+    pas_isoform_map_raw = map_pas_to_isoforms(pasbed_path, isoform_utrs)
+
+    diff_cols = set(diff_df.columns)
+    utr_pas_members: dict[str, list] = {}
+    gene_of_utr: dict[str, str] = {}
+    for pas_id, entries in pas_isoform_map_raw.items():
+        if pas_id not in diff_cols:
+            continue
+        for gene_id, transcript_id, *_rest in entries:
+            utr_id = f"{gene_id}::{transcript_id}"
+            utr_pas_members.setdefault(utr_id, []).append(pas_id)
+            gene_of_utr[utr_id] = gene_id
+
+    # Gene-level fallback synthesis -- reuse the SAME helper the per_gene
+    # path (and run_length's utr_unmatched="gene" fallback) already relies
+    # on, so "no UTR overlap" PAS resolve identically everywhere.
+    gene_fallback_map = _build_gene_fallback_map(adata)
+    orphans_by_gene: dict[str, list] = {}
+    for pas_id, entries in gene_fallback_map.items():
+        if pas_id not in diff_cols or pas_id in pas_isoform_map_raw:
+            continue
+        orphans_by_gene.setdefault(entries[0][0], []).append(pas_id)
+
+    if utr_unmatched == "gene":
+        for gene_id, orphan_pas in orphans_by_gene.items():
+            utr_id = f"{gene_id}::_gene_"
+            utr_pas_members[utr_id] = orphan_pas
+            gene_of_utr[utr_id] = gene_id
+        if orphans_by_gene:
+            log.info(
+                "run_diff: isoform_agg=%s, utr_unmatched='gene': %d gene(s) "
+                "got a UTR-agnostic fallback bucket for %d PAS with no UTR overlap",
+                isoform_agg, len(orphans_by_gene),
+                sum(len(v) for v in orphans_by_gene.values()),
+            )
+    elif orphans_by_gene:
+        log.info(
+            "run_diff: isoform_agg=%s, utr_unmatched='drop': %d PAS with no "
+            "UTR overlap across %d gene(s) are OMITTED",
+            isoform_agg, sum(len(v) for v in orphans_by_gene.values()),
+            len(orphans_by_gene),
+        )
+
+    if isoform_agg == "within_utr":
+        gene_to_all_pas: dict[str, list] = {}
+        for pas_id, entries in gene_fallback_map.items():
+            if pas_id in diff_cols:
+                gene_to_all_pas.setdefault(entries[0][0], []).append(pas_id)
+
+        groups: list[dict] = []
+        for utr_id, members in utr_pas_members.items():
+            gene_id = gene_of_utr[utr_id]
+            if utr_id.endswith("::_gene_"):
+                # Fallback bucket: background = the WHOLE gene (genuinely
+                # "tested at gene level"), but only report the orphan PAS
+                # -- UTR-mapped PAS of this gene already get their own row
+                # from their own UTR group above.
+                bg_cols = gene_to_all_pas.get(gene_id, members)
+                report_cols = members
+            else:
+                bg_cols = members
+                report_cols = members
+            groups.append({
+                "group_id": utr_id, "gene_id": gene_id,
+                "bg_cols": bg_cols, "report_cols": report_cols,
+            })
+        return diff_df, groups
+
+    # between_utr: collapse PAS -> UTR-level counts (sum), then group UTRs
+    # by gene (>=2 UTRs required to have anything to contrast).
+    utr_ids = sorted(utr_pas_members)
+    if utr_ids:
+        utr_matrix = pd.DataFrame(
+            {utr_id: diff_df[members].sum(axis=1) for utr_id, members in utr_pas_members.items()},
+            index=diff_df.index,
+        )[utr_ids]
+    else:
+        utr_matrix = pd.DataFrame(index=diff_df.index)
+
+    genes_to_utrs: dict[str, list[str]] = {}
+    for utr_id in utr_ids:
+        genes_to_utrs.setdefault(gene_of_utr[utr_id], []).append(utr_id)
+    groups = [
+        {"group_id": gene_id, "gene_id": gene_id, "bg_cols": utrs, "report_cols": utrs}
+        for gene_id, utrs in genes_to_utrs.items()
+        if len(utrs) >= 2
+    ]
+    return utr_matrix, groups
+
+
+def _run_grouped_diff(
+    strategy,
+    test_matrix: pd.DataFrame,
+    groups: list[dict],
+    cluster_labels: pd.Series,
+    cluster1: str | None,
+    cluster2: str | None,
+    min_cells_per_group: int,
+    n_jobs: int,
+) -> pd.DataFrame:
+    """Run ``strategy.test()`` once per group, scoping each call's count
+    matrix to that group's ``bg_cols``.
+
+    This is the SINGLE choke point all four diff strategies (fisher,
+    nb_multi, nb_pairwise, mwu_percell) go through for ``within_utr`` /
+    ``between_utr`` scoping: restricting the columns a strategy sees
+    changes its internal background/denominator (fisher's within-group
+    2xK contingency table, the NB strategies' per-cell library-size
+    offset/total) from "whole gene" / "whole transcriptome" to "this
+    group's members" -- WITHOUT touching any strategy's own code.
+
+    Results are filtered down to each group's ``report_cols`` (so PAS only
+    present to widen a fallback group's background aren't spuriously
+    reported under that group too), tagged with ``diff_group_id``,
+    concatenated across groups, and ``qvalue`` (if present) is RECOMPUTED
+    via BH-FDR over the POOLED p-values -- a per-group BH correction over a
+    handful of rows would be meaningless.
+    """
+    collected: list[pd.DataFrame] = []
+    for group in groups:
+        bg_cols = [c for c in group["bg_cols"] if c in test_matrix.columns]
+        if len(bg_cols) < 2:
+            continue
+        sub = test_matrix[bg_cols]
+        pas_group_map = {str(c): group["group_id"] for c in bg_cols}
+        kwargs: dict = dict(
+            count_matrix=sub,
+            cluster_labels=cluster_labels,
+            min_cells_per_group=min_cells_per_group,
+            n_jobs=n_jobs,
+            pas_gene_map=pas_group_map,
+        )
+        if cluster1 is not None:
+            kwargs["cluster1"] = cluster1
+            kwargs["cluster2"] = cluster2
+        result = strategy.test(**kwargs)
+        if result is None or result.empty:
+            continue
+        report_cols = set(group["report_cols"])
+        result = result.loc[result.index.isin(report_cols)]
+        if result.empty:
+            continue
+        result = result.copy()
+        result["diff_group_id"] = group["group_id"]
+        collected.append(result)
+
+    if not collected:
+        return pd.DataFrame()
+
+    out = pd.concat(collected, axis=0)
+    if "pvalue" in out.columns and len(out) > 0:
+        from scipy.stats import false_discovery_control
+        out["qvalue"] = false_discovery_control(out["pvalue"].values, method="bh")
+    return out
 
 
 def _dispatch_pair(
@@ -199,6 +491,8 @@ def run_diff(
     threads: int | None,
     per_worker_mb: int,
     min_cells_per_group: int = 10,
+    isoform_agg: str = "per_gene",
+    utr_unmatched: str = "gene",
     progress_manager=None,
 ) -> dict[tuple[str, str], pd.DataFrame]:
     """Library-level entry point for differential APA testing.
@@ -211,10 +505,16 @@ def run_diff(
     Args:
         h5ad_paths: One or more paths to clustered AnnData h5ad files.
         pasbed: Optional PAS BED path for isoform-aware PDUI.
-        gtf: Optional GTF path for isoform-aware PDUI.
+        gtf: Optional GTF path for isoform-aware PDUI.  Required when
+            ``isoform_agg`` is ``"within_utr"`` or ``"between_utr"``.
         output_dir: Directory to write differential/* and pdui_*.tsv files.
         cluster_pairs: ``'c1,c2;c3,c4'``-style pair string, or None for all.
-        cluster_key: adata.obs column with cluster labels.
+        cluster_key: adata.obs column with cluster labels.  This can be ANY
+            obs column, not just a clustering result -- e.g. ``"stage"`` or
+            ``"celltype"`` -- so "differential between stages/cell
+            types/anything" is already supported by picking the column here
+            and (optionally) narrowing to specific contrasts with
+            ``cluster_pairs``.
         marker_top_n: Top-N marker PAS per cluster (0 = disabled).
         marker_method: Marker ranking method (wilcoxon / t-test / logreg).
         strategy: Registered differential APA strategy name.
@@ -223,6 +523,21 @@ def run_diff(
         per_worker_mb: Estimated peak RAM per parallel worker (MB).
         min_cells_per_group: Minimum cells (with nonzero counts for NB strategies)
             in each cluster for a PAS to enter differential testing. Default 10.
+        isoform_agg: Scope of each test's background/denominator --
+            ``"per_gene"`` (default; unchanged/byte-identical to legacy
+            behaviour): each PAS vs the rest of its gene.  ``"within_utr"``:
+            each PAS vs the other PAS sharing its 3'UTR isoform (tandem-UTR
+            APA); ``"per_isoform"`` is accepted as a legacy alias.
+            ``"between_utr"``: PAS are collapsed to 3'UTR-level counts and
+            the test asks whether 3'UTR PREFERENCE differs between groups
+            (genes with >=2 UTRs only).  ``"within_utr"``/``"between_utr"``
+            require ``gtf``; falls back to ``"per_gene"`` with a warning
+            when it is missing/unresolvable.
+        utr_unmatched: How to handle a PAS with no annotated UTR overlap
+            under ``isoform_agg in {"within_utr", "between_utr"}``.
+            ``"gene"`` (default) keeps it via a gene-level fallback bucket
+            (still tested/counted at the gene level); ``"drop"`` omits it.
+            Ignored when ``isoform_agg == "per_gene"``.
         progress_manager: Optional :class:`~ema.progress.ProgressManager`.  When
             supplied, a ``"Cluster-pair testing"`` stage is registered and
             advanced once per pair completed (both serial and parallel paths).
@@ -232,6 +547,15 @@ def run_diff(
         accumulated). For omnibus strategies the key is ``("omnibus", "")`` and
         the value is the omnibus DataFrame. Empty dict if no pairs were run.
     """
+    isoform_agg = _LEGACY_DIFF_AGG.get(isoform_agg, isoform_agg)
+    if isoform_agg not in ("per_gene", "within_utr", "between_utr"):
+        raise ValueError(
+            f"isoform_agg={isoform_agg!r} invalid; expected "
+            "per_gene|within_utr|between_utr (or legacy alias per_isoform)"
+        )
+    if utr_unmatched not in ("drop", "gene"):
+        raise ValueError(f"utr_unmatched={utr_unmatched!r} invalid; expected drop|gene")
+
     reset_resource_manager()
     rm = ResourceManager(
         user_max_threads=threads,
@@ -276,7 +600,7 @@ def run_diff(
             markers = None
             log.info("run_diff: marker subsetting disabled — using all PAS")
 
-        _, diff_df_full, _, _ = build_count_dfs(adata)
+        _, diff_df_full, _, _ = build_count_dfs(adata, which="diff")
         if markers is not None:
             marker_set = set(markers)
             diff_df = restrict_count_matrix(diff_df_full, list(marker_set), axis="cols")
@@ -287,14 +611,60 @@ def run_diff(
         cluster_labels = pd.Series(adata.obs[cluster_key].values, index=adata.obs_names)
         unique_clusters = sorted(cluster_labels.unique().astype(str).tolist())
 
+        # within_utr / between_utr: build the UTR-scoped test matrix + group
+        # list ONCE per h5ad (shared by both the omnibus and per-pair
+        # branches below via the single _run_grouped_diff choke point).
+        # Falls back to per_gene (with a warning) when --gtf / pasbed.bed
+        # cannot be resolved, mirroring run_length's per_isoform fallback.
+        _isoform_agg = isoform_agg
+        _isoform_test_matrix: pd.DataFrame | None = None
+        _isoform_groups: list[dict] | None = None
+        if _isoform_agg != "per_gene":
+            _resolved_gtf = gtf if gtf and Path(gtf).exists() else None
+            _resolved_pasbed = _resolve_pasbed(h5ad_path, pasbed) if _resolved_gtf else None
+            if _resolved_gtf is None:
+                log.warning(
+                    "run_diff: --isoform-agg=%s requires --gtf; falling back to per_gene",
+                    _isoform_agg,
+                )
+                _isoform_agg = "per_gene"
+            elif _resolved_pasbed is None:
+                log.warning(
+                    "run_diff: --isoform-agg=%s requires a resolvable pasbed.bed "
+                    "(pass --pasbed explicitly); falling back to per_gene",
+                    _isoform_agg,
+                )
+                _isoform_agg = "per_gene"
+            else:
+                _isoform_test_matrix, _isoform_groups = _build_diff_isoform_groups(
+                    adata=adata,
+                    diff_df=diff_df,
+                    h5ad_path=h5ad_path,
+                    gtf=_resolved_gtf,
+                    pasbed_path=_resolved_pasbed,
+                    isoform_agg=_isoform_agg,
+                    utr_unmatched=utr_unmatched,
+                    n_jobs=n_jobs,
+                )
+                log.info(
+                    "run_diff: isoform_agg=%s: %d group(s) built for differential testing",
+                    _isoform_agg, len(_isoform_groups),
+                )
+
         if diff_strat.supports_multi_condition:
             log.info("run_diff: running %s omnibus across %d clusters", strategy, len(unique_clusters))
-            df = diff_strat.test(
-                count_matrix=diff_df,
-                cluster_labels=cluster_labels,
-                n_jobs=n_jobs,
-                min_cells_per_group=min_cells_per_group,
-            )
+            if _isoform_agg == "per_gene":
+                df = diff_strat.test(
+                    count_matrix=diff_df,
+                    cluster_labels=cluster_labels,
+                    n_jobs=n_jobs,
+                    min_cells_per_group=min_cells_per_group,
+                )
+            else:
+                df = _run_grouped_diff(
+                    diff_strat, _isoform_test_matrix, _isoform_groups, cluster_labels,
+                    None, None, min_cells_per_group, n_jobs,
+                )
             out_path = diff_dir / f"{strategy}_omnibus.tsv"
             df.to_csv(out_path, sep="\t")
             sig = (df["qvalue"] < fdr).sum() if "qvalue" in df.columns else 0
@@ -354,7 +724,21 @@ def run_diff(
 
             pair_results: dict[tuple[str, str], pd.DataFrame] = {}
 
-            if n_outer <= 1 or len(pairs) <= 1:
+            if _isoform_agg != "per_gene":
+                # within_utr / between_utr: run each pair through the shared
+                # grouped-testing choke point (_run_grouped_diff) instead of
+                # run_one_pair/_dispatch_pair.  Serial across pairs for now
+                # (groups are already the inner unit of work); per_gene's
+                # Pool-based pair parallelism below is untouched.
+                for c1, c2 in pairs:
+                    df = _run_grouped_diff(
+                        diff_strat, _isoform_test_matrix, _isoform_groups,
+                        cluster_labels, c1, c2, min_cells_per_group, n_inner,
+                    )
+                    pair_results[(c1, c2)] = df
+                    if _pair_client is not None:
+                        _pair_client.advance(1)
+            elif n_outer <= 1 or len(pairs) <= 1:
                 for c1, c2 in pairs:
                     _, _, df = run_one_pair(
                         strategy, diff_df, cluster_labels, c1, c2,
@@ -549,6 +933,7 @@ def run_length(
     isoform_collapse: str,
     threads: int | None,
     pseudocount: float = 0.0,
+    utr_unmatched: str = "gene",
     progress_client=None,
 ) -> tuple[pd.DataFrame | None, "ad.AnnData | None"]:
     """Library-level entry point for 3'UTR length / PDUI quantification.
@@ -574,6 +959,13 @@ def run_length(
         pseudocount: Added to each per-cell count before PDUI / entropy
             computation.  Default 0.0 preserves original behaviour.  Set to
             e.g. 1.0 to eliminate NaN on zero-count cells.
+        utr_unmatched: How to handle PAS that overlap no annotated UTR when
+            ``isoform_agg == "per_isoform"``.  ``"gene"`` (default) keeps
+            them via a gene-level fallback (UTR-agnostic, same synthesis
+            used by the ``per_gene`` path).  ``"drop"`` restores the old
+            behaviour where such PAS are silently absent from the PDUI
+            output.  Ignored when ``isoform_agg == "per_gene"`` (those PAS
+            are always gene-level already).
         progress_client: Optional :class:`~ema.progress.ProgressClient`.  When
             supplied, ``advance(1)`` is called after each h5ad is processed so
             the CLI progress bar ticks forward.
@@ -600,6 +992,10 @@ def run_length(
     if isoform_collapse not in ("none", "mean", "majority"):
         raise ValueError(
             f"isoform_collapse={isoform_collapse!r} invalid; expected none|mean|majority"
+        )
+    if utr_unmatched not in ("drop", "gene"):
+        raise ValueError(
+            f"utr_unmatched={utr_unmatched!r} invalid; expected drop|gene"
         )
 
     reset_resource_manager()
@@ -632,7 +1028,7 @@ def run_length(
         adata = ad.read_h5ad(h5ad_path)
         _last_adata = adata
 
-        pdui_df_full, _, _, _ = build_count_dfs(adata)
+        pdui_df_full, _, _, _ = build_count_dfs(adata, which="pdui")
 
         if not pdui_methods:
             log.info("run_length: PDUI skipped (no strategy)")
@@ -693,6 +1089,27 @@ def run_length(
                 "run_length: isoform map: %d PAS mapped from %s",
                 len(pas_isoform_map), chosen_pasbed,
             )
+
+            # --utr-unmatched=gene: PAS that overlap NO annotated UTR are
+            # silently absent from pas_isoform_map (bedtools inner join).
+            # Keep them via the same gene-level fallback the per_gene path
+            # uses, rather than dropping them.  PAS that DID map to >=1 UTR
+            # keep their UTR entries unchanged (multi-UTR PAS still get one
+            # entry per overlapping transcript).
+            if utr_unmatched == "gene":
+                gene_fallback_map = _build_gene_fallback_map(adata)
+                n_fallback_added = 0
+                for pas_id, fallback_entry in gene_fallback_map.items():
+                    if pas_id not in pas_isoform_map:
+                        pas_isoform_map[pas_id] = fallback_entry
+                        n_fallback_added += 1
+                if n_fallback_added:
+                    log.info(
+                        "run_length: utr_unmatched='gene': added %d PAS with "
+                        "no UTR overlap via gene-level fallback "
+                        "(isoform map now %d PAS)",
+                        n_fallback_added, len(pas_isoform_map),
+                    )
         elif isoform_agg == "per_isoform" and (not gtf or not Path(gtf).exists()):
             log.warning(
                 "run_length: --isoform-agg=per_isoform requires --gtf; "
@@ -704,24 +1121,14 @@ def run_length(
         # Each PAS maps to a single (gene, "_gene_", rank=1) entry — enough
         # for the strategy's per_gene aggregation, which collapses isoforms.
         if isoform_agg == "per_gene" and not pas_isoform_map:
-            if "gene_id" in adata.var.columns:
-                gene_id_col = adata.var["gene_id"]
-                for pas_id_str, gene_id in gene_id_col.items():
-                    if not gene_id or (isinstance(gene_id, float) and pd.isna(gene_id)):
-                        continue
-                    try:
-                        pas_id_int = int(pas_id_str)
-                    except (TypeError, ValueError):
-                        continue
-                    pas_isoform_map[pas_id_int] = [
-                        (str(gene_id), "_gene_", 0, 1, 1)
-                    ]
+            pas_isoform_map = _build_gene_fallback_map(adata)
+            if pas_isoform_map:
                 log.info(
                     "run_length: per_gene map built from adata.var['gene_id']: "
                     "%d PAS mapped",
                     len(pas_isoform_map),
                 )
-            else:
+            elif "gene_id" not in adata.var.columns:
                 log.warning(
                     "run_length: per_gene requested but adata.var has no "
                     "'gene_id' column (older h5ad?). PDUI will be empty."

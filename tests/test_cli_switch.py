@@ -112,7 +112,7 @@ def test_isoform_agg_per_gene_dispatches_to_per_gene_branch(monkeypatch):
     monkeypatch.setattr(_runner_mod.ad, "read_h5ad", lambda _p: _FakeAdata())
     monkeypatch.setattr(
         _runner_mod, "build_count_dfs",
-        lambda _adata: (__import__("pandas").DataFrame(), None, None, None),
+        lambda _adata, which="both": (__import__("pandas").DataFrame(), None, None, None),
     )
 
     # Use a path that exists so the loop body runs (we patched read_h5ad anyway)
