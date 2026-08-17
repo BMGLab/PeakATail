@@ -467,6 +467,14 @@ def _repair_gene_id(gene_id_map, pas_gene_map: dict[str, str]):
     series = gene_id_map.copy()
     if not pas_gene_map:
         return series, 0
+    # var['gene_id'] frequently arrives as a pandas Categorical (AnnData stores
+    # string var columns that way). Writing a repaired value that is not already
+    # a category (e.g. a gene id absent from this cell type, or the "-" strand/
+    # unknown placeholder) raises under pandas 2.x. Repair on a plain object
+    # series so any replacement can be assigned; downstream only uses the values
+    # as grouping/lookup keys, so the dtype change is behaviour-preserving.
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        series = series.astype(object)
     is_missing = series.isna() | (series.astype(str).str.strip().isin(["", "nan", "None"]))
     n_repaired = 0
     for idx in series.index[is_missing]:
