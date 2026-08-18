@@ -55,6 +55,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-timeout>=2.4",
+]
 dev = [
     "pytest>=8",
     "pytest-timeout>=2.4",
