@@ -65,6 +65,14 @@ def read_check(
 
     try:  # do not calculate reads don't have CB
         cb = read.get_tag(barcode)
+        # CellRanger appends a GEM-group suffix to corrected barcodes
+        # ("AAAC...GTT-1"); STARsolo does not. Strip a trailing "-<digits>"
+        # so stock CellRanger BAMs work — without this, every read fails the
+        # length check below and is silently dropped, producing an empty run.
+        if len(cb) != barcode_len:
+            dash = cb.rfind("-")
+            if dash == barcode_len and cb[dash + 1:].isdigit():
+                cb = cb[:dash]
         if len(cb) != barcode_len:
             return 0, 0, 0, 0, 0
     except KeyError:
