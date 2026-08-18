@@ -16,7 +16,12 @@ def run_benchmark(bam_path: str, gtf_path: str,
                   reference_db: Optional[str] = None,
                   output_dir: str = "benchmark_results",
                   seqlen: int = 98, cb_len: int = 16,
-                  barcode_tag: str = "CB") -> pd.DataFrame:
+                  barcode_tag: str = "CB",
+                  point_strand: bool = False,
+                  restricted_reference_bed: Optional[str] = None,
+                  null_shuffle: bool = False,
+                  null_n_seeds: int = 3,
+                  null_gene_body_bed: Optional[str] = None) -> pd.DataFrame:
     """Run multiple strategies on the same data and collect metrics.
 
     Args:
@@ -28,6 +33,15 @@ def run_benchmark(bam_path: str, gtf_path: str,
         seqlen: Sequence length parameter
         cb_len: Cell barcode length
         barcode_tag: BAM barcode tag
+        point_strand: Also score point-mode/strand-matched (adds
+            ``point_precision_*`` / ``reference_coverage_*`` columns).
+            Default False keeps the legacy output unchanged.
+        restricted_reference_bed: Optional cohort-restricted reference BED for
+            ``recall_restricted_*`` columns (implies point_strand).
+        null_shuffle: Also score a shuffled-null baseline (adds
+            ``null_precision_*`` columns with the across-seed mean).
+        null_n_seeds: Number of shuffle seeds for the null baseline.
+        null_gene_body_bed: Optional gene-body BED constraining null placement.
 
     Returns:
         DataFrame with metrics per strategy
@@ -119,13 +133,35 @@ def run_benchmark(bam_path: str, gtf_path: str,
         # Database validation if reference provided
         if reference_db and os.path.exists(reference_db):
             from ema.benchmark.metrics import compute_metrics
-            metrics = compute_metrics(combined_bed, reference_db)
+            metrics = compute_metrics(
+                combined_bed, reference_db,
+                point_strand=point_strand,
+                restricted_reference_bed=restricted_reference_bed,
+                null_shuffle=null_shuffle,
+                null_n_seeds=null_n_seeds,
+                null_gene_body_bed=null_gene_body_bed)
 
-            # Add metrics at each cutoff
+            # Add metrics at each cutoff (legacy interval/strand-agnostic)
             for cutoff, m in metrics["cutoffs"].items():
                 result[f"precision_{cutoff}bp"] = m["precision"]
                 result[f"recall_{cutoff}bp"] = m["recall"]
                 result[f"f1_{cutoff}bp"] = m["f1"]
+
+            # Point-mode strand-matched metrics (only present when requested)
+            ps = metrics.get("point_strand")
+            if ps:
+                for cutoff, m in ps["cutoffs"].items():
+                    result[f"point_precision_{cutoff}bp"] = m["precision"]
+                    result[f"reference_coverage_{cutoff}bp"] = m["reference_coverage"]
+                    if "recall_restricted" in m:
+                        result[f"recall_restricted_{cutoff}bp"] = m["recall_restricted"]
+
+            # Shuffled-null baseline (across-seed mean; only when requested)
+            null = metrics.get("null")
+            if null:
+                for cutoff, m in null["mean"]["cutoffs"].items():
+                    result[f"null_precision_{cutoff}bp"] = m["precision"]
+                    result[f"null_reference_coverage_{cutoff}bp"] = m["reference_coverage"]
 
         results.append(result)
         log.info("  Peaks: %d | Runtime: %.1fs | Chromosomes: %d", n_peaks, runtime, len(chroms))
