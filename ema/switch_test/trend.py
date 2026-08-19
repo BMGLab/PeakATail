@@ -30,6 +30,7 @@ __all__ = [
     "derive_distal_fraction",
     "consensus_trend_by_gene",
     "consensus_trend_summary",
+    "distal_proportion_trend",
 ]
 
 
@@ -412,3 +413,117 @@ def consensus_trend_summary(
             "agreement_rate": rate,
         }
     return out
+def distal_proportion_trend(
+    df,
+    stage_order: list[str],
+    *,
+    stage_col: str = "cluster",
+    value_col: str = "proportion",
+    gene_col: str = "gene_id",
+    rank_col: str = "rank",
+    cell_col: str = "cell",
+    min_pas: int = 2,
+) -> dict[str, Any]:
+    """Ordered-stage trend of DISTAL-PAS usage, restricted to multi-PAS genes.
+
+    This is the scientifically-meaningful trend for the per-PAS
+    ``proportion`` strategy. A single-PAS gene has ``proportion`` == 1.0 in
+    every covered cell by construction — that's not APA usage information,
+    it's just "the only PAS got all the reads because there was only one
+    PAS". Feeding those rows into a naive whole-table mean floods the trend
+    with a trivial constant and hides any real multi-PAS signal (this is
+    the mechanism behind the previously-reported "flat proportion trend"
+    finding, compounded by the writer padding bug — see
+    :mod:`ema.quantification.strategies.proportion`).
+
+    This function:
+      1. Restricts to genes with >= *min_pas* distinct PAS (``n_PAS`` is
+         read off ``rank_col``'s per-gene max, i.e. the same rank column the
+         corrected proportion writer now populates).
+      2. Within each remaining (gene, cell), keeps only the row for the
+         most-DISTAL PAS (max ``rank_col`` within the gene) as the per-cell
+         APA readout — a PDUI-like "how much of this multi-PAS gene's usage
+         sits at the distal end" index.
+      3. Delegates the actual trend fit to :func:`pdui_trend` (linear slope
+         + Spearman rho across ``stage_order``). ``spearman`` is then forced
+         to NaN whenever ``n_stages < 3`` — a 2-point Spearman rho is always
+         exactly +/-1 by construction (there are only two possible
+         orderings of two points), so it carries no information beyond the
+         sign of the slope; this is the report-analyst convention for this
+         trend. ``n_stages`` is always reported regardless, so a caller can
+         see exactly how many stages backed the (possibly NaN) rho.
+
+    Args:
+        df: Long-format ``proportion`` table (one row per gene/pas/cell) —
+            e.g. the direct output of ``ema switch length --strategy
+            proportion``, after the padding fix (zero-coverage rows already
+            omitted; a stale/pre-fix table with padded rows would silently
+            include the padding in the "distal" mean, since a padded row's
+            ``rank`` was always the same broken sentinel — this function
+            does not itself detect padding, it composes with the corrected
+            writer).
+        stage_order: Ordered stage labels (see :func:`build_stage_rank`).
+        stage_col: Stage/cluster column name.
+        value_col: The proportion (or any per-PAS numeric) column name.
+        gene_col: Gene identifier column name.
+        rank_col: Proximal(low)->distal(high) rank column name.
+        cell_col: Cell identifier column name (used only to report
+            ``n_cells``).
+        min_pas: Minimum distinct PAS per gene to be considered informative
+            (default 2 — excludes trivial single-PAS genes).
+
+    Returns:
+        Same dict shape as :func:`pdui_trend` (``n_stages``, ``slope``,
+        ``spearman``, ``direction``, ``mean_by_stage``, ``value_col``),
+        plus ``n_genes`` (distinct multi-PAS genes contributing to the
+        distal-usage series) and ``n_cells`` (distinct covered cells
+        contributing).
+
+    Raises:
+        ValueError: if any required column is missing.
+    """
+    import pandas as pd
+
+    required = {gene_col, rank_col, cell_col, stage_col, value_col}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"distal_proportion_trend missing columns: {sorted(missing)}; "
+            f"have {list(df.columns)}"
+        )
+
+    work = df[[gene_col, rank_col, cell_col, stage_col, value_col]].copy()
+    work[rank_col] = pd.to_numeric(work[rank_col], errors="coerce")
+    work = work.dropna(subset=[rank_col])
+
+    def _empty_result() -> dict[str, Any]:
+        result = trend_from_stage_means({})
+        result["mean_by_stage"] = {}
+        result["value_col"] = value_col
+        result["n_genes"] = 0
+        result["n_cells"] = 0
+        return result
+
+    if work.empty:
+        return _empty_result()
+
+    max_rank_by_gene = work.groupby(gene_col)[rank_col].transform("max")
+    work = work[max_rank_by_gene >= min_pas]
+    if work.empty:
+        return _empty_result()
+
+    is_distal = work[rank_col] == work.groupby(gene_col)[rank_col].transform("max")
+    distal = work[is_distal]
+    if distal.empty:
+        return _empty_result()
+
+    result = pdui_trend(distal, stage_order, stage_col=stage_col, value_col=value_col)
+    result["n_genes"] = int(distal[gene_col].nunique())
+    result["n_cells"] = int(distal[cell_col].nunique())
+    # A 2-point Spearman rho is +/-1 by construction (only two possible
+    # orderings) and carries no monotonicity information — null it out,
+    # per the report-analyst convention, but keep n_stages so callers can
+    # see why.
+    if result["n_stages"] < 3:
+        result["spearman"] = float("nan")
+    return result

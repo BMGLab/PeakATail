@@ -133,3 +133,75 @@ def test_isoform_agg_per_gene_dispatches_to_per_gene_branch(monkeypatch):
         "but the user requested per_gene — vocabulary drift would silently "
         "invoke the wrong branch"
     )
+
+
+def test_per_gene_pas_isoform_map_rank_from_pasbed(monkeypatch, tmp_path):
+    """The per_gene ``pas_isoform_map`` synthesis must rank each gene's PAS
+    by real (strand-aware) genomic position, not the old hardcoded
+    ``rank=1, total=1`` sentinel that made every PAS of every gene
+    indistinguishable from a true single-PAS gene.
+
+    GENE_PLUS (+ strand): PAS 10 (start=100), PAS 11 (start=500)
+        -> rank 1 (proximal, low coord), rank 2 (distal, high coord).
+    GENE_MINUS (- strand): PAS 20 (start=500), PAS 21 (start=100)
+        -> rank 1 (proximal, HIGH coord), rank 2 (distal, LOW coord).
+    """
+    import pandas as pd
+
+    captured: dict = {}
+
+    class _StubStrategy:
+        name = "stub"
+
+        def compute(self, count_matrix, pas_isoform_map, aggregation,
+                    isoform_collapse, **_):
+            captured["pas_isoform_map"] = pas_isoform_map
+            return pd.DataFrame()
+
+    import ema.switch_test.runner as _runner_mod
+    monkeypatch.setattr(_runner_mod, "get_pdui_strategy", lambda _name: _StubStrategy())
+
+    class _FakeAdata:
+        def __init__(self):
+            self.var = pd.DataFrame(
+                {"gene_id": ["GENE_PLUS", "GENE_PLUS", "GENE_MINUS", "GENE_MINUS"]},
+                index=["10", "11", "20", "21"],
+            )
+            self.obs = pd.DataFrame(index=[])
+
+    monkeypatch.setattr(_runner_mod.ad, "read_h5ad", lambda _p: _FakeAdata())
+    monkeypatch.setattr(
+        _runner_mod, "build_count_dfs",
+        lambda _adata, which="both": (pd.DataFrame(), None, None, None),
+    )
+
+    # Real pasbed.bed sibling to the (stubbed) h5ad path — this is what
+    # `run_length` walks up from to find genomic coordinates.
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    pasbed = run_dir / "pasbed.bed"
+    pasbed.write_text(
+        "chr1\t100\t101\t10\t0\t+\n"
+        "chr1\t500\t501\t11\t0\t+\n"
+        "chr1\t500\t501\t20\t0\t-\n"
+        "chr1\t100\t101\t21\t0\t-\n"
+    )
+    h5ad_path = run_dir / "clusters.h5ad"
+
+    _runner_mod.run_length(
+        h5ad_paths=[str(h5ad_path)],
+        gtf=None,
+        output_dir=str(tmp_path / "out"),
+        cluster_pairs=None,
+        cluster_key="leiden",
+        strategy="stub",
+        isoform_agg="per_gene",
+        isoform_collapse="none",
+        threads=1,
+    )
+
+    pas_map = captured["pas_isoform_map"]
+    assert pas_map[10][0][3] == 1 and pas_map[10][0][4] == 2   # GENE_PLUS proximal
+    assert pas_map[11][0][3] == 2 and pas_map[11][0][4] == 2   # GENE_PLUS distal
+    assert pas_map[20][0][3] == 1 and pas_map[20][0][4] == 2   # GENE_MINUS proximal (high coord)
+    assert pas_map[21][0][3] == 2 and pas_map[21][0][4] == 2   # GENE_MINUS distal (low coord)
