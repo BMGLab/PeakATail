@@ -83,6 +83,12 @@ def read_check(
     # CBs by encoding them to -1 (tuple key (sample_id, -1)); these end up in
     # the same column but are rare (1-letter Ns are <0.1% of CB sequencing data).
 
+    # Unmapped (or CIGAR-less) reads have reference_end None; CellRanger BAMs
+    # keep unmapped reads with barcodes, so this must be guarded or the run
+    # crashes hours in with a TypeError on `read_end - read_start`.
+    if read.is_unmapped or read.reference_end is None or read.reference_name is None:
+        return 0, 0, 0, 0, 0
+
     read_chro, read_start, read_end, read_strand = (
         read.reference_name,
         read.reference_start,
