@@ -301,7 +301,8 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         from pathlib import Path
 
         from ema.viz._gene_track_helpers import (
-            build_gene_panel, load_isoforms_for_gene, load_gene_name_from_gtf,
+            build_gene_panel, load_isoforms_for_gene, load_isoform_regions_for_gene,
+            load_gene_name_from_gtf,
         )
         from ema.viz import render_all
 
@@ -319,6 +320,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
             for gene_id in gene_list:
                 # Optionally load isoform structure + human-readable name.
                 isoforms = None
+                isoform_regions = None
                 gene_name = ""
                 if kwargs.get("gtf"):
                     try:
@@ -329,6 +331,21 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                     except Exception as exc:
                         log.warning(
                             "load_isoforms_for_gene failed for %s: %s", gene_id, exc
+                        )
+                    try:
+                        # Richer gene model (CDS/5'UTR/3'UTR) for the gene-model
+                        # rendering; drawn instead of the uniform exon blocks
+                        # above when the GTF has that annotation.
+                        isoform_regions = load_isoform_regions_for_gene(
+                            Path(kwargs["gtf"]), gene_id
+                        )
+                        log.debug(
+                            "Loaded region structure for %d transcript(s) of %s from GTF",
+                            len(isoform_regions), gene_id,
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "load_isoform_regions_for_gene failed for %s: %s", gene_id, exc
                         )
                     try:
                         gene_name = load_gene_name_from_gtf(
@@ -345,6 +362,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                     pasbed=pasbed,
                     cluster_key=kwargs["cluster_key"],
                     isoforms=isoforms,
+                    isoform_regions=isoform_regions,
                     gene_name=gene_name,
                     color_key=kwargs.get("color_key"),
                     subtitle=kwargs.get("subtitle", ""),
