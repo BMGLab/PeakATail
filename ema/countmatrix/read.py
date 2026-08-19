@@ -101,6 +101,14 @@ def read_check(
         # Use the caller-supplied sample_id if given; otherwise fall back to
         # the module-level singleton (backward compatibility).
         rg = sample_id if sample_id is not None else _default_sample_id
+    # The downstream composite "<sample>_<CB>" is split on the FIRST underscore
+    # (BarcodeIndex.get_index), so the sample part must be underscore-free.
+    # CellRanger RG IDs (e.g. "pbmc_10k_v3:0:1:<flowcell>:1") contain
+    # underscores, which silently corrupted every barcode into one invalid
+    # column. Prefer the run-level sample id in that case, sanitized.
+    if "_" in rg:
+        rg = sample_id if sample_id is not None else _default_sample_id
+        rg = rg.replace("_", "-")
 
     # skip reverse directions
     if direction != read_strand:
