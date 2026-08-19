@@ -35,10 +35,12 @@ def canonical_cb(cb: str) -> str:
 
     ``GSM-Stage-<8hex>_<barcode>`` -> ``GSM-Stage_<barcode>``. A cb without a
     ``_`` separator (no barcode) is returned unchanged. Only the prefix (before
-    the first ``_``) has the run suffix stripped, so barcodes that happen to end
-    in ``-<8hex>`` are never touched.
+    the LAST ``_``) has the run suffix stripped, so barcodes that happen to end
+    in ``-<8hex>`` are never touched, and library prefixes that themselves
+    contain ``_`` (``lib_A-4B7F9BA8_<barcode>``) are stripped correctly instead
+    of being left un-pooled.
     """
-    i = cb.find("_")
+    i = cb.rfind("_")
     if i == -1:
         return cb
     prefix, barcode = cb[:i], cb[i + 1:]
@@ -86,8 +88,13 @@ def collapse_columns(matrix, cbs):
 
 
 def _library(cb: str) -> str:
-    """Library prefix = everything before the first ``_``."""
-    return cb.split("_", 1)[0]
+    """Library prefix = everything before the LAST ``_``.
+
+    The barcode half of a composite cb never contains ``_`` (see
+    :func:`ema.countmatrix.indexing.split_cb`), so the last underscore is the
+    separator and library ids containing ``_`` survive intact.
+    """
+    return cb.rsplit("_", 1)[0]
 
 
 def collapse_run(in_run: str | Path, out_run: str | Path) -> dict:

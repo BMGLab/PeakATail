@@ -101,14 +101,19 @@ def read_check(
         # Use the caller-supplied sample_id if given; otherwise fall back to
         # the module-level singleton (backward compatibility).
         rg = sample_id if sample_id is not None else _default_sample_id
-    # The downstream composite "<sample>_<CB>" is split on the FIRST underscore
-    # (BarcodeIndex.get_index), so the sample part must be underscore-free.
-    # CellRanger RG IDs (e.g. "pbmc_10k_v3:0:1:<flowcell>:1") contain
-    # underscores, which silently corrupted every barcode into one invalid
-    # column. Prefer the run-level sample id in that case, sanitized.
-    if "_" in rg:
-        rg = sample_id if sample_id is not None else _default_sample_id
-        rg = rg.replace("_", "-")
+    # The RG is used VERBATIM.  The composite built below is decoded by
+    # ema.countmatrix.indexing.split_cb, which splits on the LAST underscore
+    # -- the barcode half is a fixed-length ACGTN string and can never hold
+    # one, so any RG (underscores included) round-trips exactly.
+    #
+    # Do NOT sanitise or drop underscore-bearing RGs here.  `ema merge`
+    # stamps RG = dataset_id and `samtools merge` derives RG ids from file
+    # names, so `sampleA_rep1` / `sampleB_rep1` are ordinary values; mapping
+    # them onto a shared fallback (or onto `_`->`-`, which collides
+    # `a_b` with `a-b`) puts two samples' cells in one matrix column, and
+    # rewriting the prefix also breaks the per-dataset column selector in
+    # ema/main.py and ema/reannotate.py, which matches the sample half of the
+    # composite against the dataset id exactly.
 
     # skip reverse directions
     if direction != read_strand:

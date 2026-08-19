@@ -42,28 +42,58 @@ import numpy as np
 from ema.countmatrix.cb_encode import encode_cb, encode_cb_batch, decode_cb
 
 
-def _parse_cb_str(cb_str: str) -> tuple[str, int]:
-    """Split a ``"sample_id_barcode"`` string into its two parts.
+def split_cb(cb_str: str) -> tuple[str, str]:
+    """Split a composite ``"<sample_id>_<barcode>"`` CB into its two parts.
+
+    **The split is on the LAST underscore, and that is what makes the
+    composite bijective.**  The barcode half is a fixed-length nucleotide
+    string (``ACGTN``) emitted by
+    :func:`ema.countmatrix.read.read_check`, so it can never contain an
+    underscore; the sample half therefore owns every underscore in the
+    string and is recovered verbatim, whatever it contains.
+
+    Splitting on the *first* underscore (what this module did until the
+    ``fix/cellranger-input-compat`` repair) silently truncated any sample id
+    containing ``_`` — e.g. ``"pbmc_10k_v3_AAACCCAAGAAACCCA"`` parsed as
+    sample ``"pbmc"`` + barcode ``"10k_v3_AAACCCAAGAAACCCA"``, which
+    :func:`~ema.countmatrix.cb_encode.encode_cb` maps to ``-1``.  Every cell
+    of such a run then collapsed onto the single column ``("pbmc", -1)``.
+    ``ema merge`` stamps ``RG = dataset_id`` (``DatasetManager._tag_bam_with_rg``)
+    and ``samtools merge`` derives RG ids from file names, so underscore-bearing
+    sample ids are the norm, not an edge case.
+
+    Sanitising the sample id instead (``"_"`` -> ``"-"``) is **not** a valid
+    alternative: it is not injective (``"a_b"`` and ``"a-b"`` both become
+    ``"a-b"``, merging two samples' cells into one column) and it breaks the
+    per-dataset column selector ``cb.startswith(f"{ds_id}_")`` used by
+    ``ema/main.py`` and ``ema/reannotate.py``.
 
     Args:
-        cb_str: Prefixed CB string in the form ``"<sample_id>_<barcode>"``.
-            The split is on the *first* underscore so sample IDs that
-            themselves contain underscores are preserved correctly.
+        cb_str: Composite CB string ``"<sample_id>_<barcode>"``.
+
+    Returns:
+        ``(sample_id, barcode_str)``.  When *cb_str* contains no underscore
+        the sample id is ``""`` and the whole string is treated as the
+        barcode (degenerate case, preserved for backward compatibility).
+    """
+    idx = cb_str.rfind("_")
+    if idx == -1:
+        return ("", cb_str)
+    return cb_str[:idx], cb_str[idx + 1 :]
+
+
+def _parse_cb_str(cb_str: str) -> tuple[str, int]:
+    """Split a composite CB string and 2-bit encode the barcode half.
+
+    Thin wrapper over :func:`split_cb`; see that function for why the split
+    is on the *last* underscore.
 
     Returns:
         ``(sample_id, cb_int)`` where *cb_int* is the 2-bit encoding of the
-        barcode portion.  Returns ``(cb_str, -1)`` if no underscore is found
-        (degenerate case: treat whole string as barcode, which will encode as
-        -1 for non-ATCG characters and be handled by the caller).
+        barcode portion, or -1 for a barcode with non-ACGT characters.
     """
-    idx = cb_str.find("_")
-    if idx == -1:
-        # No separator — encode the whole thing and let the caller decide
-        return ("", encode_cb(cb_str))
-    sample_id = cb_str[:idx]
-    barcode_str = cb_str[idx + 1 :]
-    cb_int = encode_cb(barcode_str)
-    return sample_id, cb_int
+    sample_id, barcode_str = split_cb(cb_str)
+    return sample_id, encode_cb(barcode_str)
 
 
 class BarcodeIndex:
@@ -141,8 +171,10 @@ class BarcodeIndex:
         if not cbs:
             return []
 
-        # Split each CB into (sample_id, barcode_str) without re-encoding
-        split_idx = [cb.find("_") for cb in cbs]
+        # Split each CB into (sample_id, barcode_str) without re-encoding.
+        # rfind, not find: the barcode half is underscore-free, the sample
+        # half is not (see split_cb).
+        split_idx = [cb.rfind("_") for cb in cbs]
         sample_ids: list[str] = []
         barcode_strs: list[str] = []
         for cb, idx in zip(cbs, split_idx):

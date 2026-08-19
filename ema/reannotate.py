@@ -416,10 +416,14 @@ def reannotate_run(
     log.info("find_close assigned %d PAS->gene rows", len(genes))
     genes_pkl = pickle.dumps(genes)
 
-    # 3. Derive datasets from the namespaced barcodes.  cb = "<ds_id>_<barcode>"
-    #    and ds_id contains no underscore (hyphenated ids), so split on first '_'.
+    # 3. Derive datasets from the namespaced barcodes.  cb = "<ds_id>_<barcode>";
+    #    the barcode half is underscore-free but ds_id need not be (ema merge
+    #    stamps RG = dataset_id), so split on the LAST '_' -- see
+    #    ema.countmatrix.indexing.split_cb.  Splitting on the first '_' here
+    #    truncated ids like "pbmc_10k_v3" to "pbmc", after which the
+    #    `startswith(f"{ds_id}_")` selector below picked up the wrong columns.
     all_cbs = [ln.strip() for ln in unified_cbs.read_text().splitlines() if ln.strip()]
-    unique_ds_ids: list[str] = list(dict.fromkeys(cb.split("_", 1)[0] for cb in all_cbs))
+    unique_ds_ids: list[str] = list(dict.fromkeys(cb.rsplit("_", 1)[0] for cb in all_cbs))
     log.info("branching %d datasets: %s", len(unique_ds_ids), ", ".join(unique_ds_ids))
 
     # Record the dataset list on directory_config so the run manifest (E2)
@@ -474,7 +478,9 @@ def reannotate_run(
     # 4. Run the tested per-dataset downstream worker for each dataset.
     worker_specs: list[tuple[str, list[int], list[str]]] = []
     for ds_id in unique_ds_ids:
-        sub_indices = [i for i, cb in enumerate(all_cbs) if cb.startswith(f"{ds_id}_")]
+        # Exact match on the sample half (see ema.countmatrix.indexing.split_cb);
+        # `startswith(f"{ds_id}_")` let dataset "a" claim dataset "a_b"'s cells.
+        sub_indices = [i for i, cb in enumerate(all_cbs) if cb.rsplit("_", 1)[0] == ds_id]
         if not sub_indices:
             log.warning("no cells for '%s' — skipping", ds_id)
             continue
