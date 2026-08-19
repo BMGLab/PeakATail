@@ -557,6 +557,18 @@ def write_per_dataset_beds(
     return pasbeds
 
 
+def _unique_write_token() -> str:
+    """A token unique enough to disambiguate concurrent atomic-write temp
+    files, whether the concurrency is across OS processes (the real-world
+    case -- two separate ``ema reannotate`` invocations) or threads within
+    one process (e.g. test harnesses). PID alone only disambiguates the
+    former; adding the thread ident closes the latter too.
+    """
+    import threading
+
+    return f"{os.getpid()}_{threading.get_ident()}"
+
+
 def write_pas_gene_artifacts(
     output_dir: Path,
     dataset_id: str,
@@ -565,6 +577,7 @@ def write_pas_gene_artifacts(
     *,
     atlas_of: dict | None = None,
     ip_of: dict | None = None,
+    in_3utr_of: dict | None = None,
 ) -> tuple[Path, Path]:
     """Write ``pas_gene.tsv`` and ``annotatedpas.bed`` for one dataset.
 
@@ -574,10 +587,16 @@ def write_pas_gene_artifacts(
 
     ``annotatedpas.bed`` extends ``pasbed.bed`` with a trailing gene_id
     column, and (D9) three further trailing status columns --
-    ``atlas_match``, ``atlas_distance_bp``, ``internal_priming`` -- so the
-    "keep everything, annotate with match/no-match" atlas-snap and
-    internal-priming filters are queryable straight off the BED, not just
-    the PAS ledger. The first 6 columns stay plain BED6 so existing BED
+    ``atlas_match``, ``atlas_distance_bp``, ``internal_priming`` -- plus a
+    fourth, ``in_3utr`` -- so the "keep everything, annotate with
+    match/no-match" atlas-snap / internal-priming / 3'UTR-membership labels
+    are queryable straight off the BED, not just the PAS ledger. This BED
+    covers EVERY PAS this dataset's peak-calling produced (one row per
+    ``pasbed.bed`` line), independent of whether a PAS made it into the
+    clustering matrix -- a PAS excluded from clustering (see
+    ``ema.downstream_runner.run_one_dataset_downstream``'s
+    ``exclude_pas_ids``) still gets its full row here, just like every
+    other PAS. The first 6 columns stay plain BED6 so existing BED
     consumers (bedtools, etc.) still parse the file; extra columns are
     appended, never inserted. It depends on ``pasbed.bed`` having been
     written first (see :func:`write_per_dataset_beds`); if the pasbed
@@ -597,29 +616,54 @@ def write_pas_gene_artifacts(
             ``ema.experimental.peak_filters.apply_filters``'s
             ``"internal_priming_flags"`` stats key. PAS absent from the
             map get ``""``.
+        in_3utr_of: Optional ``{pas_id: in_3utr_bool}`` -- whether the PAS
+            overlaps an annotated transcript 3'UTR (see
+            ``ema.experimental.peak_filters.label_pas_in_bed``). PAS absent
+            from the map (label didn't run) get ``""``.
 
     Returns:
         ``(pas_gene_tsv_path, annotatedpas_bed_path)``.  The BED path
         may not exist if pasbed wasn't on disk.
     """
+    import os
     import pandas as pd  # local import — heavy module
     from ema.config import directory_config
 
     atlas_of = atlas_of or {}
     ip_of = ip_of or {}
+    in_3utr_of = in_3utr_of or {}
 
+    # Both writes below go to a temp file in the SAME directory (same
+    # filesystem, so os.replace() is a single atomic rename syscall) then
+    # get moved into place -- never write the final path directly. This
+    # closes a real corruption window: two `ema reannotate` branches whose
+    # grid rows accidentally resolve to the same --out (e.g. a duplicate
+    # branch_name) run CONCURRENTLY, and two processes writing the same
+    # path with plain `open(..., "w")` can interleave, leaving a reader
+    # with a torn file -- the actual mechanism behind a real bug (5 A2/A3
+    # trim/cluster branches with identical params producing 3 different
+    # pas_gene.tsv row counts, grouped by write time). Two atomic writers
+    # racing on the same path still can't corrupt the file -- the loser's
+    # complete temp file just gets rename()'d over, whichever wins is a
+    # complete, valid file, never a byte-level mix of both. The underlying
+    # cause (duplicate branch_name/--out) is a separate guard, at the grid
+    # loader (see experiments/laughney/main.nf) -- this fix makes the write
+    # itself safe regardless.
     pas_gene_tsv = directory_config.pas_gene_for(dataset_id)
     pas_gene_tsv.parent.mkdir(parents=True, exist_ok=True)
+    _pgt_tmp = pas_gene_tsv.with_name(f".{pas_gene_tsv.name}.tmp{_unique_write_token()}")
     pd.DataFrame({"pas_id": pas_ids, "gene_id": gene_ids}).to_csv(
-        pas_gene_tsv, sep="\t", index=False,
+        _pgt_tmp, sep="\t", index=False,
     )
+    os.replace(_pgt_tmp, pas_gene_tsv)
 
     annot_bed = directory_config.annotatedpas_for(dataset_id)
     annot_bed.parent.mkdir(parents=True, exist_ok=True)
     pasbed = directory_config.pasbed_for(dataset_id)
     if pasbed.exists():
         lookup = dict(zip([str(p) for p in pas_ids], gene_ids))
-        with open(pasbed) as src, open(annot_bed, "w") as dst:
+        _annot_tmp = annot_bed.with_name(f".{annot_bed.name}.tmp{_unique_write_token()}")
+        with open(pasbed) as src, open(_annot_tmp, "w") as dst:
             for line in src:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) >= 4:
@@ -627,8 +671,10 @@ def write_pas_gene_artifacts(
                     gid = lookup.get(pas_id, "")
                     atlas_match, atlas_distance_bp = atlas_of.get(pas_id, ("", ""))
                     ip_flag = ip_of.get(pas_id, "")
-                    extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag)]
+                    in_3utr_flag = in_3utr_of.get(pas_id, "")
+                    extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag), str(in_3utr_flag)]
                     dst.write("\t".join(parts + extra) + "\n")
+        os.replace(_annot_tmp, annot_bed)
     else:
         log.warning(
             "annotatedpas.bed for %r skipped — pasbed.bed not on disk at %s",

@@ -450,3 +450,161 @@ def test_analyze_sweep_end_to_end(tmp_path):
     # Reloadable JSON with no leftover numpy types.
     reloaded = json.loads((out_dir / "cumulative_summary.json").read_text())
     assert reloaded["switch"]["n_celltypes_analyzed"] == 3
+
+
+# ---------------------------------------------------------------------------
+# FILTER-EFFECT scenario comparison (independent named run dirs, not a
+# sweep_root grid/reannotate tier)
+# ---------------------------------------------------------------------------
+
+
+def _build_scenario_run(run_dir: Path, n_pas: int, atlas_match_rate: float | None = None,
+                         peak_filters: dict | None = None) -> None:
+    """A minimal `ema run` output dir: annotatedpas.bed + optional filter stats."""
+    _write_bed(run_dir / "annotatedpas.bed", n_pas)
+    if atlas_match_rate is not None:
+        _write_json(run_dir / "atlas_stats.json", {
+            "atlas_match_rate": atlas_match_rate,
+            "n_atlas_matched": int(n_pas * atlas_match_rate),
+            "n_atlas_unmatched": int(n_pas * (1 - atlas_match_rate)),
+        })
+    if peak_filters is not None:
+        _write_json(run_dir / "04_pas_gene_assignment" / "peak_filters_stats.json", peak_filters)
+
+
+def _build_scenario_switch(run_dir: Path, celltype: str, slope: float, direction: str,
+                            contrasts: dict) -> None:
+    """Switch trend + fisher outputs directly under <run_dir>/B3_switch (no B1_cohort_full)."""
+    switch_dir = run_dir / "B3_switch"
+    _write_json(switch_dir / "trend" / celltype / "length_trend.json", {
+        "n_stages": 4, "slope": slope, "spearman": -0.9, "direction": direction,
+        "mean_by_stage": {"Normal": 0.5, "StageI": 0.45, "IVprimary": 0.4, "Met": 0.35},
+    })
+    fisher_dir = switch_dir / "diff" / celltype / "fisher" / "differential"
+    fisher_dir.mkdir(parents=True, exist_ok=True)
+    for contrast, qvalues in contrasts.items():
+        pd.DataFrame({"qvalue": qvalues}).to_csv(
+            fisher_dir / f"fisher_{contrast}.tsv", sep="\t", index=False
+        )
+
+
+def _default_scenario_dirs(root: Path) -> dict:
+    scenarios = {
+        "baseline": dict(n_pas=1000, atlas_match_rate=0.80, slope=-0.010, direction="decreasing"),
+        "atlas_filter": dict(n_pas=950, atlas_match_rate=0.82, slope=-0.012, direction="decreasing"),
+        "annot_filter_3utr": dict(n_pas=900, atlas_match_rate=0.79, slope=-0.008, direction="decreasing"),
+        "ip_filter": dict(n_pas=850, atlas_match_rate=0.78, slope=0.004, direction="increasing"),
+    }
+    scenario_dirs = {}
+    for name, cfg in scenarios.items():
+        d = root / name
+        _build_scenario_run(
+            d, n_pas=cfg["n_pas"], atlas_match_rate=cfg["atlas_match_rate"],
+            peak_filters={
+                "ip_flag_rate": 0.08, "n_ip_flagged": 40,
+                "pos": {"total": 500, "filtered": 10,
+                        "annotation": {"total": 500, "filtered": 5},
+                        "internal_priming": {"filtered": 10}},
+                "neg": {"total": 500, "filtered": 8,
+                        "annotation": {"total": 500, "filtered": 4},
+                        "internal_priming": {"filtered": 8}},
+            },
+        )
+        _build_scenario_switch(
+            d, "tcell", slope=cfg["slope"], direction=cfg["direction"],
+            contrasts={"Normal_vs_StageI": [0.01, 0.5, 0.2, 0.001]},
+        )
+        conc_path = d / "B2_gex_celltyping" / "concordance.csv"
+        conc_path.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame({"GSM": ["a", "b"], "ARI_leiden": [0.4, 0.5], "AMI_leiden": [0.6, 0.55]}).to_csv(
+            conc_path, index=False
+        )
+        scenario_dirs[name] = d
+    return scenario_dirs
+
+
+def test_harvest_filter_effect_pas_counts_computes_delta_vs_baseline(tmp_path):
+    scenario_dirs = _default_scenario_dirs(tmp_path)
+    df = sa.harvest_filter_effect_pas_counts(scenario_dirs)
+
+    row = df.set_index("scenario")
+    assert row.loc["baseline", "n_pas"] == 1000
+    assert row.loc["baseline", "n_pas_dropped_vs_baseline"] == 0
+    assert row.loc["atlas_filter", "n_pas"] == 950
+    assert row.loc["atlas_filter", "n_pas_dropped_vs_baseline"] == 50
+    assert row.loc["ip_filter", "n_pas_dropped_vs_baseline"] == 150
+    # peak_filters_stats.json fields surfaced
+    assert row.loc["baseline", "n_ip_flagged"] == 40
+    assert row.loc["baseline", "annot_filtered_pos"] == 5
+
+
+def test_harvest_filter_effect_pas_counts_missing_baseline_no_delta_column(tmp_path):
+    scenario_dirs = _default_scenario_dirs(tmp_path)
+    del scenario_dirs["baseline"]
+    df = sa.harvest_filter_effect_pas_counts(scenario_dirs)
+    assert "n_pas_dropped_vs_baseline" not in df.columns
+
+
+def test_harvest_filter_effect_clustering(tmp_path):
+    scenario_dirs = _default_scenario_dirs(tmp_path)
+    for name, d in scenario_dirs.items():
+        _make_h5ad(d / "07_clustering" / "GSMfoo" / "clusters.h5ad", n_cells=20, n_clusters=4)
+    df = sa.harvest_filter_effect_clustering(scenario_dirs)
+    assert set(df["scenario"]) == set(scenario_dirs)
+    assert (df["n_clusters_mean"] == 4).all()
+    assert (df["ARI_leiden_mean"] == 0.45).all()
+
+
+def test_harvest_filter_effect_fisher_and_trend(tmp_path):
+    scenario_dirs = _default_scenario_dirs(tmp_path)
+    fisher_df = sa.harvest_filter_effect_fisher(scenario_dirs, fdr=0.05)
+    assert set(fisher_df["scenario"]) == set(scenario_dirs)
+    # 2 of the 4 qvalues (0.01, 0.001) are < 0.05
+    assert (fisher_df["n_sig"] == 2).all()
+
+    trend_df = sa.harvest_filter_effect_trend(scenario_dirs)
+    assert set(trend_df["scenario"]) == set(scenario_dirs)
+    ip_row = trend_df.set_index("scenario").loc["ip_filter"]
+    assert ip_row["direction"] == "increasing"
+
+    fisher_summary = sa.summarize_filter_effect_fisher(fisher_df)
+    assert set(fisher_summary["scenario"]) == set(scenario_dirs)
+    assert (fisher_summary["total_sig"] == 2).all()
+
+
+def test_analyze_filter_effect_end_to_end(tmp_path):
+    scenario_dirs = _default_scenario_dirs(tmp_path)
+    for name, d in scenario_dirs.items():
+        _make_h5ad(d / "07_clustering" / "GSMfoo" / "clusters.h5ad", n_cells=20, n_clusters=4)
+
+    out_dir = tmp_path / "analysis"
+    summary = sa.analyze_filter_effect(scenario_dirs, out_dir, fdr=0.05)
+
+    assert (out_dir / "filter_effect_summary.json").exists()
+    assert (out_dir / "filter_effect_summary.md").exists()
+    assert (out_dir / "tables" / "filter_effect_pas_counts.csv").exists()
+    assert (out_dir / "tables" / "filter_effect_clustering.csv").exists()
+    assert (out_dir / "tables" / "filter_effect_fisher_summary.csv").exists()
+    assert (out_dir / "tables" / "filter_effect_trend_summary.csv").exists()
+    assert (out_dir / "figures" / "filter_effect_summary.png").exists()
+    assert (out_dir / "figures" / "filter_effect_summary.svg").exists()
+
+    assert summary["baseline"] == "baseline"
+    assert summary["scenarios"] == list(scenario_dirs)
+
+    md_text = (out_dir / "filter_effect_summary.md").read_text()
+    assert "atlas_filter" in md_text
+    assert "ip_filter" in md_text
+
+    # Reloadable JSON with no leftover numpy/Path types.
+    reloaded = json.loads((out_dir / "filter_effect_summary.json").read_text())
+    assert reloaded["pas_counts"][0]["scenario"] == "baseline"
+
+
+def test_analyze_filter_effect_missing_scenario_dir_does_not_crash(tmp_path):
+    scenario_dirs = {"baseline": tmp_path / "baseline", "atlas_filter": tmp_path / "nonexistent"}
+    (tmp_path / "baseline").mkdir()
+    out_dir = tmp_path / "analysis"
+    summary = sa.analyze_filter_effect(scenario_dirs, out_dir)
+    assert (out_dir / "filter_effect_summary.json").exists()
+    assert summary["scenarios"] == ["baseline", "atlas_filter"]

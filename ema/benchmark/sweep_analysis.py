@@ -188,9 +188,14 @@ def _branch_cluster_stats(branch_dir: Path) -> dict:
     }
 
 
-def _list_celltypes(sweep_root: Path) -> list[str]:
-    """List cell-type directory names under ``B3_switch/diff``."""
-    diff_dir = Path(sweep_root) / "runs" / "B1_cohort_full" / "B3_switch" / "diff"
+def _list_celltypes(sweep_root: Path, run_dir: Optional[Path] = None) -> list[str]:
+    """List cell-type directory names under ``B3_switch/diff``.
+
+    Reads ``<run_dir>/B3_switch/diff`` when *run_dir* is given, otherwise the
+    default cohort location ``<sweep_root>/runs/B1_cohort_full``.
+    """
+    base = Path(run_dir) if run_dir is not None else Path(sweep_root) / "runs" / "B1_cohort_full"
+    diff_dir = base / "B3_switch" / "diff"
     if not diff_dir.exists():
         return []
     return sorted(p.name for p in diff_dir.iterdir() if p.is_dir())
@@ -318,11 +323,14 @@ def harvest_clustering_comparison(sweep_root: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def harvest_gex_concordance(sweep_root: Path) -> pd.DataFrame:
-    """Per-GSM cohort GEX-vs-PAS-leiden concordance (ARI/AMI)."""
-    conc_path = (
-        Path(sweep_root) / "runs" / "B1_cohort_full" / "B2_gex_celltyping" / "concordance.csv"
-    )
+def harvest_gex_concordance(sweep_root: Path, run_dir: Optional[Path] = None) -> pd.DataFrame:
+    """Per-GSM cohort GEX-vs-PAS-leiden concordance (ARI/AMI).
+
+    Reads ``<run_dir>/B2_gex_celltyping/concordance.csv`` when *run_dir* is
+    given, otherwise the default cohort location.
+    """
+    base = Path(run_dir) if run_dir is not None else Path(sweep_root) / "runs" / "B1_cohort_full"
+    conc_path = base / "B2_gex_celltyping" / "concordance.csv"
     if not conc_path.exists():
         return pd.DataFrame()
     return pd.read_csv(conc_path)
@@ -351,15 +359,17 @@ def summarize_gex_concordance(concordance_df: pd.DataFrame) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def harvest_switch_trends(sweep_root: Path) -> pd.DataFrame:
+def harvest_switch_trends(sweep_root: Path, run_dir: Optional[Path] = None) -> pd.DataFrame:
     """Per-celltype length-trend summary: slope/spearman/direction + mean PDUI by stage.
 
     Reads only ``B3_switch/trend/<celltype>/length_trend.json`` (small, one
-    per cell type) — never the multi-GB per-cell length tables.
+    per cell type) — never the multi-GB per-cell length tables. Reads under
+    *run_dir* when given, otherwise the default cohort location.
     """
-    trend_dir = Path(sweep_root) / "runs" / "B1_cohort_full" / "B3_switch" / "trend"
+    base = Path(run_dir) if run_dir is not None else Path(sweep_root) / "runs" / "B1_cohort_full"
+    trend_dir = base / "B3_switch" / "trend"
     rows = []
-    for ct in _list_celltypes(sweep_root):
+    for ct in _list_celltypes(sweep_root, run_dir=run_dir):
         d = _read_json(trend_dir / ct / "length_trend.json")
         if not d:
             continue
@@ -420,21 +430,32 @@ def celltype_stage_pdui_matrix(trend_df: pd.DataFrame) -> pd.DataFrame:
     return matrix
 
 
-def harvest_fisher_hit_counts(sweep_root: Path, fdr: float = 0.05) -> pd.DataFrame:
-    """n significant PAS (qvalue < fdr) per celltype x stage-contrast, from Fisher pairwise TSVs.
+def harvest_fisher_hit_counts(
+    sweep_root: Path, fdr: float = 0.05, run_dir: Optional[Path] = None, strategy: str = "fisher"
+) -> pd.DataFrame:
+    """n significant PAS (qvalue < fdr) per celltype x stage-contrast, from diff-strategy pairwise TSVs.
+
+    Despite the name (kept for backward compat — this originally only read
+    Fisher output), *strategy* selects which ``diff/<celltype>/<strategy>/``
+    subdir + ``<strategy>_*_vs_*.tsv`` naming to read — e.g. ``mwu_percell``
+    reads the per-cell Mann-Whitney output instead. Both write a ``qvalue``
+    column via the same generic runner path (``ema/switch_test/runner.py``),
+    so no other logic needs to change.
 
     Only the ``qvalue`` column is read from each TSV (``usecols``) to keep
     memory bounded; these per-contrast tables are small compared to the raw
-    length tables.
+    length tables. Reads under *run_dir* when given, otherwise the default
+    cohort location.
     """
-    diff_dir = Path(sweep_root) / "runs" / "B1_cohort_full" / "B3_switch" / "diff"
+    base = Path(run_dir) if run_dir is not None else Path(sweep_root) / "runs" / "B1_cohort_full"
+    diff_dir = base / "B3_switch" / "diff"
     rows = []
-    for ct in _list_celltypes(sweep_root):
-        fisher_dir = diff_dir / ct / "fisher" / "differential"
+    for ct in _list_celltypes(sweep_root, run_dir=run_dir):
+        fisher_dir = diff_dir / ct / strategy / "differential"
         if not fisher_dir.exists():
             continue
-        for tsv in sorted(fisher_dir.glob("fisher_*_vs_*.tsv")):
-            contrast = tsv.stem.replace("fisher_", "")
+        for tsv in sorted(fisher_dir.glob(f"{strategy}_*_vs_*.tsv")):
+            contrast = tsv.stem.replace(f"{strategy}_", "")
             try:
                 df = pd.read_csv(tsv, sep="\t", usecols=["qvalue"])
             except (ValueError, pd.errors.EmptyDataError) as exc:
@@ -952,6 +973,314 @@ def analyze_sweep(
 
 
 # ---------------------------------------------------------------------------
+# 6. FILTER-EFFECT scenario comparison (named run dirs at the same tier,
+#    e.g. baseline/atlas_filter/annot_filter_3utr/ip_filter -- NOT a
+#    strategy/trim/cluster sweep axis nested under one B1_cohort_full run).
+# ---------------------------------------------------------------------------
+
+
+def harvest_filter_effect_pas_counts(scenario_dirs: dict) -> pd.DataFrame:
+    """Per scenario: n_PAS retained (annotatedpas.bed/pasbed.bed) + drop stats.
+
+    ``n_pas`` is read from ``annotatedpas.bed`` (falls back to ``pasbed.bed``)
+    -- the PAS list that actually reaches clustering/switch for that
+    scenario's own run. ``n_pas_dropped_vs_baseline`` / ``pct_dropped_vs_baseline``
+    are computed against the ``"baseline"`` key in *scenario_dirs*, which is
+    the one scenario expected to keep every PAS (see the module docstring's
+    caveat: ``atlas_mode=filter`` / ``ip_filter_mode=filter`` / ``annot_filter``
+    drop PAS from THAT scenario's own result list too, not only from
+    clustering -- so this delta doubles as "how many PAS this filter removes").
+    Also surfaces the per-filter drop stats ``ema run`` itself wrote
+    (``atlas_stats.json``, ``04_pas_gene_assignment/peak_filters_stats.json``)
+    when present, for the exact filter mechanism's own accounting.
+    """
+    rows = []
+    for name, d in scenario_dirs.items():
+        d = Path(d)
+        pas_path = d / "annotatedpas.bed"
+        if not pas_path.exists() or pas_path.stat().st_size == 0:
+            pas_path = d / "pasbed.bed"
+        row: dict = {"scenario": name, "n_pas": count_bed_lines(pas_path)}
+
+        atlas_paths = sorted(d.rglob("atlas_stats.json"))
+        if atlas_paths:
+            atlas = _read_json(atlas_paths[0])
+            row["atlas_match_rate"] = atlas.get("atlas_match_rate")
+            row["n_atlas_matched"] = atlas.get("n_atlas_matched")
+            row["n_atlas_unmatched"] = atlas.get("n_atlas_unmatched")
+
+        pf = _read_json(d / "04_pas_gene_assignment" / "peak_filters_stats.json")
+        if pf:
+            row["ip_flag_rate"] = pf.get("ip_flag_rate")
+            row["n_ip_flagged"] = pf.get("n_ip_flagged")
+            for strand in ("pos", "neg"):
+                sd = pf.get(strand) or {}
+                ann = sd.get("annotation") or {}
+                if ann:
+                    row[f"annot_filtered_{strand}"] = ann.get("filtered")
+                    row[f"annot_total_{strand}"] = ann.get("total")
+                ip = sd.get("internal_priming") or {}
+                if ip:
+                    row[f"ip_filtered_{strand}"] = ip.get("filtered")
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    if df.empty or "n_pas" not in df.columns:
+        return df
+    baseline_n = df.loc[df["scenario"] == "baseline", "n_pas"]
+    if not baseline_n.empty and baseline_n.iloc[0]:
+        base = baseline_n.iloc[0]
+        df["n_pas_dropped_vs_baseline"] = base - df["n_pas"]
+        df["pct_dropped_vs_baseline"] = ((base - df["n_pas"]) / base * 100).round(2)
+    return df.reset_index(drop=True)
+
+
+def harvest_filter_effect_clustering(scenario_dirs: dict) -> pd.DataFrame:
+    """Per scenario: mean/median n_clusters (+ n_cells) and GEX ARI/AMI summary."""
+    rows = []
+    for name, d in scenario_dirs.items():
+        d = Path(d)
+        row = {"scenario": name, **_branch_cluster_stats(d)}
+        conc = harvest_gex_concordance(d, run_dir=d)
+        gex_summary = summarize_gex_concordance(conc)
+        for k, v in gex_summary.items():
+            if isinstance(v, dict):
+                row[f"{k}_mean"] = v.get("mean")
+                row[f"{k}_median"] = v.get("median")
+            elif k != "n_gsm":
+                row[k] = v
+        row["n_gsm_concordance"] = gex_summary.get("n_gsm")
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def harvest_filter_effect_fisher(scenario_dirs: dict, fdr: float = 0.05, strategy: str = "fisher") -> pd.DataFrame:
+    """Per scenario x celltype x stage-contrast diff-strategy significant-hit counts."""
+    frames = []
+    for name, d in scenario_dirs.items():
+        d = Path(d)
+        df = harvest_fisher_hit_counts(d, fdr=fdr, run_dir=d, strategy=strategy)
+        if df.empty:
+            continue
+        df.insert(0, "scenario", name)
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def harvest_filter_effect_trend(scenario_dirs: dict) -> pd.DataFrame:
+    """Per scenario x celltype 3'UTR length-trend (slope/spearman/direction)."""
+    frames = []
+    for name, d in scenario_dirs.items():
+        d = Path(d)
+        df = harvest_switch_trends(d, run_dir=d)
+        if df.empty:
+            continue
+        df.insert(0, "scenario", name)
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def summarize_filter_effect_fisher(fisher_df: pd.DataFrame) -> pd.DataFrame:
+    """Roll up per-(scenario, celltype, contrast) Fisher hits to per-scenario totals."""
+    if fisher_df.empty:
+        return pd.DataFrame()
+    g = fisher_df.groupby("scenario").agg(
+        n_celltypes=("celltype", "nunique"),
+        total_tests=("n_tests", "sum"),
+        total_sig=("n_sig", "sum"),
+    ).reset_index()
+    g["mean_frac_sig"] = (g["total_sig"] / g["total_tests"].replace(0, np.nan)).round(4)
+    return g
+
+
+def write_filter_effect_markdown(summary: dict, output_path: Path) -> None:
+    """Human-readable filter-effect scenario-comparison report."""
+    lines = ["# Filter-effect scenario comparison\n"]
+    lines.append(
+        f"Scenarios: {', '.join(summary.get('scenarios', []))} "
+        f"(baseline = {summary.get('baseline')})\n"
+    )
+
+    lines.append("## 1. PAS retained for downstream (vs baseline)")
+    pas = summary.get("pas_counts") or []
+    if pas:
+        lines.append("| scenario | n_PAS | dropped vs baseline | % dropped |")
+        lines.append("|---|---|---|---|")
+        for r in pas:
+            lines.append(
+                f"| {r.get('scenario')} | {_fmt(r.get('n_pas'), ',')} "
+                f"| {_fmt(r.get('n_pas_dropped_vs_baseline'), ',')} "
+                f"| {_fmt(r.get('pct_dropped_vs_baseline'))}% |"
+            )
+    else:
+        lines.append("_no scenario runs found_")
+    lines.append("")
+
+    lines.append("## 2. Clustering")
+    clus = summary.get("clustering") or []
+    if clus:
+        lines.append("| scenario | n_datasets | n_cells_total | mean n_clusters | ARI (mean) | AMI (mean) |")
+        lines.append("|---|---|---|---|---|---|")
+        for r in clus:
+            ari_cols = [v for k, v in r.items() if k.startswith("ARI_") and k.endswith("_mean") and v is not None]
+            ami_cols = [v for k, v in r.items() if k.startswith("AMI_") and k.endswith("_mean") and v is not None]
+            ari = round(float(np.mean(ari_cols)), 4) if ari_cols else None
+            ami = round(float(np.mean(ami_cols)), 4) if ami_cols else None
+            lines.append(
+                f"| {r.get('scenario')} | {_fmt(r.get('n_datasets'))} "
+                f"| {_fmt(r.get('n_cells_total'), ',')} | {_fmt(r.get('n_clusters_mean'))} "
+                f"| {_fmt(ari)} | {_fmt(ami)} |"
+            )
+    else:
+        lines.append("_no clustering stats found_")
+    lines.append("")
+
+    lines.append(f"## 3. Differential APA ({summary.get('diff_strategy', 'fisher')} significant hits, FDR<0.05)")
+    fh = summary.get("fisher_summary") or []
+    if fh:
+        lines.append("| scenario | n_celltypes | total_tests | total_sig | mean frac sig |")
+        lines.append("|---|---|---|---|---|")
+        for r in fh:
+            lines.append(
+                f"| {r.get('scenario')} | {r.get('n_celltypes')} | {_fmt(r.get('total_tests'), ',')} "
+                f"| {_fmt(r.get('total_sig'), ',')} | {_fmt(r.get('mean_frac_sig'), '.4f')} |"
+            )
+    else:
+        lines.append("_no Fisher results found_")
+    lines.append("")
+
+    lines.append("## 4. 3'UTR shorten/lengthen")
+    tr = summary.get("trend_summary") or []
+    if tr:
+        lines.append("| scenario | n_celltypes | shortening | lengthening | flat/other | mean slope |")
+        lines.append("|---|---|---|---|---|---|")
+        for r in tr:
+            lines.append(
+                f"| {r.get('scenario')} | {r.get('n_celltypes')} | {r.get('n_shortening')} "
+                f"| {r.get('n_lengthening')} | {r.get('n_flat_or_other')} | {_fmt(r.get('slope_mean'), '.6f')} |"
+            )
+    else:
+        lines.append("_no trend results found_")
+    lines.append("")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines))
+
+
+def plot_filter_effect_summary(pas_df: pd.DataFrame, trend_df: pd.DataFrame, output_path: Path) -> None:
+    """Two-panel figure: PAS retained per scenario + mean PDUI-slope per scenario."""
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    ax = axes[0]
+    pas_valid = pas_df.dropna(subset=["n_pas"]) if not pas_df.empty and "n_pas" in pas_df.columns else pd.DataFrame()
+    if not pas_valid.empty:
+        ax.bar(pas_valid["scenario"], pas_valid["n_pas"])
+        ax.set_ylabel("n_PAS retained")
+        ax.set_title("PAS retained for downstream, by scenario")
+        ax.tick_params(axis="x", rotation=30)
+    else:
+        ax.axis("off")
+
+    ax = axes[1]
+    if not trend_df.empty and "slope" in trend_df.columns:
+        by_scenario = trend_df.groupby("scenario")["slope"].mean().dropna()
+        ax.bar(by_scenario.index, by_scenario.values)
+        ax.axhline(0, color="black", linewidth=0.8)
+        ax.set_ylabel("mean PDUI slope across cell types")
+        ax.set_title("3'UTR shorten(-)/lengthen(+) trend, by scenario")
+        ax.tick_params(axis="x", rotation=30)
+    else:
+        ax.axis("off")
+
+    fig.tight_layout()
+    _savefig(fig, output_path)
+
+
+def analyze_filter_effect(
+    scenario_dirs: dict,
+    out_dir: Path,
+    *,
+    baseline: str = "baseline",
+    fdr: float = 0.05,
+    diff_strategy: str = "fisher",
+) -> dict:
+    """Compare N named scenario run dirs (filter-effect experiment).
+
+    Unlike :func:`analyze_sweep` (which reads fixed sub-tiers under one
+    ``sweep_root/runs/``), this compares independent, named run directories
+    at the SAME level -- e.g. ``{"baseline": .../runs/baseline,
+    "atlas_filter": .../runs/atlas_filter, ...}`` -- on clustering,
+    differential APA, and 3'UTR length-trend, plus how many PAS each filter
+    removed from its own run's result list versus *baseline*.
+
+    Args:
+        scenario_dirs: ``{scenario_name: run_dir}``. Must include *baseline*
+            for the PAS-count delta to be computed.
+        out_dir: Output directory; ``tables/`` + ``figures/`` subdirs plus
+            ``filter_effect_summary.{json,md}`` written here.
+        baseline: Key in *scenario_dirs* treated as the "keeps everything"
+            reference scenario.
+        fdr: FDR threshold for Fisher significance counts.
+
+    Returns:
+        The filter-effect summary dict (also written to
+        ``filter_effect_summary.json``).
+    """
+    scenario_dirs = {k: Path(v) for k, v in scenario_dirs.items()}
+    out_dir = Path(out_dir)
+    tables_dir = out_dir / "tables"
+    figures_dir = out_dir / "figures"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    log.info("analyze_filter_effect: 1/4 PAS counts")
+    pas_df = harvest_filter_effect_pas_counts(scenario_dirs)
+    pas_df.to_csv(tables_dir / "filter_effect_pas_counts.csv", index=False)
+
+    log.info("analyze_filter_effect: 2/4 clustering + GEX concordance")
+    clus_df = harvest_filter_effect_clustering(scenario_dirs)
+    clus_df.to_csv(tables_dir / "filter_effect_clustering.csv", index=False)
+
+    log.info("analyze_filter_effect: 3/4 differential hits (strategy=%s)", diff_strategy)
+    fisher_df = harvest_filter_effect_fisher(scenario_dirs, fdr=fdr, strategy=diff_strategy)
+    fisher_df.to_csv(tables_dir / "filter_effect_fisher_hits.csv", index=False)
+    fisher_summary_df = summarize_filter_effect_fisher(fisher_df)
+    fisher_summary_df.to_csv(tables_dir / "filter_effect_fisher_summary.csv", index=False)
+
+    log.info("analyze_filter_effect: 4/4 3'UTR trend")
+    trend_df = harvest_filter_effect_trend(scenario_dirs)
+    trend_df.to_csv(tables_dir / "filter_effect_trend_by_celltype.csv", index=False)
+    trend_rows = []
+    for name in scenario_dirs:
+        sub = trend_df[trend_df["scenario"] == name] if not trend_df.empty else pd.DataFrame()
+        s = summarize_shortening_lengthening(sub.drop(columns=["scenario"], errors="ignore"))
+        s["scenario"] = name
+        trend_rows.append(s)
+    trend_summary_df = pd.DataFrame(trend_rows)
+    trend_summary_df.to_csv(tables_dir / "filter_effect_trend_summary.csv", index=False)
+
+    plot_filter_effect_summary(pas_df, trend_df, figures_dir / "filter_effect_summary")
+
+    summary = {
+        "scenario_dirs": {k: str(v) for k, v in scenario_dirs.items()},
+        "scenarios": list(scenario_dirs.keys()),
+        "baseline": baseline,
+        "diff_strategy": diff_strategy,
+        "pas_counts": pas_df.to_dict(orient="records"),
+        "clustering": clus_df.to_dict(orient="records"),
+        "fisher_summary": fisher_summary_df.to_dict(orient="records"),
+        "trend_summary": trend_summary_df.to_dict(orient="records"),
+    }
+    with open(out_dir / "filter_effect_summary.json", "w") as f:
+        json.dump(summary, f, indent=2, default=_json_default)
+
+    write_filter_effect_markdown(summary, out_dir / "filter_effect_summary.md")
+    log.info("analyze_filter_effect: done -> %s", out_dir)
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -961,10 +1290,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         prog="python -m ema.benchmark.sweep_analysis",
         description="Cumulative cross-experiment analysis over a finished PeakATail sweep.",
     )
-    parser.add_argument("sweep_root", type=Path, help="Root of the finished sweep (contains runs/)")
+    parser.add_argument(
+        "sweep_root", type=Path, nargs="?", default=None,
+        help="Root of the finished sweep (contains runs/). Not used with --scenario "
+             "(filter-effect mode) except as the default --out base.",
+    )
     parser.add_argument(
         "--out", type=Path, default=None,
-        help="Output directory (default: <sweep_root>/logs/cumulative_analysis)",
+        help="Output directory (default: <sweep_root>/logs/cumulative_analysis, or "
+             "./filter_effect_analysis in --scenario mode without --sweep-root)",
     )
     parser.add_argument("--fdr", type=float, default=0.05, help="FDR threshold for Fisher hit counts")
     parser.add_argument(
@@ -979,6 +1313,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--cutoffs", type=int, nargs="+", default=list(DEFAULT_CUTOFFS),
         help="Distance cutoffs (bp) for the strategy comparison table",
     )
+    parser.add_argument(
+        "--scenario", action="append", default=None, metavar="NAME=PATH",
+        help="FILTER-EFFECT mode: compare named scenario run dirs instead of a "
+             "sweep_root's grid/reannotate tiers. Repeatable, e.g. "
+             "--scenario baseline=<run_dir> --scenario atlas_filter=<run_dir> ... "
+             "Must include a 'baseline' scenario for the PAS-count delta.",
+    )
+    parser.add_argument(
+        "--filter-effect-baseline", default="baseline",
+        help="Scenario name (from --scenario) treated as the keep-everything reference",
+    )
+    parser.add_argument(
+        "--diff-strategy", default="fisher",
+        help="FILTER-EFFECT mode: diff/<celltype>/<strategy> subdir to harvest significant-hit "
+             "counts from (default 'fisher'; e.g. 'mwu_percell' for the per-cell Mann-Whitney "
+             "strategy that replaces pseudoreplicated fisher).",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug-level logging")
     args = parser.parse_args(argv)
 
@@ -987,6 +1338,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     warnings.filterwarnings("ignore")
+
+    if args.scenario:
+        scenario_dirs = {}
+        for spec in args.scenario:
+            if "=" not in spec:
+                parser.error(f"--scenario expects NAME=PATH, got: {spec!r}")
+            name, path = spec.split("=", 1)
+            scenario_dirs[name] = Path(path)
+        out_dir = args.out or (
+            (args.sweep_root / "logs" / "filter_effect_analysis")
+            if args.sweep_root else Path("filter_effect_analysis")
+        )
+        analyze_filter_effect(
+            scenario_dirs, out_dir, baseline=args.filter_effect_baseline, fdr=args.fdr,
+            diff_strategy=args.diff_strategy,
+        )
+        log.info("Filter-effect analysis complete: %s", out_dir / "filter_effect_summary.json")
+        return 0
+
+    if args.sweep_root is None:
+        parser.error("sweep_root is required unless --scenario is given")
 
     out_dir = args.out or (args.sweep_root / "logs" / "cumulative_analysis")
     analyze_sweep(

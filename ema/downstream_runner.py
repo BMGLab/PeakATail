@@ -70,6 +70,8 @@ def run_one_dataset_downstream(
     cluster_n_top_hvg: int = 2000,
     atlas_of: dict | None = None,
     ip_of: dict | None = None,
+    in_3utr_of: dict | None = None,
+    exclude_pas_ids: set | None = None,
 ) -> dict[str, Any]:
     """Run the downstream pipeline for a single dataset.
 
@@ -106,6 +108,17 @@ def run_one_dataset_downstream(
         ip_of: (D9) Optional ``{pas_id: internal_priming_bool}`` map, same
             plumbing as ``atlas_of``. ``{}`` (default) when the
             internal-priming filter is disabled.
+        in_3utr_of: Optional ``{pas_id: in_3utr_bool}`` map, same plumbing
+            as ``atlas_of``/``ip_of`` -- 3'UTR-region membership label.
+        exclude_pas_ids: Optional set of PAS ids to exclude from the
+            CLUSTERING matrix only. Applied AFTER ``write_pas_gene_
+            artifacts()`` has already written the full (unfiltered)
+            ``annotatedpas.bed`` for this dataset, so an excluded PAS still
+            gets its full labeled row there -- the exclusion narrows only
+            what ``preprocessing()``/``clustering()`` (and therefore every
+            downstream switch step) sees. ``None``/empty means no exclusion
+            (all annotated PAS are used for clustering, the existing
+            default behaviour, byte-for-byte).
 
     Returns:
         A stats dictionary with keys ``dataset_id``, ``final_cells``,
@@ -137,6 +150,7 @@ def run_one_dataset_downstream(
 
     # Late imports so the heavy stack is only loaded in the worker process.
     # NOTE: extract_per_dataset_mtx is defined in this same module (no ema.main import).
+    import numpy as np
     from ema.config import directory_config
     from ema.matrixfilter import filter_cb, make_dataframe, preprocessing
     from ema.annotate.annotate import annotate
@@ -227,7 +241,7 @@ def run_one_dataset_downstream(
     write_pas_gene_artifacts(
         Path(output_dir), ds_id,
         result.pas_ids, result.gene_ids,
-        atlas_of=atlas_of, ip_of=ip_of,
+        atlas_of=atlas_of, ip_of=ip_of, in_3utr_of=in_3utr_of,
     )
     write_annotated_matrix(
         Path(output_dir), ds_id,
@@ -238,16 +252,46 @@ def run_one_dataset_downstream(
         progress_client.advance(1)  # tick 4/6: annotate
 
     # ------------------------------------------------------------------ #
+    # 4b. FILTER-EFFECT clustering-only exclusion mask (all optional,
+    #     default off). annotatedpas.bed above already has the FULL,
+    #     unfiltered PAS set with labels -- this narrows ONLY what feeds
+    #     preprocessing()/clustering() (and therefore every downstream
+    #     switch step: GEX celltyping is per-CELL not per-PAS so it's
+    #     unaffected here, but diff/length run on the clustered h5ad).
+    # ------------------------------------------------------------------ #
+    n_kept_in_results = int(len(result.pas_ids))
+    if exclude_pas_ids:
+        # result.pas_ids are numeric (MatrixMarket row ids, numpy.int64) but
+        # atlas_of/ip_of/in_3utr_of/exclude_pas_ids are keyed by the BED
+        # column-4 STRING pas_id -- same str(p) bridge write_pas_gene_
+        # artifacts() uses a few lines above for its own pas_id lookup.
+        keep_mask = np.array([str(pid) not in exclude_pas_ids for pid in result.pas_ids])
+        cluster_sparse = result.sparse_matrix.tocsr()[keep_mask, :]
+        cluster_pas_ids = result.pas_ids[keep_mask]
+        cluster_gene_ids = result.gene_ids[keep_mask]
+    else:
+        cluster_sparse = result.sparse_matrix
+        cluster_pas_ids = result.pas_ids
+        cluster_gene_ids = result.gene_ids
+    n_used_for_clustering = int(len(cluster_pas_ids))
+    if exclude_pas_ids:
+        log.info(
+            "%s clustering-exclusion mask: %d -> %d PAS (%d excluded)",
+            prefix, n_kept_in_results, n_used_for_clustering,
+            n_kept_in_results - n_used_for_clustering,
+        )
+
+    # ------------------------------------------------------------------ #
     # 5. Preprocess (filter cells/PAS)                                    #
     # ------------------------------------------------------------------ #
     log.info("%s preprocessing", prefix)
     adata = preprocessing(
-        sparse_matrix=result.sparse_matrix,
-        pas_ids=result.pas_ids,
+        sparse_matrix=cluster_sparse,
+        pas_ids=cluster_pas_ids,
         collist=collist,
         min_cells=filter_min_cells,
         min_genes=filter_min_genes,
-        gene_ids=result.gene_ids,
+        gene_ids=cluster_gene_ids,
     )
 
     # Persist the post-filter AnnData snapshot (pre-clustering).
@@ -293,6 +337,9 @@ def run_one_dataset_downstream(
         "dataset_id": ds_id,
         "final_cells": int(adata.n_obs),
         "final_pas": int(adata.n_vars),
+        "n_kept_in_results": n_kept_in_results,
+        "n_used_for_clustering": n_used_for_clustering,
+        "n_excluded_for_clustering": n_kept_in_results - n_used_for_clustering,
     }
     with open(cluster_h5ad.parent / "clustering_stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
@@ -313,6 +360,11 @@ def run_one_dataset_downstream(
         "annotated": {
             "annotated_pas": int(len(result.pas_ids)),
             "cells": int(len(result.collist)),
+        },
+        "clustering_exclusion": {
+            "n_kept_in_results": n_kept_in_results,
+            "n_used_for_clustering": n_used_for_clustering,
+            "n_excluded_for_clustering": n_kept_in_results - n_used_for_clustering,
         },
         "preprocessing": {
             "final_cells": int(adata.n_obs),

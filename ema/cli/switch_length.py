@@ -60,6 +60,13 @@ def _list_strategies_callback(ctx, param, value):
               help="Pseudocount added to counts before PDUI/entropy computation. "
                    "Default 0.0 (original behaviour). Use 1.0 to avoid NaN on "
                    "zero-count cells.")
+@click.option("--utr-unmatched", "utr_unmatched",
+              type=click.Choice(["drop", "gene"]),
+              default=DEFAULTS["utr-unmatched"], show_default=True,
+              help="How to handle PAS that overlap no annotated UTR under "
+                   "--isoform-agg=per_isoform. 'gene' (default) KEEPS them via a "
+                   "gene-level fallback (UTR-agnostic); 'drop' restores the old "
+                   "drop-if-no-UTR behavior.")
 @click.pass_context
 def length(ctx: click.Context, **kwargs) -> None:
     """3'UTR shortening / lengthening quantification (PDUI variants)."""
@@ -116,6 +123,7 @@ def length(ctx: click.Context, **kwargs) -> None:
                 isoform_collapse=kwargs["isoform_collapse"],
                 threads=kwargs["threads"],
                 pseudocount=kwargs["pdui_pseudocount"],
+                utr_unmatched=kwargs["utr_unmatched"],
                 progress_client=_pdui_client,
             )
 

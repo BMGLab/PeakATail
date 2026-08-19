@@ -39,22 +39,24 @@ _PASBED_COLUMNS = ["chrom", "start", "end", "pas_id", "score", "strand"]
 
 #: Trailing columns ``annotatedpas.bed`` may carry beyond BED6, in the fixed
 #: order ``ema/outputs.py::write_pas_gene_artifacts`` appends them. D9 added
-#: the last three (atlas-snap / internal-priming become annotate-not-drop by
+#: three (atlas-snap / internal-priming become annotate-not-drop by
 #: default; see ``ema/datasets/atlas_snap.py`` / ``ema/experimental/
-#: internal_priming.py``) -- always present together with gene_id (never
-#: gene_id alone anymore going forward), but kept as separate optional
-#: columns here so OLD runs' 7-column (BED6 + gene_id) annotatedpas.bed
-#: files still parse correctly.
-_PASBED_EXTRA_COLUMNS = ["gene_id", "atlas_match", "atlas_distance_bp", "internal_priming"]
+#: internal_priming.py``); the FILTER-EFFECT reannotate mask feature added
+#: the fourth (``in_3utr`` -- 3'UTR-region membership label, see
+#: ``ema.experimental.peak_filters.label_pas_in_bed``) -- always present
+#: together with gene_id (never gene_id alone anymore going forward), but
+#: kept as separate optional columns here so OLD runs' narrower
+#: annotatedpas.bed files (7, 8, 9, or 10 columns) still parse correctly.
+_PASBED_EXTRA_COLUMNS = ["gene_id", "atlas_match", "atlas_distance_bp", "internal_priming", "in_3utr"]
 
 
 def _read_pasbed_like(path: Path) -> pd.DataFrame:
     """Read a BED6(+extra) file with no on-disk header.
 
     Plain ``pasbed.bed`` is exactly BED6. ``annotatedpas.bed`` extends it
-    with up to 4 trailing columns (see :data:`_PASBED_EXTRA_COLUMNS`) --
-    older runs may only have ``gene_id`` (7 cols), newer runs have all 4
-    (10 cols). Naming columns positionally like this (instead of a fixed
+    with up to 5 trailing columns (see :data:`_PASBED_EXTRA_COLUMNS`) --
+    older runs may only have ``gene_id`` (7 cols), newer runs have all 5
+    (11 cols). Naming columns positionally like this (instead of a fixed
     ``names=_PASBED_COLUMNS`` as before) matters: pandas silently
     misinterprets extra un-named trailing columns as an index level when
     the file has MORE columns than a fixed ``names=`` list, corrupting

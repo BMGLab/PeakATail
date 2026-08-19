@@ -43,10 +43,37 @@ def _list_strategies_callback(ctx, param, value):
               help="Per-dataset clusters.h5ad. Repeat for multi-dataset.")
 @click.option("--pasbed", type=click.Path(exists=True, dir_okay=False),
               default=None, help="Optional PAS BED for context.")
-@click.option("--gtf", type=click.Path(exists=True, dir_okay=False), default=None)
+@click.option("--gtf", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Required when --isoform-agg=within_utr/between_utr "
+                   "(needed to resolve each PAS's 3'UTR isoform).")
 @click.option("--cluster-pairs", "cluster_pairs", type=str, default=None,
-              help="`c1,c2;c3,c4` — limit to specific pairs.")
-@click.option("--cluster-key", "cluster_key", type=str, default="leiden")
+              help="`c1,c2;c3,c4` — limit to specific pairwise contrasts.")
+@click.option("--cluster-key", "cluster_key", type=str, default="leiden",
+              help="obs column defining the two (or more) groups to contrast "
+                   "-- ANY column works, not just clusters: e.g. 'stage', "
+                   "'celltype', 'leiden'. Combine with --cluster-pairs to "
+                   "pick specific pairs (e.g. --cluster-key stage "
+                   "--cluster-pairs E14,E18).")
+@click.option("--isoform-agg", "isoform_agg",
+              type=click.Choice(["per_gene", "within_utr", "between_utr", "per_isoform"]),
+              default=DEFAULTS["isoform-agg"], show_default=True,
+              help="Scope of each differential test's background/denominator "
+                   "(applies to all strategies: fisher/nb_multi/nb_pairwise/"
+                   "mwu_percell). per_gene: each PAS vs the rest of its GENE "
+                   "(unchanged/default). within_utr: each PAS vs the other "
+                   "PAS sharing its 3'UTR isoform -- tandem-UTR APA "
+                   "('per_isoform' is a legacy alias). between_utr: collapse "
+                   "PAS to 3'UTR-level counts and test differential 3'UTR "
+                   "PREFERENCE between groups (genes with >=2 UTRs only). "
+                   "Requires --gtf for within_utr/between_utr.")
+@click.option("--utr-unmatched", "utr_unmatched",
+              type=click.Choice(["drop", "gene"]),
+              default=DEFAULTS["utr-unmatched"], show_default=True,
+              help="How to handle PAS that overlap no annotated UTR under "
+                   "--isoform-agg=within_utr/between_utr. 'gene' (default) "
+                   "KEEPS them via a gene-level fallback bucket (UTR-agnostic, "
+                   "still tested/counted at the gene level); 'drop' omits "
+                   "them entirely.")
 @click.option("--marker-top-n", "marker_top_n", type=int, default=DEFAULTS["marker-top-n"])
 @click.option("--marker-method", "marker_method", type=str, default=DEFAULTS["marker-method"])
 @click.option("--strategy", "-s", "strategy", type=str, default="fisher",
@@ -119,6 +146,8 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 threads=kwargs["threads"],
                 per_worker_mb=kwargs["per_worker_mb"],
                 min_cells_per_group=kwargs["min_cells_per_group"],
+                isoform_agg=kwargs["isoform_agg"],
+                utr_unmatched=kwargs["utr_unmatched"],
                 progress_manager=pm,
             )
             render_switch_diff_outputs(
