@@ -206,7 +206,7 @@ def test_annot_filter_with_gtf_present_validates_ok(tmp_path):
 # ---------------------------------------------------------------------------
 @pytest.mark.xfail(
     reason=(
-        "KNOWN-RED DRIFT, tracked in manuscript/10_caller_fix_plan.md §3 Stage 0d (measured 2026-08-19 on develop c08ca23). "
+        "KNOWN-RED DRIFT, tracked in the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
         "the peak_filters stats JSON stopped carrying per-strand counters: "
         "stats['pos']['filtered'] -> KeyError, and the log line reports "
         "pos(total=None filtered=None), so _apply_pas_filters is not counting "
@@ -268,7 +268,7 @@ def test_ip_filter_removes_internally_primed_peak_keeps_clean_one(tmp_path):
 # ---------------------------------------------------------------------------
 @pytest.mark.xfail(
     reason=(
-        "KNOWN-RED DRIFT, tracked in manuscript/10_caller_fix_plan.md §3 Stage 0d (measured 2026-08-19 on develop c08ca23). "
+        "KNOWN-RED DRIFT, tracked in the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
         "the peak_filters stats JSON stopped carrying per-strand counters: "
         "stats['pos']['filtered'] -> KeyError, and the log line reports "
         "pos(total=None filtered=None), so _apply_pas_filters is not counting "

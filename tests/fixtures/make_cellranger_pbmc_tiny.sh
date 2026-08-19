@@ -12,6 +12,7 @@ OUT="${2:-tests/fixtures/cellranger_pbmc_tiny.bam}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # 20 kb of a gene-dense, well-expressed locus; 10% subsample -> ~2 k reads.
+[ -f "$BAM.bai" ] || samtools index "$BAM"   # region fetch below requires an index
 samtools view -b -o "$TMP/slice.bam" "$BAM" 1:155230000-155250000
 samtools view -b -s 0.10 -o "$TMP/sub.bam" "$TMP/slice.bam"
 

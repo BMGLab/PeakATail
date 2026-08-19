@@ -58,6 +58,11 @@ dependencies = [
 test = [
     "pytest>=8",
     "pytest-timeout>=2.4",
+    # Optional at runtime (only --ip-filter needs it), but tests/test_ip_annot_filter_d6.py
+    # and tests/test_reannotate_cmd.py `pytest.importorskip("pyfaidx")`.  Without it CI
+    # silently skips the internal-priming seam that the local dev box exercises, and the
+    # two suites stop being comparable.
+    "pyfaidx>=0.7",
 ]
 dev = [
     "pytest>=8",

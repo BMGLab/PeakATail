@@ -1,6 +1,6 @@
 """Composite CB ``"<sample_id>_<barcode>"`` must be a BIJECTION.
 
-Regression tests for Stage 0d/0e of ``manuscript/10_caller_fix_plan.md``.
+Regression tests for Stage 0d/0e of ``the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)
 
 Two independent defects made the mapping non-injective, and both merge cells
 that belong to *different* samples into a single count-matrix column:

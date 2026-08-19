@@ -355,7 +355,7 @@ def test_monolithic_pipeline_and_tile_paths_agree_on_pas_coordinates(
 @pytest.mark.xfail(
     reason=(
         "KNOWN-RED, found by this fixture on 2026-08-20 and tracked in "
-        "manuscript/10_caller_fix_plan.md §5 R5. peackcalling.py's end-of-BAM "
+        "the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
         "flush (the `if signal:` / `elif len(peak.peak_list)` block after the "
         "read loop) writes `strand`, which is the 4th element of read_check's "
         "tuple from the LAST read -- and every skipped read sets it to 0 via "

@@ -86,7 +86,7 @@ def test_switch_length_isoform_collapse_choices():
 
 @pytest.mark.xfail(
     reason=(
-        "KNOWN-RED DRIFT, tracked in manuscript/10_caller_fix_plan.md §3 Stage 0d (measured 2026-08-19 on develop c08ca23). "
+        "KNOWN-RED DRIFT, tracked in the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
         "ema/switch_test/runner.py:1168 now reads `adata.var.columns` when it "
         "synthesises the per_gene isoform map (the rank_pas_by_genomic_position "
         "rework that replaced the (gene, '_gene_', 0, 1, 1) sentinel), but this "

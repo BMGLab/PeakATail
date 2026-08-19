@@ -104,7 +104,7 @@ class TestRunOneDatasetDownstream:
 
     @pytest.mark.xfail(
         reason=(
-            "KNOWN-RED DRIFT, tracked in manuscript/10_caller_fix_plan.md §3 Stage 0d (measured 2026-08-19 on develop c08ca23). "
+            "KNOWN-RED DRIFT, tracked in the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
             "run_one_dataset_downstream() no longer accepts `per_dataset_dir` "
             "(TypeError: unexpected keyword argument); the signature changed under "
             "these tests and neither side was updated. Fixing it means deciding "
@@ -132,7 +132,7 @@ class TestRunOneDatasetDownstream:
 
     @pytest.mark.xfail(
         reason=(
-            "KNOWN-RED DRIFT, tracked in manuscript/10_caller_fix_plan.md §3 Stage 0d (measured 2026-08-19 on develop c08ca23). "
+            "KNOWN-RED DRIFT, tracked in the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
             "run_one_dataset_downstream() no longer accepts `per_dataset_dir` "
             "(TypeError: unexpected keyword argument); the signature changed under "
             "these tests and neither side was updated. Fixing it means deciding "
