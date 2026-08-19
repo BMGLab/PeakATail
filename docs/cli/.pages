@@ -1,6 +1,7 @@
 nav:
   - index.md
   - run.md
+  - reannotate.md
   - switch-diff.md
   - switch-length.md
   - switch-match.md
