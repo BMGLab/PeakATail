@@ -251,11 +251,83 @@ class TestProportionStrategy:
         assert (abs(non_nan - 1.0) < 1e-9).all(), \
             f"Per-isoform proportions don't sum to 1.0"
 
-    def test_zero_total_cell_nan_proportion(self, strategy):
-        """cell2 has 0 counts for GENE_B → proportions should be NaN."""
+    def test_zero_total_cell_omitted_not_padded(self, strategy):
+        """cell2 has 0 counts for GENE_B -> the (gene, cell) pair is OMITTED
+        entirely, not padded with a synthetic 1/n_PAS proportion or a NaN
+        placeholder row. This is the core fix: previously the writer
+        emitted one row per PAS with proportion=1/n_PAS (when pseudocount>0)
+        or NaN (when pseudocount==0) for every zero-coverage (gene, cell)
+        pair -- ~98% of rows on production data -- which flooded every
+        downstream mean/trend with a constant. Now those rows simply don't
+        exist in the output.
+        """
         df = strategy.compute(COUNTS, PAS_MAP, aggregation="per_isoform")
-        gene_b_c2 = df[(df["gene_id"] == "GENE_B") & (df["cell"] == "cell2")]["proportion"]
-        assert gene_b_c2.isna().all()
+        gene_b_c2 = df[(df["gene_id"] == "GENE_B") & (df["cell"] == "cell2")]
+        assert len(gene_b_c2) == 0, (
+            f"expected zero-coverage (GENE_B, cell2) to be omitted, got "
+            f"{len(gene_b_c2)} row(s):\n{gene_b_c2}"
+        )
+        # Global invariant: after the fix, `proportion` should never be NaN
+        # at all -- there's no longer any code path that leaves a NaN row
+        # in the output (they're dropped instead).
+        assert not df["proportion"].isna().any()
+
+    def test_zero_total_cell_omitted_even_with_pseudocount(self, strategy):
+        """This is the ACTUAL production bug: real server runs pass
+        --pdui-pseudocount 1.0 (see experiments/laughney/main.nf and
+        scripts/b3_stage_celltype_switch.py). With the old writer, adding
+        pseudocount=1.0 uniformly to an all-zero-reads PAS set made every
+        PAS's post-pseudocount count equal (1.0), so `sub / col_totals` ==
+        `1/n_PAS` for EVERY zero-coverage (gene, cell) pair -- a fabricated
+        uniform prior, not a measurement. The fix must omit these rows
+        regardless of pseudocount, not just when pseudocount==0.
+        """
+        df = strategy.compute(
+            COUNTS, PAS_MAP, aggregation="per_isoform", pseudocount=1.0,
+        )
+        gene_b_c2 = df[(df["gene_id"] == "GENE_B") & (df["cell"] == "cell2")]
+        assert len(gene_b_c2) == 0, (
+            "zero-coverage (gene, cell) pairs must be omitted even when "
+            "pseudocount > 0 -- otherwise pseudocount fabricates a uniform "
+            f"1/n_PAS proportion. Got {len(gene_b_c2)} row(s):\n{gene_b_c2}"
+        )
+        assert (df["reads_at_pas"] >= 0).all()
+
+    def test_covered_cells_still_present_with_pseudocount(self, strategy):
+        """Sanity: pseudocount doesn't accidentally drop COVERED cells too."""
+        df = strategy.compute(
+            COUNTS, PAS_MAP, aggregation="per_isoform", pseudocount=1.0,
+        )
+        gene_a_c1 = df[(df["gene_id"] == "GENE_A") & (df["cell"] == "cell1")]
+        assert len(gene_a_c1) == 2  # PAS 1, PAS 2 both present
+
+    def test_total_reads_gene_is_real_read_sum_not_pas_count(self, strategy):
+        """total_reads_gene must be the TRUE summed read count for the gene
+        in that cell, even with pseudocount > 0 -- never n_PAS * pseudocount
+        (which is what the old writer produced on padded rows, making the
+        column unusable to distinguish "8 of 10 reads" from "a fabricated
+        1/n_PAS row").
+        """
+        df = strategy.compute(
+            COUNTS, PAS_MAP, aggregation="per_gene", pseudocount=1.0,
+        )
+        # GENE_B, cell1: PAS3=6, PAS4=2, PAS5=2 -> total_reads_gene == 10
+        g = df[(df["gene_id"] == "GENE_B") & (df["cell"] == "cell1")]
+        assert (g["total_reads_gene"] == 10.0).all()
+        # GENE_A, cell3: PAS1=5, PAS2=5 -> total_reads_gene == 10
+        g2 = df[(df["gene_id"] == "GENE_A") & (df["cell"] == "cell3")]
+        assert (g2["total_reads_gene"] == 10.0).all()
+
+    def test_reads_at_pas_never_includes_pseudocount(self, strategy):
+        """reads_at_pas is raw evidence and must never be shifted by
+        pseudocount (a user auditing "8 of 10 reads" must see the real 8,
+        not 9)."""
+        df = strategy.compute(
+            COUNTS, PAS_MAP, aggregation="per_gene", pseudocount=1.0,
+        )
+        row = df[(df["gene_id"] == "GENE_A") & (df["cell"] == "cell1")
+                 & (df["pas_id"] == 1)]
+        assert (row["reads_at_pas"] == 10.0).all()
 
     def test_proportion_dtype(self, strategy):
         df = strategy.compute(COUNTS, PAS_MAP)

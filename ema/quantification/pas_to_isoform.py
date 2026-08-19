@@ -32,6 +32,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 
@@ -182,6 +183,79 @@ def _compute_transcript_pos(row: Any, exon_index: dict) -> int:
 # ---------------------------------------------------------------------------
 # Rank assignment
 # ---------------------------------------------------------------------------
+
+def rank_pas_by_genomic_position(
+    pas_gene_strand: pd.DataFrame,
+) -> pd.DataFrame:
+    """Assign a strand-aware, proximal(1)->distal(N) rank to each PAS within
+    its gene, from raw genomic coordinates alone (no transcript/UTR model).
+
+    This is the gene-level counterpart to :func:`_assign_ranks` (which ranks
+    from ``transcript_pos``, itself already strand-aware, for the
+    bedtools/UTR-intersection path). It exists for the ``per_gene``
+    aggregation path, which only has a PAS's genomic ``start`` + ``strand``
+    (from ``pasbed.bed``) to work with — no per-transcript UTR geometry.
+
+    NOTE on rank convention: this function is 1-based (proximal PAS -> rank
+    1), unlike :func:`_assign_ranks` which is 0-based (proximal -> rank 0).
+    Downstream consumers only ever compare ranks *within* a gene (min ==
+    proximal, max == distal), so the two conventions never collide — each is
+    only ever populated by its own aggregation path (``per_gene`` vs
+    ``per_isoform``) within a single ``ema switch length`` invocation.
+
+    Args:
+        pas_gene_strand: DataFrame with columns ``pas_id``, ``gene_id``,
+            ``start`` (genomic coordinate; may be ``NaN``/``pd.NA`` for PAS
+            with unknown coordinates) and ``strand`` (``"+"``/``"-"``; may
+            be missing alongside a missing ``start``).
+
+    Returns:
+        A copy of the input with two additional columns:
+
+            ``rank``  — 1-based proximal(1)->distal(N) rank within
+                        ``gene_id``. For ``"+"`` strand, distal = the
+                        HIGHER genomic coordinate (downstream in the
+                        direction of transcription); for ``"-"`` strand,
+                        distal = the LOWER genomic coordinate. PAS with an
+                        unknown coordinate sort last within their gene
+                        (stable tiebreak on input row order) rather than
+                        raising, so a run with partial pasbed coverage
+                        degrades gracefully instead of failing outright.
+            ``total`` — number of PAS ranked for that gene (== the gene's
+                        max rank).
+    """
+    df = pas_gene_strand.reset_index(drop=True).copy()
+    if df.empty:
+        df["rank"] = pd.Series(dtype="int64")
+        df["total"] = pd.Series(dtype="int64")
+        return df
+
+    start = pd.to_numeric(df["start"], errors="coerce")
+    has_coord = start.notna().to_numpy(dtype=bool)
+    # Stringify defensively: a raw `==` against a column that may contain
+    # `pd.NA` (nullable/object dtype) can return `pd.NA` itself (Kleene
+    # logic) instead of a plain bool, which would then poison the `&` below.
+    # astype(str) turns any NA into the literal "nan"/"<NA>" string, which
+    # trivially fails the "-" comparison — never a false positive.
+    strand_is_minus = df["strand"].astype(str).to_numpy() == "-"
+    is_minus = has_coord & strand_is_minus
+    # '-' strand: distal = lower coordinate -> negate so ascending sort still
+    # puts proximal (higher coordinate) first.
+    sort_key = np.where(is_minus, -start.to_numpy(dtype="float64"),
+                         start.to_numpy(dtype="float64"))
+    # PAS without a known coordinate sort last within their gene (+inf),
+    # with the ORIGINAL scan order as the tiebreak so the result stays
+    # deterministic.
+    sort_key = np.where(has_coord, sort_key, np.inf)
+
+    df["_sort_key"] = sort_key
+    df["_orig_order"] = np.arange(len(df))
+    df = df.sort_values(["gene_id", "_sort_key", "_orig_order"], kind="mergesort")
+    df["rank"] = df.groupby("gene_id").cumcount() + 1
+    df["total"] = df.groupby("gene_id")["pas_id"].transform("count")
+    df = df.drop(columns=["_sort_key", "_orig_order"])
+    return df.reset_index(drop=True)
+
 
 def _assign_ranks(df: pd.DataFrame) -> pd.DataFrame:
     """Assign proximal-to-distal ranks per transcript.
