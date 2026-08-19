@@ -205,8 +205,8 @@ process GEX_CELLTYPE {
 
 // 1.3 combine per-GSM labelled h5ads into per-CELLTYPE, stage-labelled h5ads.
 //     A complete pasbed.bed (from annotatedpas.bed — the incomplete root pasbed
-//     has only ~5.8k of ~30k PAS) is placed as a sibling so switch length/diff
-//     resolve full coords by walking up from each combined h5ad.
+//     has only ~5.8k of ~30k PAS) is emitted alongside the combined h5ads and
+//     passed to switch length/diff explicitly as --pasbed.
 process SWITCH_COMBINE {
     tag 'switch-combine'
     cpus 8
@@ -253,8 +253,11 @@ process SWITCH_CELLTYPE {
     script:
     def sl  = h5.baseName
     def out = "${cohort}/B3_switch"
-    // pb (the complete pasbed) is STAGED next to h5 in this work dir, so diff reads
-    // it via --pasbed and length resolves it by walking up from the h5ad sibling.
+    // pb (the complete pasbed) is STAGED next to h5 in this work dir and passed
+    // EXPLICITLY via --pasbed to both diff and length. length no longer relies on
+    // the directory walk-up: PAS strand is what defines proximal vs distal, and
+    // without it the rank silently degraded to input order (a plus-strand
+    // convention that inverted every minus-strand gene). It now aborts instead.
     // Each analysis is fault-tolerant: a failing strategy on one cell type must not
     // drop the others (WARN is visible in the log, not silently swallowed).
     """
@@ -276,7 +279,7 @@ process SWITCH_CELLTYPE {
         || echo "WARN diff/nb_multi failed for ${sl}"
     # length — PDUI (classic) + full usage vector (proportion) + entropy (shannon)
     for S in classic proportion shannon; do
-      ${params.ema} switch length -i ${h5} --cluster-key stage --strategy \$S \
+      ${params.ema} switch length -i ${h5} --pasbed ${pb} --cluster-key stage --strategy \$S \
           --pdui-pseudocount 1.0 --threads ${task.cpus} --no-progress --no-plots \
           -o ${out}/length/${sl}/\$S || echo "WARN length/\$S failed for ${sl}"
     done
@@ -294,8 +297,8 @@ process SWITCH_CELLTYPE {
 //      -resume does NOT re-run the working per_gene switch. per_isoform maps PAS
 //      to isoform 3'UTRs; --utr-unmatched gene KEEPS PAS that overlap no annotated
 //      UTR (assigned to their gene) instead of dropping them, and a PAS overlapping
-//      multiple UTRs maps to all of them. length auto-resolves the staged pasbed by
-//      walking up from the h5ad; per_isoform additionally needs --gtf.
+//      multiple UTRs maps to all of them. The staged pasbed is passed explicitly via
+//      --pasbed (strand is what orders proximal->distal); per_isoform also needs --gtf.
 process SWITCH_CELLTYPE_UTR {
     tag { h5.baseName }
     cpus 6
@@ -310,7 +313,7 @@ process SWITCH_CELLTYPE_UTR {
     export TMPDIR=${params.tmpbase}/\$\$ && mkdir -p \$TMPDIR
     # per_isoform (UTR-level) length — classic PDUI + proportion + shannon, keep-unmatched
     for S in classic proportion shannon; do
-      ${params.ema} switch length -i ${h5} --gtf ${params.gtf} \
+      ${params.ema} switch length -i ${h5} --pasbed ${pb} --gtf ${params.gtf} \
           --cluster-key stage --strategy \$S --isoform-agg per_isoform --utr-unmatched gene \
           --pdui-pseudocount 1.0 --threads ${task.cpus} --no-progress --no-plots \
           -o ${out}/length_per_isoform/${sl}/\$S || echo "WARN length_per_isoform/\$S failed for ${sl}"
