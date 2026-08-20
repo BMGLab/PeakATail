@@ -1,0 +1,83 @@
+{% set name = "peakatail" %}
+{% set version = "0.2.0" %}
+
+# Bioconda recipe skeleton for PeakATail.
+#
+# This targets the PyPI sdist and is intended to be submitted to
+# bioconda-recipes AFTER the first PyPI release exists. Before submitting:
+#   1. Replace the sha256 below with the real digest of the sdist, e.g.
+#        curl -sL <sdist-url> | sha256sum
+#      (bioconda's `bioconda-utils update` / the linter will flag a wrong one).
+#   2. Bump {% set version %} in lockstep with pyproject.toml.
+# Conda package names differ from PyPI for a few deps -- the mapping used here:
+#   igraph -> python-igraph, PyYAML -> pyyaml, kaleido -> python-kaleido,
+#   matplotlib -> matplotlib-base. bedtools is a runtime tool dep for pybedtools.
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  url: https://pypi.io/packages/source/{{ name[0] }}/{{ name }}/{{ name }}-{{ version }}.tar.gz
+  sha256: 0000000000000000000000000000000000000000000000000000000000000000  # TODO: real sdist digest before submission
+
+build:
+  number: 0
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - ema = ema.cli:main
+
+requirements:
+  host:
+    - python >=3.11
+    - pip
+    - setuptools >=68
+    - wheel
+  run:
+    - python >=3.11
+    - pysam >=0.22
+    - anndata >=0.10
+    - scanpy >=1.10
+    - pandas >=2.1
+    - scipy >=1.11
+    - numpy >=1.26
+    - python-igraph >=0.11
+    - leidenalg >=0.10
+    - louvain >=0.8.0
+    - pybedtools >=0.10
+    - bedtools
+    - psutil >=5.9
+    - pyyaml >=6.0
+    - joblib >=1.3
+    - statsmodels >=0.14
+    - sortedcontainers >=2.4
+    - pyarrow >=15.0
+    - tqdm >=4.66
+    - click >=8.1
+    - rich >=13.7
+    - questionary >=2.0
+    - matplotlib-base >=3.8
+    - seaborn >=0.13
+    - plotly >=5.18
+    - python-kaleido >=0.2.1
+    - upsetplot >=0.9
+
+test:
+  imports:
+    - ema
+  commands:
+    - ema --help
+
+about:
+  home: https://github.com/BMGLab/PeakATail
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE
+  summary: "PeakATail -- single-cell poly(A) site detection and APA analysis"
+  description: "Single-cell poly(A) site detection and alternative polyadenylation (APA) analysis from scRNA-seq BAM files."
+  dev_url: https://github.com/BMGLab/PeakATail
+
+extra:
+  recipe-maintainers:
+    - BMGLab
