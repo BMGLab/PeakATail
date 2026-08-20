@@ -159,10 +159,14 @@ All commands are accessed through the `ema` entry point installed by `pip instal
 | Command | Description | Docs |
 |---|---|---|
 | `ema run` | Run the full pipeline: peak calling, annotation, clustering | [cli/run](https://bmglab.github.io/PeakATail/cli/run/) |
-| `ema switch diff` | Differential APA test across cluster pairs (Fisher / NB regression) | [cli/switch/diff](https://bmglab.github.io/PeakATail/cli/switch/diff/) |
-| `ema switch length` | 3'UTR shortening/lengthening quantification (PDUI variants) | [cli/switch/length](https://bmglab.github.io/PeakATail/cli/switch/length/) |
-| `ema switch match` | Cross-dataset cluster matching | [cli/switch/match](https://bmglab.github.io/PeakATail/cli/switch/match/) |
-| `ema switch geneview` | Gene-track visualisation: per-cluster PAS coverage and proportions | [cli/switch/geneview](https://bmglab.github.io/PeakATail/cli/switch/geneview/) |
+| `ema reannotate` | Branch a finished run into a new trim/filter/clustering variant without re-peak-calling | [cli/reannotate](https://bmglab.github.io/PeakATail/cli/reannotate/) |
+| `ema switch diff` | Differential APA test across cluster pairs (Fisher / NB regression) | [cli/switch-diff](https://bmglab.github.io/PeakATail/cli/switch-diff/) |
+| `ema switch length` | 3'UTR shortening/lengthening quantification (PDUI variants) | [cli/switch-length](https://bmglab.github.io/PeakATail/cli/switch-length/) |
+| `ema switch trend` | Ordered-covariate (e.g. stage-progression) APA-length trend: slope + Spearman + direction | [cli](https://bmglab.github.io/PeakATail/cli/) |
+| `ema switch combine` | Stitch stage/celltype-labelled `clusters.h5ad` files into one grouped h5ad for cross-group testing | [cli](https://bmglab.github.io/PeakATail/cli/) |
+| `ema switch match` | Cross-dataset cluster matching | [cli/switch-match](https://bmglab.github.io/PeakATail/cli/switch-match/) |
+| `ema switch geneview` | Gene-track visualisation: per-cluster PAS coverage and proportions | [cli/switch-geneview](https://bmglab.github.io/PeakATail/cli/switch-geneview/) |
+| `ema collapse` | Pool `samtools merge` RG-suffixed run tags back into per-library cells | [cli](https://bmglab.github.io/PeakATail/cli/) |
 | `ema merge` | Merge multiple BAM files into one sorted and indexed BAM | [cli/merge](https://bmglab.github.io/PeakATail/cli/merge/) |
 | `ema parse-gtf` | Pre-warm the GTF cache so subsequent runs start immediately | [cli/parse-gtf](https://bmglab.github.io/PeakATail/cli/parse-gtf/) |
 | `ema wizard` | Interactive setup wizard (also invoked by bare `ema`) | [cli/wizard](https://bmglab.github.io/PeakATail/cli/wizard/) |

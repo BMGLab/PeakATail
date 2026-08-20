@@ -1,4 +1,5 @@
 """Contract tests for `ema switch *`."""
+import pytest
 from click.testing import CliRunner
 
 from ema.cli import main

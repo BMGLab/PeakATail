@@ -1,0 +1,20 @@
+# NOTE: placeholder author list. The final, ordered author list (and any
+# ORCIDs) will be set to match the PeakATail manuscript when it is submitted.
+cff-version: 1.2.0
+message: "If you use PeakATail in your research, please cite it using the metadata below."
+type: software
+title: "PeakATail"
+version: "0.2.0"
+abstract: "Single-cell poly(A) site detection and alternative polyadenylation (APA) analysis from scRNA-seq BAM files."
+authors:
+  - name: "PeakATail developers (BMGLab)"
+  - family-names: "Amiri Tabat"
+    given-names: "Amir"
+repository-code: "https://github.com/BMGLab/PeakATail"
+url: "https://bmglab.github.io/PeakATail/"
+license: MIT
+keywords:
+  - bioinformatics
+  - scRNA-seq
+  - polyadenylation
+  - APA

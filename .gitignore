@@ -14,6 +14,12 @@ peakatail_runs/
 *.mtx
 *.bam
 *.bai
+# ...except the committed test fixtures.  tests/fixtures/cellranger_pbmc_tiny.bam
+# is the CellRanger input replay (148 kB, 2072 reads); without this negation it
+# is silently dropped and tests/test_cellranger_input_compat.py cannot run --
+# which is how 8 of the 9 skipped tests came to skip for "no BAM available".
+# The .bai stays ignored on purpose: the tests build it with pysam.index().
+!tests/fixtures/*.bam
 *.h5ad
 **/.vscode
 Emaenv

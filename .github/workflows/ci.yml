@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  # Gate BOTH directions: feature -> develop and the release PR develop -> main.
+  # PR #73 merged with no test gate; that is what this workflow exists to stop.
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install bedtools (exercises the bedtools-guarded tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bedtools
+
+      - name: Install package with test extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+
+      - name: Verify the committed BAM fixture survived checkout
+        # tests/test_cellranger_input_compat.py is the CellRanger input replay
+        # and is worthless if .gitignore (line 15: *.bam) ever swallows the
+        # fixture again -- fail loudly and early rather than silently skipping.
+        run: |
+          test -s tests/fixtures/cellranger_pbmc_tiny.bam
+          python -c "import pysam; print(pysam.AlignmentFile('tests/fixtures/cellranger_pbmc_tiny.bam','rb').count(until_eof=True), 'reads in fixture')"
+
+      - name: Run test suite
+        # Per-test timeout (300 s) comes from [tool.pytest.ini_options] via
+        # pytest-timeout; timeout-minutes above bounds the whole job.
+        # -rxX prints every xfail/xpass reason: the 5 known-red drift tests
+        # (Stage 0d) are xfailed, and an XPASS is the signal to delete the
+        # marker.  Do not silence this.
+        run: pytest -q -rxX
