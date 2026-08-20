@@ -1180,6 +1180,15 @@ class RunConfig:
                     val = ",".join(str(v) for v in val)
                 kwargs[field_name] = val
             elif key in legacy_to_field:
+                # Deprecated spelling (e.g. ``polya_min_reads`` for
+                # ``polya_min_umis``): accept it, but say so -- the CLI
+                # alias logs the same warning.
+                import logging
+                _new = {v: k for k, v in yaml_to_field.items()}.get(
+                    legacy_to_field[key], legacy_to_field[key])
+                logging.getLogger(__name__).warning(
+                    "YAML key %r is DEPRECATED; use %r instead.", key, _new
+                )
                 kwargs[legacy_to_field[key]] = val
             # else: silent skip (loader will have warned)
         return cls(**kwargs)
