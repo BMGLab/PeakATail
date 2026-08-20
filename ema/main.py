@@ -1355,9 +1355,13 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # We build worker_args first so we know n_datasets before adding the stage.
     _raw_worker_args: list[tuple] = []
     for ds_id in unique_ds_ids:
+        # Exact match on the sample half of "<sample_id>_<barcode>" (split on
+        # the LAST underscore -- see ema.countmatrix.indexing.split_cb).
+        # `startswith(f"{ds_id}_")` was ambiguous once sample ids may contain
+        # "_": dataset "a" would also claim every cell of dataset "a_b".
         sub_indices = [
             i for i, cb in enumerate(all_cb_strings)
-            if cb.startswith(f"{ds_id}_")
+            if cb.rsplit("_", 1)[0] == ds_id
         ]
         if not sub_indices:
             log.warning("no cells found for dataset '%s' — skipping", ds_id)

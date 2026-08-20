@@ -88,7 +88,9 @@ def _strip_prefix(barcode: str) -> str:
     if "#" in barcode:
         return barcode.split("#")[-1]
     if "_" in barcode:
-        candidate = barcode.split("_", 1)[-1]
+        # rsplit: the sample-id prefix may itself contain "_" (see
+        # ema.countmatrix.indexing.split_cb); the barcode half never does.
+        candidate = barcode.rsplit("_", 1)[-1]
         if _DNA_BARCODE_RE.match(candidate):
             return candidate
     return barcode

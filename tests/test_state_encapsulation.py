@@ -233,6 +233,7 @@ class _MockRead:
         is_reverse: bool,
         rg: str | None = None,
         cb_len: int = 16,
+        is_unmapped: bool = False,
     ) -> None:
         self._cb = cb
         self.reference_name = chrom
@@ -241,6 +242,9 @@ class _MockRead:
         self.is_reverse = is_reverse
         self._rg = rg
         self._cb_len = cb_len
+        # pysam.AlignedSegment always exposes is_unmapped; read_check reads it
+        # to skip unmapped/CIGAR-less records (reference_end is None there).
+        self.is_unmapped = is_unmapped
 
     def get_tag(self, tag: str) -> str:
         if tag == "CB":

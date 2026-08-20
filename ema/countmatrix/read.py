@@ -65,6 +65,14 @@ def read_check(
 
     try:  # do not calculate reads don't have CB
         cb = read.get_tag(barcode)
+        # CellRanger appends a GEM-group suffix to corrected barcodes
+        # ("AAAC...GTT-1"); STARsolo does not. Strip a trailing "-<digits>"
+        # so stock CellRanger BAMs work — without this, every read fails the
+        # length check below and is silently dropped, producing an empty run.
+        if len(cb) != barcode_len:
+            dash = cb.rfind("-")
+            if dash == barcode_len and cb[dash + 1:].isdigit():
+                cb = cb[:dash]
         if len(cb) != barcode_len:
             return 0, 0, 0, 0, 0
     except KeyError:
@@ -74,6 +82,12 @@ def read_check(
     # (~3μs × 14M reads = 40+ sec). BarcodeIndex.get_index handles invalid
     # CBs by encoding them to -1 (tuple key (sample_id, -1)); these end up in
     # the same column but are rare (1-letter Ns are <0.1% of CB sequencing data).
+
+    # Unmapped (or CIGAR-less) reads have reference_end None; CellRanger BAMs
+    # keep unmapped reads with barcodes, so this must be guarded or the run
+    # crashes hours in with a TypeError on `read_end - read_start`.
+    if read.is_unmapped or read.reference_end is None or read.reference_name is None:
+        return 0, 0, 0, 0, 0
 
     read_chro, read_start, read_end, read_strand = (
         read.reference_name,
@@ -87,6 +101,19 @@ def read_check(
         # Use the caller-supplied sample_id if given; otherwise fall back to
         # the module-level singleton (backward compatibility).
         rg = sample_id if sample_id is not None else _default_sample_id
+    # The RG is used VERBATIM.  The composite built below is decoded by
+    # ema.countmatrix.indexing.split_cb, which splits on the LAST underscore
+    # -- the barcode half is a fixed-length ACGTN string and can never hold
+    # one, so any RG (underscores included) round-trips exactly.
+    #
+    # Do NOT sanitise or drop underscore-bearing RGs here.  `ema merge`
+    # stamps RG = dataset_id and `samtools merge` derives RG ids from file
+    # names, so `sampleA_rep1` / `sampleB_rep1` are ordinary values; mapping
+    # them onto a shared fallback (or onto `_`->`-`, which collides
+    # `a_b` with `a-b`) puts two samples' cells in one matrix column, and
+    # rewriting the prefix also breaks the per-dataset column selector in
+    # ema/main.py and ema/reannotate.py, which matches the sample half of the
+    # composite against the dataset id exactly.
 
     # skip reverse directions
     if direction != read_strand:
