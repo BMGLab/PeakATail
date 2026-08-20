@@ -350,6 +350,10 @@ class variable_config:
     # 0 (default) = legacy behaviour (no shift).  See
     # ema/countmatrix/cleavage_offset.py.
     cleavage_offset = 0
+    # When True, cleavage_offset is estimated per run from the called peaks +
+    # genome FASTA instead of the fixed constant (issue #72; --auto-cleavage-
+    # offset).  False (default) = use the cleavage_offset constant as-is.
+    auto_cleavage_offset = False
     # Cache populated once per BAM by peak_calling when min_pas_spacing == -1.
     # Keyed by str(bam_path) -> int median read length.  Plain class-level
     # dict (not a dataclass field) so it's accessible on the class itself,

@@ -481,7 +481,25 @@ class RunConfig:
                 "this many bp after peak calling, so tight-cutoff benchmarks "
                 "and atlas annotation use the inferred cleavage position. "
                 "A sane data-driven constant is ~90-100 (try 95). "
-                "0 (default) preserves legacy behaviour (no shift)."
+                "0 (default) preserves legacy behaviour (no shift). "
+                "Use --auto-cleavage-offset to estimate this from the data."
+            ),
+        ),
+    )
+    auto_cleavage_offset: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--auto-cleavage-offset", yaml_key="auto_cleavage_offset",
+            is_flag=True,
+            legacy_dataclass_attr="variable_config.auto_cleavage_offset",
+            description=(
+                "Data-driven 3' cleavage-offset estimation (issue #72).  When "
+                "set, the offset is inferred per run from the called peaks and "
+                "--genome-fasta (genomic A-fraction crest + AATAAA density "
+                "downstream of each peak 3' end) instead of using the fixed "
+                "--cleavage-offset constant, then applied the same way.  "
+                "Requires --genome-fasta; falls back to ~95 bp if the profiles "
+                "are inconclusive.  Off (default) preserves legacy behaviour."
             ),
         ),
     )

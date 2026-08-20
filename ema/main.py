@@ -878,6 +878,19 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # the correction path-agnostic without threading a parameter through the
     # spawn-based peak-calling workers.  0 (default) is a no-op (legacy).
     _cleavage_offset = int(getattr(variable_config, "cleavage_offset", 0) or 0)
+    _auto_offset = bool(getattr(variable_config, "auto_cleavage_offset", False))
+    _offset_diag = None
+    if _auto_offset:
+        # Data-driven mode: infer the offset from the called peaks + FASTA.
+        from ema.countmatrix.cleavage_offset import resolve_cleavage_offset
+
+        _genome_fasta = getattr(args, "genome_fasta", None)
+        _cleavage_offset, _offset_diag = resolve_cleavage_offset(
+            _cleavage_offset,
+            auto=True,
+            bed_paths=list(all_pos_beds) + list(all_neg_beds),
+            genome_fasta=_genome_fasta,
+        )
     if _cleavage_offset > 0:
         from ema.countmatrix.cleavage_offset import rewrite_bed_3prime_offset
 
@@ -890,12 +903,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                 continue
         log.info(
             "3' cleavage-offset correction: shifted %d PAS 3' ends downstream "
-            "by %d bp (--cleavage-offset)", _n_shifted, _cleavage_offset,
+            "by %d bp (%s)", _n_shifted, _cleavage_offset,
+            "auto-estimated" if _auto_offset else "--cleavage-offset",
         )
-        output_mgr.save_stats("cleavage_offset", {
+        _stats = {
             "cleavage_offset_bp": _cleavage_offset,
             "n_pas_shifted": _n_shifted,
-        })
+            "auto": _auto_offset,
+        }
+        if _offset_diag is not None:
+            _stats["diagnostics"] = _offset_diag
+        output_mgr.save_stats("cleavage_offset", _stats)
 
     # Per-stage data snapshots — every step that mutates the data gets a
     # canonical file on disk.  See ema/outputs.py for the layout.
