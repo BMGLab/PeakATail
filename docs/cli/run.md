@@ -127,13 +127,19 @@ Options:
                                   sierra_iterative) use this value as the
                                   valley-depth threshold.  Negative disables
                                   Tier 2.  [default: 5.0]
-  --ip-filter                     Enable internal-priming filter (currently
-                                  no-op).
-  --genome-fasta PATH             Genome FASTA for --ip-filter (currently no-
-                                  op).
-  --annot-filter                  Annotation filter (currently no-op).
-  --ip-a-stretch INTEGER          A-stretch length for --ip-filter (currently
-                                  no-op).  [default: 6]
+  --ip-filter                     Enable internal-priming filter: flags PAS
+                                  near genomic A-rich stretches (requires
+                                  --genome-fasta).
+  --ip-filter-mode [annotate|filter]
+                                  How a flagged PAS is handled: annotate
+                                  (default) keeps + labels it; filter drops
+                                  it.  [default: annotate]
+  --genome-fasta PATH             Genome FASTA (.fai indexed) required by
+                                  --ip-filter.
+  --annot-filter                  Annotation filter: keep only PAS overlapping
+                                  an annotated gene region.
+  --ip-a-stretch INTEGER          A-stretch length for --ip-filter.  [default:
+                                  6]
   --min-pas-per-cell INTEGER      Minimum PAS per cell (also bridges to
                                   filter_config.min_genes).  [default: 50]
   --min-read INTEGER              Minimum reads per cell barcode.  [default:
@@ -263,11 +269,7 @@ column (on the PAS ledger + `annotatedpas.bed`) so you can filter downstream.
 | `--ip-a-stretch` | INT | 6 | Minimum consecutive genomic A's downstream of a PAS to flag it as internal priming. |
 | `--ip-window-left` / `--ip-window-right` | INT | 10 / 30 | Window (bp) around the PAS examined for the A-stretch. |
 | `--ip-a-fraction` | FLOAT | 0.7 | Alternative: flag if the A-fraction in the window exceeds this. |
-| `--min-cells` | INT | 3 | Minimum number of cells expressing a PAS. PAS detected in fewer cells than this are removed from the matrix. |
-| `--ip-filter` | FLAG | off | **Currently a no-op.** Will enable internal-priming filtering when integrated. Emits a warning if set. |
-| `--genome-fasta` | PATH | — | **Currently a no-op.** Will supply the genome FASTA for the internal-priming filter. |
-| `--annot-filter` | FLAG | off | **Currently a no-op.** Will enable annotation-based filtering. Emits a warning if set. |
-| `--ip-a-stretch` | INT | 6 | **Currently a no-op.** A-stretch length for the internal-priming filter. |
+| `--annot-filter` | FLAG | off | Keep only PAS overlapping an annotated gene region (uses `--annotation-bed`, else the GTF-derived gene BED). Unlike `--ip-filter`, this always drops non-overlapping PAS. |
 
 ### Annotation
 

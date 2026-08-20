@@ -5,17 +5,20 @@
 </p>
 
 PeakATail detects poly(A) sites (PAS) at single-cell resolution from any scRNA-seq BAM
-that carries cell-barcode (`CB`) and UMI (`UB`) tags — STARsolo, CellRanger, Alevin-fry,
-or any aligner that emits the standard 10x-style tag schema. It clusters cells by their
+that carries a cell-barcode (`CB`) tag — STARsolo, CellRanger, Alevin-fry,
+or any aligner that emits the standard 10x-style tag schema. UMI (`UB`) tags are
+**not** required or used: PeakATail counts raw read 3′ ends, not UMI-deduplicated
+molecules. It clusters cells by their
 3' UTR usage patterns and tests for differential alternative polyadenylation (APA) between
 cell types or conditions. The tool is packaged as the `ema` CLI, installable via `pip` or
 `uv`.
 
 !!! tip "Input requirements"
     PeakATail does **not** correct cell barcodes — your aligner must already have applied a
-    barcode whitelist. The BAM must carry `CB:Z` (corrected barcode) and `UB:Z` (corrected UMI)
-    tags. See [Preparing your BAM](#preparing-your-bam) below for the recommended STAR/STARsolo
-    command.
+    barcode whitelist. The BAM must carry a `CB:Z` (corrected barcode) tag. UMI (`UB:Z`)
+    tags are not read — PeakATail counts raw read 3′ ends rather than deduplicating
+    molecules. See [Preparing your BAM](#preparing-your-bam) below for the recommended
+    STAR/STARsolo command.
 
 ## Why PeakATail
 
@@ -61,8 +64,10 @@ PeakATail requires **samtools** and **bedtools** on your system path, and Python
 
 PeakATail reads only what's already in your BAM — it does **not** correct
 barcodes, demultiplex reads, or align FASTQs. You need a coord-sorted BAM with
-the standard 10x-style `CB:Z` (corrected cell barcode) and `UB:Z` (corrected
-UMI) tags. The recommended STARsolo invocation (matches the protocol the
+the standard 10x-style `CB:Z` (corrected cell barcode) tag. UMI (`UB:Z`) tags
+are not read (PeakATail counts raw read 3′ ends, not UMI-deduplicated
+molecules), but the STARsolo command below still emits them for compatibility
+with other tools. The recommended STARsolo invocation (matches the protocol the
 reference benchmarks were run on):
 
 ```bash
@@ -89,7 +94,8 @@ STAR \
     your aligner accepts (see your aligner's docs).
 
 !!! note "What about CellRanger / Alevin-fry / kallisto|bustools?"
-    Any aligner that emits the standard `CB`/`UB` tag schema works. CellRanger
+    Any aligner that emits a standard `CB` cell-barcode tag works (a `UB` UMI tag
+    may also be present but is ignored). CellRanger
     BAMs work out-of-the-box. Alevin-fry emits the same tags via its
     `--sketch` / `--rad`-then-`convert` flow. For salmon/kallisto-bustools you
     need to convert the busfile back to a tagged BAM before passing it to
