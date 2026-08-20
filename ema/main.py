@@ -913,7 +913,17 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         }
         if _offset_diag is not None:
             _stats["diagnostics"] = _offset_diag
-        output_mgr.save_stats("cleavage_offset", _stats)
+        # There is no dedicated "cleavage_offset" stage dir, so
+        # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
+        # real-run validation, not unit tests). The offset is a peak-calling
+        # correction -> persist alongside the peak-calling outputs. Use a local
+        # alias: a later `import json` in this function makes bare `json`
+        # function-local, so the module-level name is shadowed here.
+        import json as _json_coff
+        with open(
+            output_mgr.path("peak_calling", "cleavage_offset_stats.json"), "w"
+        ) as _coff:
+            _json_coff.dump(_stats, _coff, indent=2, default=str)
 
     # Per-stage data snapshots — every step that mutates the data gets a
     # canonical file on disk.  See ema/outputs.py for the layout.
@@ -1383,7 +1393,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # ------------------------------------------------------------------ #
     # Pre-build (sub_indices, sub_cbs) for every dataset in the parent
     # process — O(n_cells) each, cheap.  Empty datasets are filtered out.
-    import json
+    # NB: `json` is imported at module scope (top of file). A local `import
+    # json` here would make the name function-local for the WHOLE function,
+    # breaking earlier bare-`json` uses (cleavage-offset write, atlas-snap
+    # reads) with UnboundLocalError — so do NOT re-import it locally.
     import multiprocessing
     import pickle
 
