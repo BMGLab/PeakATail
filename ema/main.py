@@ -867,6 +867,36 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "lambda_window": args.lambda_window,
     })
 
+    # ---- 3' cleavage-site offset correction (issue #72) ------------------
+    # Called peak 3' ends stop ~90-105 nt short of the true cleavage site
+    # (10x R2 coverage runs out before the poly(A) junction).  When the
+    # opt-in --cleavage-offset flag is > 0 we shift each reported PAS 3' end
+    # downstream, in place, on the per-(dataset,bam) strand BEDs produced by
+    # BOTH the tiled and sequential paths.  Doing it here -- the single point
+    # where all_pos_beds/all_neg_beds are finalised and before any snapshot,
+    # legacy copy, find_close() or annotatedpas.bed derives from them -- keeps
+    # the correction path-agnostic without threading a parameter through the
+    # spawn-based peak-calling workers.  0 (default) is a no-op (legacy).
+    _cleavage_offset = int(getattr(variable_config, "cleavage_offset", 0) or 0)
+    if _cleavage_offset > 0:
+        from ema.countmatrix.cleavage_offset import rewrite_bed_3prime_offset
+
+        _n_shifted = 0
+        for _bed in list(all_pos_beds) + list(all_neg_beds):
+            try:
+                _n_shifted += rewrite_bed_3prime_offset(_bed, _cleavage_offset)
+            except FileNotFoundError:
+                # A strand may legitimately produce no BED for a dataset.
+                continue
+        log.info(
+            "3' cleavage-offset correction: shifted %d PAS 3' ends downstream "
+            "by %d bp (--cleavage-offset)", _n_shifted, _cleavage_offset,
+        )
+        output_mgr.save_stats("cleavage_offset", {
+            "cleavage_offset_bp": _cleavage_offset,
+            "n_pas_shifted": _n_shifted,
+        })
+
     # Per-stage data snapshots — every step that mutates the data gets a
     # canonical file on disk.  See ema/outputs.py for the layout.
     from ema.outputs import write_per_dataset_beds, write_raw_peak_outputs

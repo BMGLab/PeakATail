@@ -468,6 +468,23 @@ class RunConfig:
             ),
         ),
     )
+    cleavage_offset: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--cleavage-offset", yaml_key="cleavage_offset",
+            legacy_dataclass_attr="variable_config.cleavage_offset",
+            description=(
+                "3' cleavage-site offset correction (bp; issue #72).  Called "
+                "peak 3' ends stop ~90-105 nt short of the true cleavage site "
+                "because 10x R2 coverage runs out before the poly(A) junction. "
+                "When > 0, the reported PAS 3' end is shifted downstream by "
+                "this many bp after peak calling, so tight-cutoff benchmarks "
+                "and atlas annotation use the inferred cleavage position. "
+                "A sane data-driven constant is ~90-100 (try 95). "
+                "0 (default) preserves legacy behaviour (no shift)."
+            ),
+        ),
+    )
 
     # ─── filters (D6: wired into `ema run`; see ema/main.py::_apply_pas_filters) ──
     ip_filter: bool = field(

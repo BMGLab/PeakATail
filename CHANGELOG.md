@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`--cleavage-offset` — data-driven 3' cleavage-site offset correction
+  (issue #72).** Called peak 3' ends stop ~90–105 nt short of the true
+  cleavage site because 10x R2 coverage runs out before the poly(A) junction
+  (AATAAA density peaks +75 nt downstream of the peak end; genomic A-fraction
+  crests at +98 nt). Tight-cutoff benchmarks then punish the offset, not the
+  calls. `--cleavage-offset N` (default `0` = legacy/off) shifts each reported
+  PAS 3' end downstream by `N` bp (strand-aware, clamped at 0) after peak
+  calling, so `pasbed.bed`, `annotatedpas.bed`, gene assignment, atlas
+  matching, and the benchmark harness all use the inferred cleavage position.
+  A sane fallback constant is `95`. The per-run data-driven estimator
+  (`ema/countmatrix/cleavage_offset.py::estimate_cleavage_offset`) is stubbed
+  with a clear `TODO(issue #72)`; it currently returns the constant.
+
 ## 0.2.0 (2026-05-10) — Product CLI
 
 ### Breaking changes
