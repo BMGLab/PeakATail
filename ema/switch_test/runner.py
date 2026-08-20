@@ -577,7 +577,7 @@ def _run_grouped_diff(
     cluster2: str | None,
     min_cells_per_group: int,
     n_jobs: int,
-    count_mode: str = "reads",
+    count_mode: str = "cells",
 ) -> pd.DataFrame:
     """Run ``strategy.test()`` once per group, scoping each call's count
     matrix to that group's ``bg_cols``.
@@ -645,7 +645,7 @@ def _dispatch_pair(
     n_jobs_inner: int,
     min_cells_per_group: int = 10,
     pas_gene_map: dict[str, str] | None = None,
-    count_mode: str = "reads",
+    count_mode: str = "cells",
 ) -> tuple[str, str, pd.DataFrame]:
     """Top-level wrapper for ``run_one_pair`` suitable for ``Pool.imap_unordered``.
 
@@ -789,7 +789,7 @@ def run_diff(
     threads: int | None,
     per_worker_mb: int,
     min_cells_per_group: int = 10,
-    count_mode: str = "reads",
+    count_mode: str = "cells",
     isoform_agg: str = "per_gene",
     utr_unmatched: str = "gene",
     counts_layer: str | None = None,
@@ -825,14 +825,15 @@ def run_diff(
         min_cells_per_group: Minimum cells (with nonzero counts for NB strategies)
             in each cluster for a PAS to enter differential testing. Default 10.
         count_mode: Aggregation unit for the fisher strategy's contingency
-            table. ``"reads"`` (default, legacy) sums read/UMI counts per
-            group and is anti-conservative because within-cell reads are
-            correlated (issue #74) -- treat its q-values as a ranking screen
-            only. ``"cells"`` (D4) counts each cell at most once via per-cell
-            PAS detection, de-pseudoreplicating the test; recommended for
-            inference. Ignored by the NB strategies (they model per-cell
-            overdispersion directly). Default ``"reads"`` -- the fix is opt-in
-            so existing default behaviour is not silently changed.
+            table. ``"cells"`` (default, D4) counts each cell at most once via
+            per-cell PAS detection, de-pseudoreplicating the test -- this is the
+            FDR-calibrated path (issue #74). ``"reads"`` (legacy, opt-in) sums
+            read/UMI counts per group and is anti-conservative because
+            within-cell reads are correlated -- treat its q-values as a ranking
+            screen only. The default was flipped ``"reads"``->``"cells"`` in
+            issue #74 so the out-of-the-box path is calibrated; pass
+            ``"reads"`` explicitly only for backward comparison. Ignored by the
+            NB strategies (they model per-cell overdispersion directly).
         isoform_agg: Scope of each test's background/denominator --
             ``"per_gene"`` (default; unchanged/byte-identical to legacy
             behaviour): each PAS vs the rest of its gene.  ``"within_utr"``:
@@ -899,15 +900,16 @@ def run_diff(
     diff_strat = get_diff_strategy(strategy)
 
     # Issue #74: read-level fisher is anti-conservative (pseudoreplication over
-    # correlated within-cell reads). Warn loudly at the library boundary too,
-    # so callers that bypass the CLI still see it. We do NOT silently switch
-    # the default -- the fix is opt-in via count_mode="cells".
+    # correlated within-cell reads). The calibrated per-cell mode is now the
+    # DEFAULT (count_mode="cells"); this warning only fires when a caller has
+    # explicitly opted back into the legacy reads path, so it is an informed
+    # ranking-screen choice rather than a silent trap.
     if strategy == "fisher" and count_mode == "reads":
         log.warning(
             "run_diff: fisher count_mode='reads' is NOT FDR-calibrated -- its "
             "q-values are anti-conservative (a permutation null reports q<0.05 "
-            "hits in 100%% of runs; issue #74). Use as a RANKING SCREEN only. "
-            "For calibrated inference pass count_mode='cells' or "
+            "hits in 100% of runs; issue #74). Use as a RANKING SCREEN only. "
+            "For calibrated inference use the default count_mode='cells' or "
             "strategy='nb_pairwise'."
         )
 

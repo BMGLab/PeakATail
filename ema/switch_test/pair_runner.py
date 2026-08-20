@@ -30,7 +30,7 @@ def run_one_pair(
     n_jobs_inner: int = 1,
     min_cells_per_group: int = 10,
     pas_gene_map: dict[str, str] | None = None,
-    count_mode: str = "reads",
+    count_mode: str = "cells",
 ) -> tuple[str, str, pd.DataFrame]:
     """Run a single cluster-pair differential APA test.
 

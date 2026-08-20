@@ -92,13 +92,13 @@ def _list_strategies_callback(ctx, param, value):
               type=click.Choice(["reads", "cells"]),
               default=DEFAULTS["count-mode"], show_default=True,
               help="Aggregation unit for the fisher strategy's contingency "
-                   "table. 'reads' (legacy default): read/UMI totals per "
-                   "group -- pseudoreplicated over correlated within-cell "
-                   "reads, so its q-values are NOT FDR-calibrated (issue #74) "
-                   "and are a ranking screen only. 'cells' (D4, recommended "
-                   "for inference): each cell counted at most once via "
-                   "per-cell PAS detection, de-pseudoreplicating the test. "
-                   "Ignored by the NB strategies.")
+                   "table. 'cells' (default, D4): each cell counted at most "
+                   "once via per-cell PAS detection, de-pseudoreplicating the "
+                   "test -- this is the FDR-calibrated path (issue #74). "
+                   "'reads' (legacy, opt-in): read/UMI totals per group -- "
+                   "pseudoreplicated over correlated within-cell reads, so its "
+                   "q-values are NOT FDR-calibrated and are a ranking screen "
+                   "only. Ignored by the NB strategies.")
 @click.option("--fdr", "fdr", type=float, default=DEFAULTS["fdr"])
 @click.option("--per-worker-mb", "per_worker_mb", type=int, default=DEFAULTS["per-worker-mb"])
 @click.option("--min-cells-per-group", "min_cells_per_group", type=int,
@@ -146,19 +146,24 @@ def diff(ctx: click.Context, **kwargs) -> None:
     try:
         log.info("ema switch diff: %d h5ad input(s); strategy=%s count_mode=%s",
                  len(kwargs["h5ad"]), kwargs["strategy"], kwargs["count_mode"])
-        # Loud, unmissable warning about the miscalibration documented in
-        # issue #74: read-level fisher q-values are anti-conservative (a
-        # permutation null reports q<0.05 hits in 100% of runs). We do NOT
-        # silently change the default -- we warn and point at the fix.
+        # Issue #74 trap removal. The default for --count-mode was flipped
+        # reads->cells (see ema/cli/config_schema.py) so the out-of-the-box
+        # fisher path is FDR-calibrated: a user can no longer UNKNOWINGLY emit
+        # miscalibrated q-values. We chose "safe default" (Option A) over an
+        # acknowledgment gate because it is the least-surprising for end users
+        # -- doing nothing yields calibrated inference; the miscalibrated
+        # read-level path now requires an explicit, informed --count-mode reads.
+        # When that explicit opt-in is used we still warn loudly (below), since
+        # the reads path remains available only as a ranking screen.
         if kwargs["strategy"] == "fisher" and kwargs["count_mode"] == "reads":
             log.warning(
                 "fisher --count-mode reads is NOT FDR-calibrated: reads within "
                 "a cell are correlated (pseudoreplication), so q-values are "
                 "anti-conservative -- a permutation null reports q<0.05 hits in "
-                "100%% of runs (issue #74). Treat these q-values as a RANKING "
-                "SCREEN only, not evidence of significance. For calibrated "
-                "inference use --count-mode cells (per-cell, de-"
-                "pseudoreplicated) or --strategy nb_pairwise."
+                "100% of runs (issue #74). You opted into it explicitly; treat "
+                "these q-values as a RANKING SCREEN only, not evidence of "
+                "significance. The calibrated default is --count-mode cells "
+                "(per-cell, de-pseudoreplicated); nb_pairwise is also calibrated."
             )
         from ema.switch_test.runner import run_diff
         # Visualisation lives in ema.viz.pipeline_hooks (one entry point per

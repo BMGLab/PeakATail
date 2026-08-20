@@ -52,11 +52,15 @@ def test_count_mode_rejects_invalid_value(tmp_path):
     assert "count-mode" in result.output or "count_mode" in result.output
 
 
-def test_count_mode_default_is_reads():
-    """The default is the legacy 'reads' mode -- behaviour is NOT silently
-    changed; the fix is opt-in (issue #74 recommendation)."""
+def test_count_mode_default_is_cells():
+    """Issue #74: the default was flipped reads->cells so the out-of-the-box
+    fisher path is FDR-calibrated. A user can no longer UNKNOWINGLY emit
+    miscalibrated q-values; the legacy 'reads' path is an explicit opt-in.
+
+    (This intentionally replaces the earlier test_count_mode_default_is_reads,
+    which pinned the pre-fix default.)"""
     from ema.cli.defaults import DEFAULTS
-    assert DEFAULTS["count-mode"] == "reads"
+    assert DEFAULTS["count-mode"] == "cells"
 
 
 def test_run_diff_accepts_count_mode_kwarg():
@@ -149,6 +153,91 @@ def test_cells_mode_less_anticonservative_than_reads():
     cells_rate = _null_reject_rate("cells")
     assert cells_rate < reads_rate, (
         f"cells ({cells_rate:.3f}) should be < reads ({reads_rate:.3f})"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 3. FDR-calibration under permutation null (issue #74 headline metric)
+#
+# The issue is stated in terms of q-values, not raw p-values: under label
+# permutation, read-level fisher reports q<0.05 hits in *100% of null runs*
+# (mean 42 hits/run). The calibrated fix must drive that per-run hit rate to
+# ~0. These tests assert exactly that, so they are the evidence the fix works
+# (not merely that a flag exists). Small n + fixed seeds keep them fast and
+# deterministic.
+# --------------------------------------------------------------------------- #
+def _null_qhit_stats(count_mode: str, n_perm: int = 12) -> tuple[float, float]:
+    """Return (fraction_of_null_runs_with>=1 q<0.05 hit, mean q<0.05 hits/run).
+
+    Each run rebuilds a null dataset AND draws a fresh random group label,
+    then BH-corrects within the run -- mirroring the issue's protocol where a
+    full permutation is scored end-to-end.
+    """
+    strat = FisherStrategy()
+    n_cells = 120
+    runs_with_hit = 0
+    hits_per_run: list[int] = []
+    for perm in range(n_perm):
+        cm, pas_gene_map = _make_null_dataset(
+            n_cells=n_cells, n_genes=15, depth=80, seed=1000 + perm
+        )
+        rng = np.random.default_rng(9000 + perm)
+        labels = pd.Series(
+            np.where(rng.permutation(n_cells) < n_cells // 2, "A", "B"),
+            index=cm.index,
+        )
+        res = strat.test(
+            count_matrix=cm,
+            cluster_labels=labels,
+            cluster1="A",
+            cluster2="B",
+            min_cells_per_group=5,
+            pas_gene_map=pas_gene_map,
+            count_mode=count_mode,
+        )
+        if res.empty:
+            continue
+        n_hits = int((res["qvalue"] < 0.05).sum())
+        hits_per_run.append(n_hits)
+        if n_hits > 0:
+            runs_with_hit += 1
+    assert hits_per_run, "no non-empty null runs produced"
+    return runs_with_hit / len(hits_per_run), float(np.mean(hits_per_run))
+
+
+def test_reads_mode_reports_qhits_in_most_null_runs():
+    """Reproduce issue #74: reads mode reports q<0.05 hits in ~all null runs."""
+    frac_runs, mean_hits = _null_qhit_stats("reads")
+    assert frac_runs > 0.75, (
+        f"expected reads mode to report q<0.05 hits in most null runs, "
+        f"got {frac_runs:.2f} of runs (mean {mean_hits:.1f} hits/run)"
+    )
+    assert mean_hits > 1.0, f"expected many false q-hits/run, got {mean_hits:.1f}"
+
+
+def test_cells_mode_qhits_near_zero_under_null():
+    """The fix: cells mode reports q<0.05 hits in ~no null runs (calibrated)."""
+    frac_runs, mean_hits = _null_qhit_stats("cells")
+    # Calibrated: a genuine BH-controlled null should almost never emit a hit,
+    # and certainly not in 100% of runs the way reads mode does.
+    assert frac_runs <= 0.15, (
+        f"cells mode should report q<0.05 hits in ~no null runs, got "
+        f"{frac_runs:.2f} of runs (mean {mean_hits:.2f} hits/run)"
+    )
+    assert mean_hits < 1.0, f"cells mode mean q-hits/run too high: {mean_hits:.2f}"
+
+
+def test_cells_mode_far_fewer_qhits_than_reads_under_null():
+    """Head-to-head: the calibrated default rejects the null far less."""
+    reads_frac, reads_mean = _null_qhit_stats("reads")
+    cells_frac, cells_mean = _null_qhit_stats("cells")
+    assert cells_frac < reads_frac, (
+        f"cells run-hit rate ({cells_frac:.2f}) must be < reads "
+        f"({reads_frac:.2f})"
+    )
+    assert cells_mean < reads_mean, (
+        f"cells mean q-hits/run ({cells_mean:.2f}) must be < reads "
+        f"({reads_mean:.2f})"
     )
 
 
