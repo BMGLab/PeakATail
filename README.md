@@ -4,7 +4,7 @@
     <img src="https://raw.githubusercontent.com/BMGLab/PeakATail/develop/docs/assets/logos/main_logo.png" alt="PeakATail — coiled snake with poly(A) tail" width="640">
 </p>
 
-PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alternative polyadenylation (APA) analysis. It works with any scRNA-seq BAM that carries `CB:Z` (corrected cell barcode) and `UB:Z` (corrected UMI) tags — STARsolo, CellRanger, Alevin-fry, or any aligner that emits the standard 10x-style tag schema. PeakATail does NOT correct barcodes; your aligner must apply a barcode whitelist (e.g. STARsolo's `--soloCBwhitelist`). From the input BAM it calls polyadenylation sites at the read level, builds a per-cell PAS count matrix, clusters cells by their APA profiles, and provides downstream analyses including differential APA testing between clusters, 3'UTR length quantification, and cross-dataset cluster matching. Developed at BMGLab.
+PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alternative polyadenylation (APA) analysis. It works with any scRNA-seq BAM that carries a `CB:Z` (corrected cell barcode) tag — STARsolo, CellRanger, Alevin-fry, or any aligner that emits the standard 10x-style tag schema. UMI (`UB:Z`) tags are NOT required or used: PeakATail counts raw read 3'ends, not UMI-deduplicated molecules. PeakATail does NOT correct barcodes; your aligner must apply a barcode whitelist (e.g. STARsolo's `--soloCBwhitelist`). From the input BAM it calls polyadenylation sites at the read level, builds a per-cell PAS count matrix, clusters cells by their APA profiles, and provides downstream analyses including differential APA testing between clusters, 3'UTR length quantification, and cross-dataset cluster matching. Developed at BMGLab.
 
 [![Docs](https://img.shields.io/badge/docs-bmglab.github.io%2FPeakATail-blue)](https://bmglab.github.io/PeakATail/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -258,7 +258,14 @@ PeakATail/
 
 ## Citation
 
-<!-- TODO[verify]: No CITATION.cff file exists in the repository. Fill in the BibTeX entry below once the paper is published. -->
+If you use PeakATail, please cite the software entry below for now. The `author`
+field mirrors the package author declared in `pyproject.toml`; the full
+manuscript author list and a machine-readable `CITATION.cff` will be added with
+the paper release (tracked in the release-engineering issue).
+
+<!-- TODO[verify]: No CITATION.cff file exists yet. Replace this software entry
+with the published journal citation — and expand `author` to the full manuscript
+author list — once the paper is out. -->
 
 ```bibtex
 @software{peakatail,
@@ -266,7 +273,7 @@ PeakATail/
   title   = {{PeakATail}: single-cell poly(A) site detection and APA analysis},
   url     = {https://github.com/BMGLab/PeakATail},
   version = {0.2.0},
-  note    = {TODO: replace with journal citation when available}
+  note    = {Preprint in preparation; replace with the journal citation when available}
 }
 ```
 

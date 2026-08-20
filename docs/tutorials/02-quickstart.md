@@ -18,7 +18,8 @@ The full content of `example.yaml` with explanations for every key:
 # my_run.yaml
 # Each dataset is one logical sample group. BAMs within a dataset share
 # cell barcodes (same sequencing library — 10x, STARsolo, Alevin-fry, or
-# any aligner emitting CB:Z / UB:Z tags). merge_strategy controls how
+# any aligner emitting a CB:Z tag; UMI/UB tags are not used). merge_strategy
+# controls how
 # multiple BAMs are combined before peak-calling (see Tutorial 3).
 #
 # merge_strategy options:
