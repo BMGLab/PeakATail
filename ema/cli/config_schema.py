@@ -613,8 +613,10 @@ class RunConfig:
             description=(
                 "Collect read-level poly(A) soft-clip evidence during peak "
                 "calling (default on). Annotate-only by default: each PAS's "
-                "clip-read support is written into BED column 5 of "
-                "pasbed.bed (previously hardcoded 0); coordinates, counts "
+                "clip support -- distinct (barcode, UMI) MOLECULES -- is "
+                "written into BED column 5 of pasbed.bed (previously "
+                "hardcoded 0), with the raw read counts in the "
+                "pas_support.tsv sidecar; coordinates, counts "
                 "and PAS selection are unchanged unless --polya-mode or the "
                 "clip_seeded strategy says otherwise. 'off' restores the "
                 "pre-Stage-1 byte-identical output."
@@ -670,7 +672,7 @@ class RunConfig:
             legacy_args_attr="polya_window",
             description=(
                 "Half-window in bp around a PAS's strand-aware 3' base "
-                "within which clip reads count as support for that PAS "
+                "within which clip molecules count as support for that PAS "
                 "(default 100 — the benchmark's matching cutoff)."
             ),
         ),

@@ -167,6 +167,38 @@
   carry enough counts to pass `min_cells`; 120 one-to-two-read clusters
   drop out because their counts moved to cells below `min_read`.
 
+  **Measured on GSE104556 mouse1** (`--seq-len 98`, 12 threads, 54 min wall,
+  26.9 GB peak RSS — unchanged from the previous run's 55 min / 26.9 GB;
+  `results/benchmark_tools/gse104556/peakatail_clipseeded_v3/mouse1`):
+  - every caller BED (`posbed.bed`, `negbed.bed`, `01_peak_calling/*`,
+    `peakcalling/*`, `raw/pas.bed`) is identical in columns 1–4 and 6 to the
+    previous run; only column 5 changes (`annotatedpas.bed` is byte-identical
+    — it does not carry the score column);
+  - clip reads 2,181,334 → 2,091,279 molecules (0.959×) over 148,715 tier-1
+    rows; 13.3% (+) / 13.2% (−) of tier-1 rows change value; **3,269 of the
+    62,159 "≥2 clip read" sites (5.3%) are a single molecule** (the same
+    statistic is 23.7% on PBMC, where the duplication rate is far higher);
+  - counting is otherwise unchanged: `reads_from_candidates`,
+    `reads_from_window`, `reads_tier2`, `tier1`, `tier2` and
+    `suppressed_candidates` are identical to the read; the raw caller
+    matrices lose exactly the double-counted fallback reads
+    (140,744,000 → 140,743,255, −745 counts, −0.0005%) and the annotated
+    matrix 52,703,320 → 52,703,105 (−215, −0.0004%, 85,816 vs 85,993 PAS —
+    the emptied fallback rows fall below `min_cells`);
+    562 of the 5,250 fallback rows (98 on `+`, all 464 on `−`) were entirely
+    reads a neighbouring cluster had already counted;
+  - `min_read` keeps the same 10,339 cells, including 1,294/1,294 STARsolo
+    cells;
+  - scoring is unmoved: tier-1 P@100 0.4992, R_det 0.2991, F1 0.3741 —
+    identical to 4 dp before and after (both tiers 0.4093/0.3231/0.3611).
+  - **post-hoc sensitivity, labelled as such**: gating tier-1 at ≥2
+    MOLECULES gives n 30,346, P@100 0.6923, R_det 0.2164, F1 0.3298. On the
+    chr19+21 PBMC slice the same comparison, at equal nominal thresholds,
+    separates the two units: ≥2 reads n 4,749 / P 0.5519 / R 0.2442 /
+    F1 0.3386 versus ≥2 molecules n 3,664 / P 0.6395 / R 0.2245 / F1 0.3323
+    (≥1 is unchanged at n 11,318 / 0.3591 / 0.3379 / 0.3482). A read
+    threshold and a molecule threshold are not the same operating point.
+
 ### Notes
 - The evidence is computed in all three peak-calling paths (monolithic,
   `--pipeline`, `--tiles`) from the `AlignedSegment` at the call site;

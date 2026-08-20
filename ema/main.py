@@ -399,8 +399,9 @@ def _apply_polya_gate(output_mgr) -> dict | None:
     from ``genes.index`` and annotate() naturally drops it from the count
     matrix — no other file needs touching.
 
-    ``filter`` drops every PAS whose BED score column (poly(A) clip-read
-    support, written by peak calling when --polya-evidence is on) is 0 —
+    ``filter`` drops every PAS whose BED score column (poly(A) clip
+    support in distinct molecules, written by peak calling when
+    --polya-evidence is on) is 0 —
     i.e. exactly the coverage-only tier.  ``require`` does the same and then
     FAILS the run when nothing clip-supported remains (the R2 chemistry
     failure mode: poly(A) trimmed upstream leaves support at 0 everywhere).
