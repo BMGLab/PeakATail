@@ -479,6 +479,23 @@ def write_annotated_matrix(
     import scipy.io as _sci
     from ema.config import directory_config
 
+    # The .mtx and annotated_pas_ids.tsv written below are a POSITIONAL join:
+    # line k of the id file names row k of the matrix.  Persisting a matrix
+    # whose height differs from the id list silently mis-keys every downstream
+    # consumer (this is exactly regression 04e0b3a), so fail loud here too.
+    if sparse_matrix.shape[0] != len(pas_ids):
+        raise ValueError(
+            f"annotated matrix for {dataset_id!r} has {sparse_matrix.shape[0]} "
+            f"rows but {len(pas_ids)} PAS IDs — annotated_pas_ids.tsv is the "
+            "row index of annotated_matrix.mtx and must be the same length."
+        )
+    if sparse_matrix.shape[1] != len(cells):
+        raise ValueError(
+            f"annotated matrix for {dataset_id!r} has {sparse_matrix.shape[1]} "
+            f"columns but {len(cells)} barcodes — annotated_cells.tsv is the "
+            "column index of annotated_matrix.mtx and must be the same length."
+        )
+
     mtx_path = directory_config.annotated_matrix_for(dataset_id)
     mtx_path.parent.mkdir(parents=True, exist_ok=True)
     _sci.mmwrite(str(mtx_path), sparse_matrix.astype(int), field="integer")
@@ -626,12 +643,25 @@ def write_pas_gene_artifacts(
         may not exist if pasbed wasn't on disk.
     """
     import os
+    import numpy as np  # local import — heavy module
     import pandas as pd  # local import — heavy module
     from ema.config import directory_config
 
     atlas_of = atlas_of or {}
     ip_of = ip_of or {}
     in_3utr_of = in_3utr_of or {}
+
+    # pas_ids/gene_ids are a POSITIONAL pair (gene_ids[k] annotates pas_ids[k]).
+    # Check the length explicitly and coerce a pandas Series to its values --
+    # a Series would otherwise be re-aligned by ITS OWN index inside the
+    # DataFrame constructor below, silently pairing PAS with the wrong gene.
+    pas_ids = np.asarray(pas_ids)
+    gene_ids = np.asarray(gene_ids)
+    if len(pas_ids) != len(gene_ids):
+        raise ValueError(
+            f"pas_gene mapping for {dataset_id!r} has {len(pas_ids)} PAS IDs but "
+            f"{len(gene_ids)} gene IDs — they index the same annotated rows."
+        )
 
     # Both writes below go to a temp file in the SAME directory (same
     # filesystem, so os.replace() is a single atomic rename syscall) then
