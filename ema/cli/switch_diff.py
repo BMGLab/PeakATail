@@ -88,6 +88,17 @@ def _list_strategies_callback(ctx, param, value):
 @click.option("--strategy", "-s", "strategy", type=str, default="fisher",
               show_default=True,
               help="Differential APA strategy (run --list-strategies to see).")
+@click.option("--count-mode", "count_mode",
+              type=click.Choice(["reads", "cells"]),
+              default=DEFAULTS["count-mode"], show_default=True,
+              help="Aggregation unit for the fisher strategy's contingency "
+                   "table. 'reads' (legacy default): read/UMI totals per "
+                   "group -- pseudoreplicated over correlated within-cell "
+                   "reads, so its q-values are NOT FDR-calibrated (issue #74) "
+                   "and are a ranking screen only. 'cells' (D4, recommended "
+                   "for inference): each cell counted at most once via "
+                   "per-cell PAS detection, de-pseudoreplicating the test. "
+                   "Ignored by the NB strategies.")
 @click.option("--fdr", "fdr", type=float, default=DEFAULTS["fdr"])
 @click.option("--per-worker-mb", "per_worker_mb", type=int, default=DEFAULTS["per-worker-mb"])
 @click.option("--min-cells-per-group", "min_cells_per_group", type=int,
@@ -133,8 +144,22 @@ def diff(ctx: click.Context, **kwargs) -> None:
     )
 
     try:
-        log.info("ema switch diff: %d h5ad input(s); strategy=%s",
-                 len(kwargs["h5ad"]), kwargs["strategy"])
+        log.info("ema switch diff: %d h5ad input(s); strategy=%s count_mode=%s",
+                 len(kwargs["h5ad"]), kwargs["strategy"], kwargs["count_mode"])
+        # Loud, unmissable warning about the miscalibration documented in
+        # issue #74: read-level fisher q-values are anti-conservative (a
+        # permutation null reports q<0.05 hits in 100% of runs). We do NOT
+        # silently change the default -- we warn and point at the fix.
+        if kwargs["strategy"] == "fisher" and kwargs["count_mode"] == "reads":
+            log.warning(
+                "fisher --count-mode reads is NOT FDR-calibrated: reads within "
+                "a cell are correlated (pseudoreplication), so q-values are "
+                "anti-conservative -- a permutation null reports q<0.05 hits in "
+                "100%% of runs (issue #74). Treat these q-values as a RANKING "
+                "SCREEN only, not evidence of significance. For calibrated "
+                "inference use --count-mode cells (per-cell, de-"
+                "pseudoreplicated) or --strategy nb_pairwise."
+            )
         from ema.switch_test.runner import run_diff
         # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
         # CLI command).  Failures are warned, never raised.
@@ -151,6 +176,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 marker_top_n=kwargs["marker_top_n"],
                 marker_method=kwargs["marker_method"],
                 strategy=kwargs["strategy"],
+                count_mode=kwargs["count_mode"],
                 fdr=kwargs["fdr"],
                 threads=kwargs["threads"],
                 per_worker_mb=kwargs["per_worker_mb"],

@@ -30,6 +30,7 @@ def run_one_pair(
     n_jobs_inner: int = 1,
     min_cells_per_group: int = 10,
     pas_gene_map: dict[str, str] | None = None,
+    count_mode: str = "reads",
 ) -> tuple[str, str, pd.DataFrame]:
     """Run a single cluster-pair differential APA test.
 
@@ -61,6 +62,8 @@ def run_one_pair(
     # only when the caller supplied one so strategies that ignore it (NB)
     # don't see an unexpected None in their **kwargs path.
     extra: dict = {"pas_gene_map": pas_gene_map} if pas_gene_map is not None else {}
+    # count_mode is a fisher-specific knob (reads vs de-pseudoreplicated
+    # cells); the NB strategies accept-and-drop it via **_ignored.
     result_df = strategy.test(
         count_matrix=diff_df,
         cluster_labels=cluster_labels,
@@ -68,6 +71,7 @@ def run_one_pair(
         cluster2=c2,
         min_cells_per_group=min_cells_per_group,
         n_jobs=n_jobs_inner,
+        count_mode=count_mode,
         **extra,
     )
     return (c1, c2, result_df)

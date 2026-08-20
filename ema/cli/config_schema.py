@@ -810,6 +810,27 @@ class RunConfig:
         ),
     )
 
+    count_mode: str = field(
+        default="reads",
+        metadata=_spec(
+            cli_flag="--count-mode", yaml_key="count_mode",
+            skip_legacy_bridge=True,
+            description=(
+                "Unit the fisher strategy aggregates for its 2xN contingency "
+                "table. 'reads' (default, legacy): sum read/UMI counts per "
+                "group -- reads within a cell are correlated, so read-level "
+                "fisher q-values are NOT FDR-calibrated (a permutation null "
+                "reports q<0.05 hits in 100% of runs; see issue #74) and "
+                "should be treated as a ranking screen only. 'cells' (D4, "
+                "recommended for inference): each cell contributes at most "
+                "once via per-cell PAS detection among gene-expressing cells, "
+                "de-pseudoreplicating the test. Ignored by the NB strategies, "
+                "which model per-cell overdispersion directly."
+            ),
+            applies_to=frozenset({"diff"}),
+        ),
+    )
+
     # ─── cross-dataset MNN parameters ────────────────────────────────────
     mnn_components: int = field(
         default=30,

@@ -577,6 +577,7 @@ def _run_grouped_diff(
     cluster2: str | None,
     min_cells_per_group: int,
     n_jobs: int,
+    count_mode: str = "reads",
 ) -> pd.DataFrame:
     """Run ``strategy.test()`` once per group, scoping each call's count
     matrix to that group's ``bg_cols``.
@@ -609,6 +610,7 @@ def _run_grouped_diff(
             min_cells_per_group=min_cells_per_group,
             n_jobs=n_jobs,
             pas_gene_map=pas_group_map,
+            count_mode=count_mode,
         )
         if cluster1 is not None:
             kwargs["cluster1"] = cluster1
@@ -643,6 +645,7 @@ def _dispatch_pair(
     n_jobs_inner: int,
     min_cells_per_group: int = 10,
     pas_gene_map: dict[str, str] | None = None,
+    count_mode: str = "reads",
 ) -> tuple[str, str, pd.DataFrame]:
     """Top-level wrapper for ``run_one_pair`` suitable for ``Pool.imap_unordered``.
 
@@ -674,6 +677,7 @@ def _dispatch_pair(
         n_jobs_inner=n_jobs_inner,
         min_cells_per_group=min_cells_per_group,
         pas_gene_map=pas_gene_map,
+        count_mode=count_mode,
     )
 
 
@@ -785,6 +789,7 @@ def run_diff(
     threads: int | None,
     per_worker_mb: int,
     min_cells_per_group: int = 10,
+    count_mode: str = "reads",
     isoform_agg: str = "per_gene",
     utr_unmatched: str = "gene",
     counts_layer: str | None = None,
@@ -819,6 +824,15 @@ def run_diff(
         per_worker_mb: Estimated peak RAM per parallel worker (MB).
         min_cells_per_group: Minimum cells (with nonzero counts for NB strategies)
             in each cluster for a PAS to enter differential testing. Default 10.
+        count_mode: Aggregation unit for the fisher strategy's contingency
+            table. ``"reads"`` (default, legacy) sums read/UMI counts per
+            group and is anti-conservative because within-cell reads are
+            correlated (issue #74) -- treat its q-values as a ranking screen
+            only. ``"cells"`` (D4) counts each cell at most once via per-cell
+            PAS detection, de-pseudoreplicating the test; recommended for
+            inference. Ignored by the NB strategies (they model per-cell
+            overdispersion directly). Default ``"reads"`` -- the fix is opt-in
+            so existing default behaviour is not silently changed.
         isoform_agg: Scope of each test's background/denominator --
             ``"per_gene"`` (default; unchanged/byte-identical to legacy
             behaviour): each PAS vs the rest of its gene.  ``"within_utr"``:
@@ -877,7 +891,25 @@ def run_diff(
     diff_dir = out_dir / "differential"
     diff_dir.mkdir(exist_ok=True)
 
+    if count_mode not in ("reads", "cells"):
+        raise ValueError(
+            f"count_mode must be 'reads' or 'cells', got {count_mode!r}"
+        )
+
     diff_strat = get_diff_strategy(strategy)
+
+    # Issue #74: read-level fisher is anti-conservative (pseudoreplication over
+    # correlated within-cell reads). Warn loudly at the library boundary too,
+    # so callers that bypass the CLI still see it. We do NOT silently switch
+    # the default -- the fix is opt-in via count_mode="cells".
+    if strategy == "fisher" and count_mode == "reads":
+        log.warning(
+            "run_diff: fisher count_mode='reads' is NOT FDR-calibrated -- its "
+            "q-values are anti-conservative (a permutation null reports q<0.05 "
+            "hits in 100%% of runs; issue #74). Use as a RANKING SCREEN only. "
+            "For calibrated inference pass count_mode='cells' or "
+            "strategy='nb_pairwise'."
+        )
 
     # Accumulate all pair results across h5ads (returned to caller for viz).
     all_pair_results: dict[tuple[str, str], pd.DataFrame] = {}
@@ -970,7 +1002,7 @@ def run_diff(
             else:
                 df = _run_grouped_diff(
                     diff_strat, _isoform_test_matrix, _isoform_groups, cluster_labels,
-                    None, None, min_cells_per_group, n_jobs,
+                    None, None, min_cells_per_group, n_jobs, count_mode=count_mode,
                 )
             out_path = diff_dir / f"{strategy}_omnibus.tsv"
             df.to_csv(out_path, sep="\t")
@@ -1041,6 +1073,7 @@ def run_diff(
                     df = _run_grouped_diff(
                         diff_strat, _isoform_test_matrix, _isoform_groups,
                         cluster_labels, c1, c2, min_cells_per_group, n_inner,
+                        count_mode=count_mode,
                     )
                     pair_results[(c1, c2)] = df
                     if _pair_client is not None:
@@ -1052,6 +1085,7 @@ def run_diff(
                         n_jobs_inner=n_inner,
                         min_cells_per_group=min_cells_per_group,
                         pas_gene_map=pas_gene_map,
+                        count_mode=count_mode,
                     )
                     pair_results[(c1, c2)] = df
                     if _pair_client is not None:
@@ -1065,6 +1099,7 @@ def run_diff(
                     n_jobs_inner=n_inner,
                     min_cells_per_group=min_cells_per_group,
                     pas_gene_map=pas_gene_map,
+                    count_mode=count_mode,
                 )
                 ctx = multiprocessing.get_context("spawn")
                 with ctx.Pool(n_outer) as pool:
