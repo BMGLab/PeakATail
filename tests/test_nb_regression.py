@@ -334,10 +334,14 @@ class TestFisherInflation:
         fisher = get_diff_strategy("fisher")
         nb = get_diff_strategy("nb_pairwise")
 
+        # Explicit count_mode="reads": this test documents the READS-mode
+        # anti-conservatism. The fisher default is now "cells" (calibrated,
+        # issue #74), so we opt into reads here to keep exercising the
+        # legacy inflated path this assertion is about.
         fisher_results = fisher.test(
             count_matrix, cluster_labels,
             cluster1="cluster_A", cluster2="cluster_B",
-            min_cells_per_group=5,
+            min_cells_per_group=5, count_mode="reads",
         )
         nb_results = nb.test(
             count_matrix, cluster_labels,
@@ -369,10 +373,13 @@ class TestFisherInflation:
         fisher = get_diff_strategy("fisher")
         nb = get_diff_strategy("nb_pairwise")
 
+        # Explicit count_mode="reads" (see test_fisher_inflation_vs_nb): this
+        # asserts the reads-mode p-value skew, which the calibrated default
+        # ("cells", issue #74) deliberately no longer exhibits.
         fisher_results = fisher.test(
             count_matrix, cluster_labels,
             cluster1="cluster_A", cluster2="cluster_B",
-            min_cells_per_group=5,
+            min_cells_per_group=5, count_mode="reads",
         )
         nb_results = nb.test(
             count_matrix, cluster_labels,

@@ -68,7 +68,7 @@ class FisherStrategy(DiffAPAStrategy):
         min_cells_per_group: int = 10,
         pas_gene_map: dict[str, str] | None = None,
         n_jobs: int = -1,  # Fisher is fast; n_jobs is accepted but unused.
-        count_mode: str = "reads",
+        count_mode: str = "cells",
     ) -> pd.DataFrame:
         """Run Fisher exact test for differential PAS usage.
 
@@ -153,13 +153,13 @@ class FisherStrategy(DiffAPAStrategy):
 
         # D4: read counts within a cell are correlated, so a read-based 2x2
         # table pseudoreplicates (significance scales with sequencing depth:
-        # Spearman(cells, %sig)=+0.68 on real data). ``count_mode="cells"`` is
-        # the OPT-IN de-pseudoreplicated mode — it builds the table from per-cell
-        # detection among gene-expressing cells (each cell counted once).
-        # DEFAULT is ``count_mode="reads"`` (legacy, pseudoreplicated): the
-        # default output is DELIBERATELY unchanged pending the no-atlas re-run
-        # that will validate the number-effect before any default flip (flagged
-        # in HANDOFF.md). test_nb_regression pins this legacy default.
+        # Spearman(cells, %sig)=+0.68 on real data). ``count_mode="cells"`` (the
+        # DEFAULT since issue #74) is the de-pseudoreplicated mode — it builds
+        # the table from per-cell detection among gene-expressing cells (each
+        # cell counted once), which is FDR-calibrated under a permutation null.
+        # ``count_mode="reads"`` (legacy, opt-in) is anti-conservative and is
+        # retained only for backward comparison / as a ranking screen; the
+        # inflation regression tests pass it explicitly.
         if count_mode not in ("cells", "reads"):
             raise ValueError(f"count_mode must be 'cells' or 'reads', got {count_mode!r}")
 
