@@ -913,7 +913,14 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         }
         if _offset_diag is not None:
             _stats["diagnostics"] = _offset_diag
-        output_mgr.save_stats("cleavage_offset", _stats)
+        # There is no dedicated "cleavage_offset" stage dir, so
+        # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
+        # real-run validation, not unit tests). The offset is a peak-calling
+        # correction -> persist alongside the peak-calling outputs.
+        with open(
+            output_mgr.path("peak_calling", "cleavage_offset_stats.json"), "w"
+        ) as _coff:
+            json.dump(_stats, _coff, indent=2, default=str)
 
     # Per-stage data snapshots — every step that mutates the data gets a
     # canonical file on disk.  See ema/outputs.py for the layout.
