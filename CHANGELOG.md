@@ -48,12 +48,50 @@
   channel, and the caller now says so instead of silently emitting an
   unsupported call set.
 
+### Fixed
+- **`clip_seeded` tier-1 PAS are now counted from the reads that pile up at
+  the cleavage site, not from their poly(A)-clipped reads.** The first
+  full-data run of the strategy (GSE104556 mouse1 testis) surfaced a ~10x
+  quantification regression: every tier-1 row of the count matrix held only
+  the cluster's clip reads (~1% of the reads), so the annotated matrix carried
+  4.1M counts against 41.9M from the shipped caller and the `min_read` cell
+  filter lost 23% of the real STARsolo cells. The BED coordinates and tier
+  tags were — and remain — byte-identical; only the matrix changes:
+  - a cluster that suppresses a coverage candidate takes that candidate's
+    accumulated `cb_positions` counts, restricted to its partition of the
+    candidate (several clusters split a candidate at the midpoints between
+    their anchors — the same `partition_peak_region` rule `find_pas` applies
+    to multi-PAS peaks — through the coverage strategy's own
+    `get_cb_dict_for_pas`), so the shipped mass is conserved exactly;
+  - every cluster additionally counts the accepted read ends in its cleavage
+    window (`--polya-count-window`, default `auto,25` ==
+    `[site - seq_len, site + 25]` in transcript orientation) that belong to
+    no coverage candidate, clipped at the midpoint to neighbouring clusters,
+    so nothing is counted twice. For a cluster outside every coverage peak
+    this is its whole count; inside a peak it recovers the reads the
+    coverage caller counted into `cb_positions` but never put in a candidate
+    (the streaming loop drops the ends still in `data_array` when a peak
+    closes, so every candidate interval stops ~`seq_len` bp short of the
+    pile's 3' end — on `+` those are exactly the reads at the cleavage site);
+  - the clip-read count stays in BED column 5 as the support annotation.
+  Tier-2 rows are untouched. Implemented once in `ClipSeeder.flush()` and
+  fed by all three peak-calling paths (`ClipStream` records every accepted
+  read end as two int32 arrays per chromosome — 8 bytes/read, released at
+  each chromosome flush); `tests/test_polya_three_path_agreement.py` now pins
+  per-PAS counts as well as coordinates, and
+  `tests/test_polya_tier1_counts.py` pins the accounting on a synthetic BAM
+  (a cluster inside a 200-read peak carries the peak, not ~2; an isolated
+  cluster with 30 in-window reads + 3 clip reads counts 33; tier-2 rows are
+  byte-for-byte the coverage strategy's). Each strand pass logs a mass
+  accounting (`clip_seeded counting: {...}`) so a run can show where every
+  count came from.
+
 ### Notes
 - The evidence is computed in all three peak-calling paths (monolithic,
   `--pipeline`, `--tiles`) from the `AlignedSegment` at the call site;
   `read_check`'s 5-tuple return is deliberately unchanged.
   `tests/test_polya_three_path_agreement.py` pins that the three paths
-  produce identical BED output.
+  produce identical BED output and identical per-PAS counts.
 ## Unreleased
 
 ### Added

@@ -665,6 +665,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # Stage 1: read-level poly(A) evidence settings (see
     # ema/countmatrix/polya.py).  Threaded identically into the monolithic,
     # tile and pipeline paths so all three agree.
+    from ema.countmatrix.polya import parse_count_window as _parse_count_window
     _polya_kwargs = dict(
         polya_enabled=(str(getattr(args, "polya_evidence", "on")).lower() != "off"),
         polya_min_clip=int(getattr(args, "polya_min_clip", 6)),
@@ -672,6 +673,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         polya_window=int(getattr(args, "polya_window", 100)),
         polya_seed_window=int(getattr(args, "polya_seed_window", 25)),
         polya_min_reads=int(getattr(args, "polya_min_reads", 1)),
+        polya_count_window=_parse_count_window(
+            getattr(args, "polya_count_window", "auto,25")
+        ),
     )
 
     peak_kwargs = dict(

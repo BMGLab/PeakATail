@@ -66,6 +66,9 @@ def peak_calling(
                     polya_window: int = 100,
                     polya_seed_window: int = 25,
                     polya_min_reads: int = 1,
+                    # (up, down) bp of the tier-1 count window in transcript
+                    # orientation; up == -1 means seq_len (--polya-count-window).
+                    polya_count_window: tuple = (-1, 25),
                 ):
 
     """Stream a BAM file and call peaks using a sliding coverage window.
@@ -173,6 +176,7 @@ def peak_calling(
             polya_window=polya_window,
             polya_seed_window=polya_seed_window,
             polya_min_reads=polya_min_reads,
+            polya_count_window=polya_count_window,
         )
     # --- End tile dispatch ------------------------------------------------
 
@@ -220,6 +224,7 @@ def peak_calling(
             polya_window=polya_window,
             polya_seed_window=polya_seed_window,
             polya_min_reads=polya_min_reads,
+            polya_count_window=polya_count_window,
         )
     # --- End pipeline dispatch --------------------------------------------
 
@@ -244,6 +249,7 @@ def peak_calling(
             seed_window=polya_seed_window,
             min_reads=polya_min_reads,
             window=polya_window,
+            count_window=polya_count_window,
         )
         if _polya_seeded
         else None
@@ -347,9 +353,10 @@ def peak_calling(
     # With evidence on (default) it additionally writes each PAS's clip-read
     # support into BED column 5.  Under a clip-seeding strategy the PAS are
     # not written immediately: coverage candidates are buffered in the
-    # ClipSeeder and written per chromosome by _flush_seeded so clip-site
-    # clusters (tier 1) and coverage-only peaks (tier 2) come out merged in
-    # coordinate order.
+    # ClipSeeder (together with their Peak, whose cb_positions are the count
+    # source for any tier-1 cluster that suppresses them) and written per
+    # chromosome by _flush_seeded so clip-site clusters (tier 1) and
+    # coverage-only peaks (tier 2) come out merged in coordinate order.
     def _emit_peak(peak_obj, chro_out):
         pas_results = strategy.find_pas(peak_obj)
         pas_results = merge_close_or_low_prominence(
@@ -358,7 +365,7 @@ def peak_calling(
         for pas_1, pas_2 in pas_results:
             pas_cb_dict = strategy.get_cb_dict_for_pas(peak_obj, pas_1, pas_2)
             if _seeder is not None:
-                _seeder.add_coverage_pas(pas_1, pas_2, pas_cb_dict)
+                _seeder.add_coverage_pas(pas_1, pas_2, pas_cb_dict, peak_obj)
                 continue
             pasnumber = state.bump_pasnumber()
             if _polya_collect:
@@ -456,8 +463,13 @@ def peak_calling(
         # is exactly why Phase 2 seeds candidates instead of filtering.
         # (Placed after the chromosome-change flush so a new chromosome's
         # clips never leak into the old chromosome's clusters.)
-        if _seeder is not None and _clip is not None:
-            _seeder.add_clip(_clip, cb, _umi)
+        if _seeder is not None:
+            # Every accepted read end feeds the tier-1 count source (a
+            # cluster outside every coverage candidate is counted from the
+            # read ends in its cleavage window, not from its clip reads).
+            _seeder.add_read(start1, end1, cb)
+            if _clip is not None:
+                _seeder.add_clip(_clip, cb, _umi)
 
         # Update window-based local lambda from trailing deque of read positions
         if dynamic_threshold:
@@ -528,6 +540,12 @@ def peak_calling(
 
     matrix.close()
     bedfile.close()
+
+    if _seeder is not None:
+        log.info("clip_seeded counting (%s strand%s): %s",
+                 "-" if direction else "+",
+                 f", region {region[0]}:{region[1]}-{region[2]}" if region else "",
+                 _seeder.stats)
 
     # Advance progress bar for the final chromosome (chromosome-change event
     # does not fire for the last chrom since there is no subsequent read).

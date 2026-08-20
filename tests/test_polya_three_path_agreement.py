@@ -5,7 +5,8 @@ pipeline and the tile workers, and the benchmark exercises only the
 monolithic path — so a divergence in the other two would never be caught by
 re-running the benchmark (see the Stage-0 stop signal in
 ``manuscript/10_caller_fix_plan.md``).  Stage 1 adds a per-read measurement
-to all three; these tests pin that they produce the same BED.
+to all three; these tests pin that they produce the same BED — and, since
+the Stage-2 counting fix, the same per-PAS counts.
 
 The pipeline path spawns three subprocesses and the tile path a process
 pool, so both are slow — but they are the only way to prove the mirrors are
@@ -102,6 +103,21 @@ def _coords_and_scores(bed: Path):
             for r in _rows(bed)]
 
 
+def _counts_by_coord(bed: Path):
+    """``{(chrom, start, end, strand): sorted per-cell counts}`` — column ids
+    differ between paths (tiles renumber CBs), so compare the multiset."""
+    totals: dict[int, list[int]] = {}
+    for line in bed.with_suffix(".mtx").read_text().splitlines():
+        if line.strip():
+            r, _c, n = line.split()
+            totals.setdefault(int(r), []).append(int(n))
+    return {
+        (r["chrom"], r["start"], r["end"], r["strand"]):
+            sorted(totals.get(int(r["name"]), []))
+        for r in _rows(bed)
+    }
+
+
 @pytest.mark.parametrize("strategy_name", ["lambda_gradient", "clip_seeded"])
 def test_pipeline_path_matches_monolithic(bam, tmp_path, strategy_name):
     mono = _call(bam, tmp_path, f"mono_{strategy_name}", strategy_name)
@@ -109,6 +125,9 @@ def test_pipeline_path_matches_monolithic(bam, tmp_path, strategy_name):
                  use_pipeline=True)
     assert _coords_and_scores(pipe) == _coords_and_scores(mono), (
         "--pipeline diverged from the monolithic path on poly(A) evidence"
+    )
+    assert _counts_by_coord(pipe) == _counts_by_coord(mono), (
+        "--pipeline diverged from the monolithic path on PAS counts"
     )
 
 
@@ -122,6 +141,9 @@ def test_tile_path_matches_monolithic(bam, tmp_path, strategy_name):
                   n_workers=2)
     assert _coords_and_scores(tiled) == _coords_and_scores(mono), (
         "--tiles diverged from the monolithic path on poly(A) evidence"
+    )
+    assert _counts_by_coord(tiled) == _counts_by_coord(mono), (
+        "--tiles diverged from the monolithic path on PAS counts"
     )
 
 

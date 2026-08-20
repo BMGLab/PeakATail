@@ -307,6 +307,7 @@ this evidence, and the run should not be read as clip-supported when it fires.
 | `--polya-window` | INT | 100 | Radius in bp around a PAS's strand-aware 3' base within which clip reads count as its support. |
 | `--polya-seed-window` | INT | 25 | Single-linkage gap for clustering clip sites into candidates (`clip_seeded` only). |
 | `--polya-min-reads` | INT | 1 | Minimum distinct molecules (UMI-deduplicated; a read with no `UB` tag counts as one molecule) for a cluster to be called (`clip_seeded` only). |
+| `--polya-count-window` | TEXT | `auto,25` | `UP,DOWN` bp, transcript orientation, around a tier-1 cluster's cleavage site. Read ends in `[site-UP, site+DOWN]` that belong to no coverage candidate are counted on the tier-1 row (a cluster inside a coverage peak also takes that peak's counts). `auto` == `--seq-len`, because R2 3' ends pile up just upstream of cleavage (`clip_seeded` only). |
 
 ### Internal-priming annotation (D9)
 

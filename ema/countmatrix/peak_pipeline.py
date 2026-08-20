@@ -229,7 +229,7 @@ def finder_loop(
     from sortedcontainers import SortedList
 
     from ema.countmatrix.peak import Peak
-    from ema.countmatrix.polya import ClipAccumulator
+    from ema.countmatrix.polya import ClipStream
 
     current_threshold = default_threshold
     background_deque: deque[int] = deque()
@@ -242,12 +242,13 @@ def finder_loop(
     i: int = 0
     peak = Peak(peak_strand=direction)
 
-    # Stage 1 (seeded): chromosome-level clip accumulator.  The finder owns
-    # it (it sees every validated read); a ``("__polya_clips__", chrom,
-    # sites)`` message hands the OLD chromosome's evidence to the writer
-    # AFTER that chromosome's last peak, which is the writer's signal to run
-    # the two-tier emission for that chromosome.
-    clip_accum = ClipAccumulator() if polya_seeded else None
+    # Stage 1 (seeded): chromosome-level clip evidence.  The finder owns it
+    # (it sees every validated read): every qualifying clip read plus every
+    # accepted read end (the tier-1 count source).  A ``("__polya_clips__",
+    # chrom, ClipStream)`` message hands the OLD chromosome's evidence to the
+    # writer AFTER that chromosome's last peak, which is the writer's signal
+    # to run the two-tier emission for that chromosome.
+    clip_accum = ClipStream() if polya_seeded else None
 
     try:
         while True:
@@ -264,8 +265,8 @@ def finder_loop(
                     if signal or len(peak.peak_list) != 0:
                         out_queue.put((chro, peak))
                     if clip_accum is not None:
-                        out_queue.put(("__polya_clips__", chro, clip_accum.sites))
-                        clip_accum = ClipAccumulator()
+                        out_queue.put(("__polya_clips__", chro, clip_accum))
+                        clip_accum = ClipStream()
 
                     signal = False
                     peak = Peak(
@@ -286,8 +287,10 @@ def finder_loop(
                 # Seeded mode: every qualifying clip read feeds the
                 # chromosome accumulator (after the flush above so a new
                 # chromosome's clips never leak into the old one's clusters).
-                if clip_accum is not None and clip is not None:
-                    clip_accum.add(clip, cb, umi)
+                if clip_accum is not None:
+                    clip_accum.add_read(start1, end1, cb)
+                    if clip is not None:
+                        clip_accum.add_clip(clip, cb, umi)
 
                 # --- dynamic threshold update ---
                 if dynamic_threshold:
@@ -351,7 +354,7 @@ def finder_loop(
         if signal or len(peak.peak_list) != 0:
             out_queue.put((chro, peak))
         if clip_accum is not None:
-            out_queue.put(("__polya_clips__", chro, clip_accum.sites))
+            out_queue.put(("__polya_clips__", chro, clip_accum))
 
     finally:
         out_queue.put(None)
@@ -369,6 +372,7 @@ def writer_loop(
     polya_seed_window: int = 25,
     polya_min_reads: int = 1,
     direction: bool = False,
+    polya_count_window: tuple = (-1, 25),
 ) -> None:
     """Writer stage: consume peaks, run strategy, write BED and MTX.
 
@@ -380,13 +384,13 @@ def writer_loop(
     support in BED column 5 (computed from the peak's own accumulated
     ``polya_sites``).  Under a clip-seeding strategy the writer instead
     buffers coverage candidates per chromosome and performs the two-tier
-    emission when the finder's ``("__polya_clips__", chrom, sites)``
+    emission when the finder's ``("__polya_clips__", chrom, ClipStream)``
     message arrives (which is only ever sent after that chromosome's last
     peak).
 
     Args:
         in_queue: Queue delivering ``(chrom_str, Peak)`` tuples — plus, in
-            seeded mode, ``("__polya_clips__", chrom_str, sites)`` clip
+            seeded mode, ``("__polya_clips__", chrom_str, ClipStream)`` clip
             hand-off messages — from the finder.
         bedfilepath: Output path for the BED file.
         matrixpath: Output path for the count matrix (MTX) file.
@@ -412,6 +416,7 @@ def writer_loop(
                 seed_window=polya_seed_window,
                 min_reads=polya_min_reads,
                 window=polya_window,
+                count_window=polya_count_window,
             )
             if polya_seeded
             else None
@@ -438,9 +443,9 @@ def writer_loop(
                 # Finder handed over one chromosome's clip evidence: run the
                 # two-tier emission for that chromosome now.  (Only sent in
                 # seeded mode, and only after that chromosome's last peak.)
-                _, chro, sites = item
+                _, chro, stream = item
                 if seeder is not None:
-                    seeder.load_sites(sites)
+                    seeder.load_stream(stream)
                     _flush_seeded(chro)
                 continue
 
@@ -457,7 +462,7 @@ def writer_loop(
             for pas_1, pas_2 in pas_results:
                 pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
                 if seeder is not None:
-                    seeder.add_coverage_pas(pas_1, pas_2, pas_cb_dict)
+                    seeder.add_coverage_pas(pas_1, pas_2, pas_cb_dict, peak)
                     continue
                 Peak.pasnumber += 1
                 if polya_enabled:
@@ -476,6 +481,13 @@ def writer_loop(
                     score=_support,
                 )
                 matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+
+        if seeder is not None:
+            import logging
+            logging.getLogger(__name__).info(
+                "clip_seeded counting (%s strand, pipeline writer): %s",
+                "-" if direction else "+", seeder.stats,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -507,6 +519,7 @@ def run_pipeline(
     polya_window: int = 100,
     polya_seed_window: int = 25,
     polya_min_reads: int = 1,
+    polya_count_window: tuple = (-1, 25),
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
 
@@ -638,6 +651,7 @@ def run_pipeline(
             polya_seed_window,
             polya_min_reads,
             direction,
+            polya_count_window,
         ),
         daemon=True,
     )

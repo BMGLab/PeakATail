@@ -695,6 +695,22 @@ class RunConfig:
             ),
         ),
     )
+    polya_count_window: str = field(
+        default="auto,25",
+        metadata=_spec(
+            cli_flag="--polya-count-window", yaml_key="polya_count_window",
+            legacy_args_attr="polya_count_window",
+            description=(
+                "Tier-1 count window 'UP,DOWN' in bp, transcript orientation "
+                "around a clip cluster's cleavage site (clip_seeded strategy "
+                "only). A cluster that overlaps no coverage peak is counted "
+                "from every accepted read end in [site-UP, site+DOWN]; "
+                "clusters inside a coverage peak take that peak's counts "
+                "instead. 'auto' == --seq-len (R2 3' ends pile up just "
+                "upstream of cleavage). Default 'auto,25'."
+            ),
+        ),
+    )
     min_pas_per_cell: int = field(
         default=50,
         metadata=_spec(

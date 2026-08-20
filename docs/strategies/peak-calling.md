@@ -219,6 +219,18 @@ coverage peaks can reach it. Candidates have to start from the clips.
 5. Both tiers go to `pasbed.bed` as ordinary BED6 rows. The **tier tag is BED
    column 5**: clip-read support, so `score == 0` means coverage-only.
    `--polya-mode filter` drops exactly that tier.
+6. **Counting.** A tier-1 row is counted from the reads that pile up at its
+   cleavage site, never from its clip reads alone (those are ~1% of the
+   reads — column 5 keeps them as the support annotation). A cluster that
+   suppresses a coverage candidate takes that candidate's `cb_positions`
+   counts, restricted to its partition of the candidate (several clusters
+   split a candidate at the midpoints between their anchors, exactly like
+   `find_pas` splits a multi-PAS peak); every cluster additionally counts
+   the accepted read ends inside `--polya-count-window` (default
+   `[site - seq_len, site + 25]`, transcript orientation) that belong to no
+   coverage candidate, clipped at the midpoint to its neighbours — so no
+   read is counted twice and the coverage strategy's mass is a floor.
+   Tier-2 rows are the coverage strategy's rows unchanged.
 
 ### Tunable hyperparameters
 
@@ -229,6 +241,7 @@ coverage peaks can reach it. Candidates have to start from the clips.
 | `--polya-seed-window` | 25 | Single-linkage gap for clustering clip sites |
 | `--polya-min-reads` | 1 | Minimum distinct molecules per emitted cluster |
 | `--polya-window` | 100 | Radius for attributing clip support to a PAS, and for tier-1/tier-2 overlap suppression |
+| `--polya-count-window` | `auto,25` | `UP,DOWN` bp around a tier-1 cleavage site (transcript orientation) within which read ends outside every coverage candidate are counted on the tier-1 row; `auto` == `--seq-len` |
 
 ### When to use
 

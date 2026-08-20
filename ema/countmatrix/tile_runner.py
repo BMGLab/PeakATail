@@ -165,6 +165,7 @@ class JobSpec:
     polya_window: int = 100
     polya_seed_window: int = 25
     polya_min_reads: int = 1
+    polya_count_window: tuple = (-1, 25)
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +322,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             polya_window=args.polya_window,
             polya_seed_window=args.polya_seed_window,
             polya_min_reads=args.polya_min_reads,
+            polya_count_window=args.polya_count_window,
         )
     else:
         tile_id = args["tile_id"]
@@ -350,6 +352,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             polya_window=args.get("polya_window", 100),
             polya_seed_window=args.get("polya_seed_window", 25),
             polya_min_reads=args.get("polya_min_reads", 1),
+            polya_count_window=args.get("polya_count_window", (-1, 25)),
         )
 
     # Per-worker isolation: reset all process-global mutable state
@@ -637,6 +640,7 @@ def build_job_specs(
     polya_window: int = 100,
     polya_seed_window: int = 25,
     polya_min_reads: int = 1,
+    polya_count_window: tuple = (-1, 25),
 ) -> list[JobSpec]:
     """Build a flat list of :class:`JobSpec` across all datasets × chroms × tiles × directions.
 
@@ -714,6 +718,7 @@ def build_job_specs(
                         polya_window=polya_window,
                         polya_seed_window=polya_seed_window,
                         polya_min_reads=polya_min_reads,
+                        polya_count_window=tuple(polya_count_window),
                     ))
                     job_id += 1
 
@@ -855,6 +860,7 @@ def run_tiled(
     polya_window: int = 100,
     polya_seed_window: int = 25,
     polya_min_reads: int = 1,
+    polya_count_window: tuple = (-1, 25),
 ) -> None:
     """Run tile-parallel peak calling and merge results into final output files.
 
@@ -928,6 +934,7 @@ def run_tiled(
         polya_window=polya_window,
         polya_seed_window=polya_seed_window,
         polya_min_reads=polya_min_reads,
+        polya_count_window=tuple(polya_count_window),
     )
     if polya_enabled:
         from ema.config import variable_config as _vc
