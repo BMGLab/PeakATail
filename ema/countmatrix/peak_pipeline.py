@@ -117,13 +117,23 @@ def reader_loop(
     bam_threads: int,
     default_sample_id: str,
     out_queue: mp.Queue,
+    polya_enabled: bool = True,
+    polya_min_clip: int = 6,
+    polya_min_purity: float = 0.8,
 ) -> None:
     """Reader stage: iterate BAM, validate, batch, emit on *out_queue*.
 
     Each batch placed on the queue is a ``list`` of
-    ``(chrom_str, start, end, strand_bool, cb_str)`` tuples.  Only valid reads
-    (those for which :func:`~ema.countmatrix.read.read_check` returns a non-zero
-    chrom) are included.  Invalid reads are silently skipped.
+    ``(chrom_str, start, end, strand_bool, cb_str, clip_site, umi)`` tuples.
+    Only valid reads (those for which
+    :func:`~ema.countmatrix.read.read_check` returns a non-zero chrom) are
+    included.  Invalid reads are silently skipped.
+
+    Stage 1: the reader owns the ``AlignedSegment``, so the poly(A) clip
+    measurement is taken HERE (mirroring the monolithic hook right after the
+    ``read_check`` success) and travels as two extra primitive tuple slots —
+    ``read_check``'s own 5-tuple return is deliberately not widened.  When
+    *polya_enabled* is off, both slots are ``None`` for every read.
 
     A sentinel ``None`` is placed on the queue after the last batch to signal
     end-of-stream.
@@ -136,22 +146,31 @@ def reader_loop(
         bam_threads: Threads for pysam BGZF block decompression.
         default_sample_id: Fallback sample ID for reads without an RG tag.
         out_queue: Bounded :class:`multiprocessing.Queue` to place batches on.
+        polya_enabled: Compute per-read poly(A) clip evidence (default on).
+        polya_min_clip: Minimum terminal soft-clip / A-run length.
+        polya_min_purity: Minimum A (T) fraction over the clipped bases.
     """
     import pysam
 
+    from ema.countmatrix.polya import clip_site, read_umi
     from ema.countmatrix.read import read_check, set_default_sample_id
 
     set_default_sample_id(default_sample_id)
 
     bamfile = pysam.AlignmentFile(bam_path, "rb", threads=bam_threads)
 
-    batch: list[tuple[str, int, int, bool, str]] = []
+    batch: list[tuple[str, int, int, bool, str, int | None, str | None]] = []
     try:
         for read in bamfile:
             chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
             if chro1 == 0:
                 continue
-            batch.append((chro1, start1, end1, strand, cb))
+            clip = umi = None
+            if polya_enabled:
+                clip = clip_site(read, polya_min_clip, polya_min_purity)
+                if clip is not None:
+                    umi = read_umi(read)
+            batch.append((chro1, start1, end1, strand, cb, clip, umi))
             if len(batch) >= batch_size:
                 out_queue.put(batch)
                 batch = []
@@ -176,6 +195,8 @@ def finder_loop(
     floor_threshold: int,
     lambda_fold_change: float,
     lambda_window: int,
+    polya_enabled: bool = True,
+    polya_seeded: bool = False,
 ) -> None:
     """Finder stage: consume read batches, run streaming peak detection.
 
@@ -208,6 +229,7 @@ def finder_loop(
     from sortedcontainers import SortedList
 
     from ema.countmatrix.peak import Peak
+    from ema.countmatrix.polya import ClipAccumulator
 
     current_threshold = default_threshold
     background_deque: deque[int] = deque()
@@ -220,6 +242,13 @@ def finder_loop(
     i: int = 0
     peak = Peak(peak_strand=direction)
 
+    # Stage 1 (seeded): chromosome-level clip accumulator.  The finder owns
+    # it (it sees every validated read); a ``("__polya_clips__", chrom,
+    # sites)`` message hands the OLD chromosome's evidence to the writer
+    # AFTER that chromosome's last peak, which is the writer's signal to run
+    # the two-tier emission for that chromosome.
+    clip_accum = ClipAccumulator() if polya_seeded else None
+
     try:
         while True:
             batch = in_queue.get()
@@ -228,12 +257,15 @@ def finder_loop(
                 in_queue.put(None)  # defensive re-put for multi-consumer safety
                 break
 
-            for chro1, start1, end1, strand, cb in batch:
+            for chro1, start1, end1, strand, cb, clip, umi in batch:
 
                 # --- chromosome change: flush pending peak ---
                 if chro1 != chro:
                     if signal or len(peak.peak_list) != 0:
                         out_queue.put((chro, peak))
+                    if clip_accum is not None:
+                        out_queue.put(("__polya_clips__", chro, clip_accum.sites))
+                        clip_accum = ClipAccumulator()
 
                     signal = False
                     peak = Peak(
@@ -250,6 +282,12 @@ def finder_loop(
                     if dynamic_threshold:
                         background_deque.clear()
                         current_threshold = floor_threshold
+
+                # Seeded mode: every qualifying clip read feeds the
+                # chromosome accumulator (after the flush above so a new
+                # chromosome's clips never leak into the old one's clusters).
+                if clip_accum is not None and clip is not None:
+                    clip_accum.add(clip, cb, umi)
 
                 # --- dynamic threshold update ---
                 if dynamic_threshold:
@@ -268,6 +306,10 @@ def finder_loop(
                     if start1 <= l_end:
                         peak.cb_counting(cb=cb)
                         peak.cb_position_counting(end1, cb)
+                        # Phase 1: per-peak clip accumulation, mirroring
+                        # the monolithic hook next to cb_position_counting.
+                        if clip is not None:
+                            peak.polya_counting(clip, cb, umi)
 
                 if signal and start1 > l_end:
                     signal = False
@@ -308,6 +350,8 @@ def finder_loop(
         # --- final flush after all batches consumed ---
         if signal or len(peak.peak_list) != 0:
             out_queue.put((chro, peak))
+        if clip_accum is not None:
+            out_queue.put(("__polya_clips__", chro, clip_accum.sites))
 
     finally:
         out_queue.put(None)
@@ -320,6 +364,11 @@ def writer_loop(
     strategy_name: str,
     min_pas_spacing: int = 0,
     min_pas_prominence: float = 0.0,
+    polya_enabled: bool = True,
+    polya_window: int = 100,
+    polya_seed_window: int = 25,
+    polya_min_reads: int = 1,
+    direction: bool = False,
 ) -> None:
     """Writer stage: consume peaks, run strategy, write BED and MTX.
 
@@ -327,29 +376,73 @@ def writer_loop(
     :attr:`~ema.countmatrix.peak.Peak.pasnumber` class counter for this run.
     All BED and MTX output is written here.
 
+    Stage 1: with *polya_enabled* each written PAS carries its clip-read
+    support in BED column 5 (computed from the peak's own accumulated
+    ``polya_sites``).  Under a clip-seeding strategy the writer instead
+    buffers coverage candidates per chromosome and performs the two-tier
+    emission when the finder's ``("__polya_clips__", chrom, sites)``
+    message arrives (which is only ever sent after that chromosome's last
+    peak).
+
     Args:
-        in_queue: Queue delivering ``(chrom_str, Peak)`` tuples from the finder.
+        in_queue: Queue delivering ``(chrom_str, Peak)`` tuples — plus, in
+            seeded mode, ``("__polya_clips__", chrom_str, sites)`` clip
+            hand-off messages — from the finder.
         bedfilepath: Output path for the BED file.
         matrixpath: Output path for the count matrix (MTX) file.
         strategy_name: Strategy name key for :func:`~ema.strategies.get_strategy`.
     """
     from ema.countmatrix.peak import Peak
     from ema.countmatrix.paswrite import pas_write, matrix_write
+    from ema.countmatrix.polya import ClipSeeder
     from ema.strategies import get_strategy
     from ema.strategies.utils import merge_close_or_low_prominence
 
     # Instantiate strategy locally (strategy objects may not be picklable)
     strategy = get_strategy(strategy_name)
+    polya_seeded = bool(getattr(strategy, "seeds_from_clips", False))
 
     # Reset process-local global state so this worker starts clean
     Peak.reset_pasnumber()
 
     with open(bedfilepath, "w") as bedfile, open(matrixpath, "w") as matrix:
+        seeder: ClipSeeder | None = (
+            ClipSeeder(
+                direction,
+                seed_window=polya_seed_window,
+                min_reads=polya_min_reads,
+                window=polya_window,
+            )
+            if polya_seeded
+            else None
+        )
+
+        def _flush_seeded(chro_out: str) -> None:
+            if seeder is None:
+                return
+            for _start, _end, _support, _cb_dict in seeder.flush():
+                Peak.pasnumber += 1
+                pas_write(
+                    chro_out, _start, _end, direction,
+                    pasnumber=Peak.pasnumber, output=bedfile, score=_support,
+                )
+                matrix_write(_cb_dict, Peak.pasnumber, matrix)
+
         while True:
             item = in_queue.get()
             if item is None:
                 in_queue.put(None)  # defensive re-put
                 break
+
+            if len(item) == 3 and item[0] == "__polya_clips__":
+                # Finder handed over one chromosome's clip evidence: run the
+                # two-tier emission for that chromosome now.  (Only sent in
+                # seeded mode, and only after that chromosome's last peak.)
+                _, chro, sites = item
+                if seeder is not None:
+                    seeder.load_sites(sites)
+                    _flush_seeded(chro)
+                continue
 
             chro, peak = item
 
@@ -362,8 +455,17 @@ def writer_loop(
                 pas_results, peak, strategy, min_pas_spacing, min_pas_prominence,
             )
             for pas_1, pas_2 in pas_results:
-                Peak.pasnumber += 1
                 pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
+                if seeder is not None:
+                    seeder.add_coverage_pas(pas_1, pas_2, pas_cb_dict)
+                    continue
+                Peak.pasnumber += 1
+                if polya_enabled:
+                    _support, _ = peak.polya_support(
+                        pas_1, pas_2, peak.peak_strand, polya_window
+                    )
+                else:
+                    _support = 0
                 pas_write(
                     chro,
                     pas_1,
@@ -371,6 +473,7 @@ def writer_loop(
                     peak.peak_strand,
                     pasnumber=Peak.pasnumber,
                     output=bedfile,
+                    score=_support,
                 )
                 matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
@@ -398,6 +501,12 @@ def run_pipeline(
     progress_client=None,
     min_pas_spacing: int = -1,
     min_pas_prominence: float = 5.0,
+    polya_enabled: bool = True,
+    polya_min_clip: int = 6,
+    polya_min_purity: float = 0.8,
+    polya_window: int = 100,
+    polya_seed_window: int = 25,
+    polya_min_reads: int = 1,
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
 
@@ -446,6 +555,29 @@ def run_pipeline(
         from ema.countmatrix.bam_utils import infer_median_read_length
         min_pas_spacing = infer_median_read_length(bamfile_dir)
 
+    # Stage 1: resolve whether the strategy seeds from clips (the finder
+    # needs the flag as a plain bool — strategy objects don't cross the
+    # spawn boundary) and run the once-per-BAM clip-rate QC in the parent.
+    from ema.strategies import get_strategy as _get_strategy
+    _polya_seeded = bool(
+        getattr(_get_strategy(strategy_name), "seeds_from_clips", False)
+    )
+    if _polya_seeded and not polya_enabled:
+        raise ValueError(
+            "peak strategy 'clip_seeded' requires poly(A) clip evidence; "
+            "do not combine it with --polya-evidence off."
+        )
+    _polya_collect = polya_enabled or _polya_seeded
+    if _polya_collect:
+        from ema.config import variable_config as _vc
+        from ema.countmatrix.polya import check_clip_rate
+        check_clip_rate(
+            str(bamfile_dir),
+            min_clip=polya_min_clip,
+            min_purity=polya_min_purity,
+            barcode_tag=_vc.barcode_tag or "CB",
+        )
+
     ctx = mp.get_context("spawn")
 
     # Two bounded queues for backpressure
@@ -464,6 +596,9 @@ def run_pipeline(
             bam_threads,
             default_sample_id,
             reader_to_finder,
+            _polya_collect,
+            polya_min_clip,
+            polya_min_purity,
         ),
         daemon=True,
     )
@@ -482,6 +617,8 @@ def run_pipeline(
             floor_threshold,
             lambda_fold_change,
             lambda_window,
+            _polya_collect,
+            _polya_seeded,
         ),
         daemon=True,
     )
@@ -496,6 +633,11 @@ def run_pipeline(
             strategy_name,
             min_pas_spacing,
             min_pas_prominence,
+            _polya_collect,
+            polya_window,
+            polya_seed_window,
+            polya_min_reads,
+            direction,
         ),
         daemon=True,
     )

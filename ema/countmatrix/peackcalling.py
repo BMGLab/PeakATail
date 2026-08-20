@@ -8,6 +8,7 @@ from ema.countmatrix.peak import Peak
 from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import matrix_write, pas_write
+from ema.countmatrix.polya import ClipSeeder, check_clip_rate, clip_site, read_umi
 from ema.config import directory_config, variable_config
 from ema.strategies.utils import merge_close_or_low_prominence
 from typing import TYPE_CHECKING
@@ -53,6 +54,18 @@ def peak_calling(
                     # default).  0.0 disables the prominence tier.
                     min_pas_spacing: int = -1,
                     min_pas_prominence: float = 5.0,
+                    # --- Stage 1: read-level poly(A) evidence -----------------
+                    # polya_enabled default ON (annotate-only: the clip-read
+                    # support of each PAS lands in BED column 5, previously a
+                    # hardcoded 0; no coordinates or counts change).  The
+                    # clip_seeded strategy additionally SEEDS PAS candidates
+                    # from clip-site clusters (see ema/strategies/clip_seeded).
+                    polya_enabled: bool = True,
+                    polya_min_clip: int = 6,
+                    polya_min_purity: float = 0.8,
+                    polya_window: int = 100,
+                    polya_seed_window: int = 25,
+                    polya_min_reads: int = 1,
                 ):
 
     """Stream a BAM file and call peaks using a sliding coverage window.
@@ -154,6 +167,12 @@ def peak_calling(
             default_sample_id=default_sample_id,
             min_pas_spacing=min_pas_spacing,
             min_pas_prominence=min_pas_prominence,
+            polya_enabled=polya_enabled,
+            polya_min_clip=polya_min_clip,
+            polya_min_purity=polya_min_purity,
+            polya_window=polya_window,
+            polya_seed_window=polya_seed_window,
+            polya_min_reads=polya_min_reads,
         )
     # --- End tile dispatch ------------------------------------------------
 
@@ -195,12 +214,41 @@ def peak_calling(
             default_sample_id=_default_sample_id,
             min_pas_spacing=min_pas_spacing,
             min_pas_prominence=min_pas_prominence,
+            polya_enabled=polya_enabled,
+            polya_min_clip=polya_min_clip,
+            polya_min_purity=polya_min_purity,
+            polya_window=polya_window,
+            polya_seed_window=polya_seed_window,
+            polya_min_reads=polya_min_reads,
         )
     # --- End pipeline dispatch --------------------------------------------
 
     if strategy is None:
         from ema.strategies import get_strategy
         strategy = get_strategy("original")
+
+    # --- Stage 1: poly(A) evidence setup -----------------------------------
+    # A clip-seeding strategy needs the clip measurements whatever the
+    # polya_enabled flag says — refuse the contradictory combination loudly
+    # instead of silently emitting a coverage-only call set.
+    _polya_seeded = bool(getattr(strategy, "seeds_from_clips", False))
+    if _polya_seeded and not polya_enabled:
+        raise ValueError(
+            "peak strategy 'clip_seeded' requires poly(A) clip evidence; "
+            "do not combine it with --polya-evidence off."
+        )
+    _polya_collect = polya_enabled or _polya_seeded
+    _seeder = (
+        ClipSeeder(
+            direction,
+            seed_window=polya_seed_window,
+            min_reads=polya_min_reads,
+            window=polya_window,
+        )
+        if _polya_seeded
+        else None
+    )
+    # --- End Stage 1 setup --------------------------------------------------
 
     # --- Phase 1: encapsulated state setup --------------------------------
     # Resolve BarcodeIndex: use caller-supplied instance if given, otherwise
@@ -235,6 +283,18 @@ def peak_calling(
                 "Run `samtools index {bamfile_dir}` to create it."
             )
     # --- End Phase 2 BAI check -------------------------------------------
+
+    # R2 mitigation: estimate the poly(A) clip rate once per BAM per process
+    # and warn loudly when the evidence channel looks destroyed.  Full-scan
+    # invocations only — tile workers (region != None) inherit the check from
+    # their dispatcher, and re-sampling per tile would be pure overhead.
+    if _polya_collect and region is None:
+        check_clip_rate(
+            str(bamfile_dir),
+            min_clip=polya_min_clip,
+            min_purity=polya_min_purity,
+            barcode_tag=variable_config.barcode_tag or "CB",
+        )
 
     # Open BAM: use threads=1 in region mode (fetch already limits I/O);
     # use caller-specified bam_threads in full-scan mode.
@@ -280,6 +340,51 @@ def peak_calling(
     peak = Peak(peak_strand=direction)
     i = 0 # I forgot what is this but use in peakstarting block
 
+    # --- Stage 1: emission helpers ----------------------------------------
+    # _emit_peak replaces the five copy-pasted find_pas/merge/write blocks.
+    # With poly(A) evidence off it performs exactly the same calls in the
+    # same order as before (score column stays 0) — byte-identical output.
+    # With evidence on (default) it additionally writes each PAS's clip-read
+    # support into BED column 5.  Under a clip-seeding strategy the PAS are
+    # not written immediately: coverage candidates are buffered in the
+    # ClipSeeder and written per chromosome by _flush_seeded so clip-site
+    # clusters (tier 1) and coverage-only peaks (tier 2) come out merged in
+    # coordinate order.
+    def _emit_peak(peak_obj, chro_out):
+        pas_results = strategy.find_pas(peak_obj)
+        pas_results = merge_close_or_low_prominence(
+            pas_results, peak_obj, strategy, min_pas_spacing, min_pas_prominence
+        )
+        for pas_1, pas_2 in pas_results:
+            pas_cb_dict = strategy.get_cb_dict_for_pas(peak_obj, pas_1, pas_2)
+            if _seeder is not None:
+                _seeder.add_coverage_pas(pas_1, pas_2, pas_cb_dict)
+                continue
+            pasnumber = state.bump_pasnumber()
+            if _polya_collect:
+                _support, _ = peak_obj.polya_support(
+                    pas_1, pas_2, direction, polya_window
+                )
+            else:
+                _support = 0
+            pas_write(
+                chro_out, pas_1, pas_2, direction,
+                pasnumber=pasnumber, output=bedfile, score=_support,
+            )
+            matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
+
+    def _flush_seeded(chro_out):
+        if _seeder is None:
+            return
+        for _start, _end, _support, _cb_dict in _seeder.flush():
+            pasnumber = state.bump_pasnumber()
+            pas_write(
+                chro_out, _start, _end, direction,
+                pasnumber=pasnumber, output=bedfile, score=_support,
+            )
+            matrix_write(_cb_dict, pasnumber, matrix, index=index)
+    # --- End Stage 1 helpers -----------------------------------------------
+
     # Build the read iterator: region fetch or full-BAM scan.
     if region is not None:
         _r_chrom, _r_start, _r_end = region
@@ -295,33 +400,38 @@ def peak_calling(
 
         # checking read validity if it is not countinue to next ittirate
         #chro1 is play role as condition check
-        chro1, start1, end1, strand, cb = read_check(
+        # `strand` is unused: read_check only accepts reads whose strand
+        # equals `direction`, and the emit helpers take the strand from
+        # `direction` directly rather than from this loop variable (which,
+        # on a pass that accepted no reads at all, would still hold the
+        # sentinel 0 from the last rejected read).
+        chro1, start1, end1, _strand, cb = read_check(
             read=read, direction=direction, sample_id=sample_id
         )
 
         if chro1 == 0:
             continue
 
+        # Stage 1: take the clip measurement from the AlignedSegment at the
+        # call site, after the read_check success — read_check's 5-tuple is
+        # shared by the monolithic / pipeline / tile paths and must NOT be
+        # widened (Stage-0 stop signal).  The UMI lookup only happens for
+        # the ~1% of reads that actually carry a qualifying clip.
+        _clip = _umi = None
+        if _polya_collect:
+            _clip = clip_site(read, polya_min_clip, polya_min_purity)
+            if _clip is not None:
+                _umi = read_umi(read)
+
         if chro1 != chro:  # Chromosome changed — flush peaks from OLD chromosome
             if signal:
-
-                pas_results = strategy.find_pas(peak)
-                pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
-                for pas_1, pas_2 in pas_results:
-                    pasnumber = state.bump_pasnumber()
-                    pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
-                    matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
-
+                _emit_peak(peak, chro)
             elif len(peak.peak_list) != 0:
+                _emit_peak(peak, chro)
 
-                pas_results = strategy.find_pas(peak)
-                pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
-                for pas_1, pas_2 in pas_results:
-                    pasnumber = state.bump_pasnumber()
-                    pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
-                    matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
+            # Seeded mode: the OLD chromosome's clip clusters + buffered
+            # coverage candidates are written here, in coordinate order.
+            _flush_seeded(chro)
 
             signal = False
             peak = Peak(peak_start=0, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={})  # make new instance of Peak class
@@ -340,6 +450,15 @@ def peak_calling(
                 background_deque.clear()
                 current_threshold = floor_threshold
 
+        # Seeded mode: EVERY qualifying clip read feeds the chromosome-level
+        # accumulator, whether or not a coverage peak ever fires here — ~60%
+        # of the clip evidence lies outside every coverage-peak window, which
+        # is exactly why Phase 2 seeds candidates instead of filtering.
+        # (Placed after the chromosome-change flush so a new chromosome's
+        # clips never leak into the old chromosome's clusters.)
+        if _seeder is not None and _clip is not None:
+            _seeder.add_clip(_clip, cb, _umi)
+
         # Update window-based local lambda from trailing deque of read positions
         if dynamic_threshold:
             background_deque.append(end1)
@@ -354,6 +473,11 @@ def peak_calling(
             if start1 <= l_end:  # only count if read is still within peak
                 peak.cb_counting(cb=cb)
                 peak.cb_position_counting(end1, cb)
+                # Phase 1: per-peak clip accumulation, mirroring
+                # cb_position_counting (annotate mode scores each emitted
+                # PAS from its own peak's clip evidence).
+                if _clip is not None:
+                    peak.polya_counting(_clip, cb, _umi)
 
 
         # If newread start_point is more than l_end(where height is more than threshold)
@@ -383,13 +507,7 @@ def peak_calling(
                 #Peak has been completed so find pas
                 #write pas
                 #make new instance of peak
-                pas_results = strategy.find_pas(peak)
-                pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
-                for pas_1, pas_2 in pas_results:
-                    pasnumber = state.bump_pasnumber()
-                    pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-                    pas_write(chro1, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
-                    matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
+                _emit_peak(peak, chro1)
 
                 peak = Peak(peak_start=start1, peak_strand=direction, peak_list=[], cb_dict={}, last_peak_end=0, cb_positions={}) #make new instance of Peak class
             else:
@@ -401,21 +519,12 @@ def peak_calling(
 
     # Final flush for last chromosome — without this, the last peak is dropped
     if signal:
-        pas_results = strategy.find_pas(peak)
-        pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
-        for pas_1, pas_2 in pas_results:
-            pasnumber = state.bump_pasnumber()
-            pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-            pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
-            matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
+        _emit_peak(peak, chro)
     elif len(peak.peak_list) != 0:
-        pas_results = strategy.find_pas(peak)
-        pas_results = merge_close_or_low_prominence(pas_results, peak, strategy, min_pas_spacing, min_pas_prominence)
-        for pas_1, pas_2 in pas_results:
-            pasnumber = state.bump_pasnumber()
-            pas_cb_dict = strategy.get_cb_dict_for_pas(peak, pas_1, pas_2)
-            pas_write(chro, pas_1, pas_2, strand, pasnumber=pasnumber, output=bedfile)
-            matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
+        _emit_peak(peak, chro)
+
+    # Seeded mode: final chromosome's clusters + coverage candidates.
+    _flush_seeded(chro)
 
     matrix.close()
     bedfile.close()

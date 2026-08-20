@@ -361,6 +361,88 @@ def _validate_pas_filter_config() -> None:
             )
 
 
+def _apply_polya_gate(output_mgr) -> dict | None:
+    """Enforce ``--polya-mode filter|require`` on the pos/neg PAS BEDs, in place.
+
+    Stage 1 seam: runs at the exact point --ip-filter runs (right before
+    find_close() derives the gene assignment), so a dropped PAS disappears
+    from ``genes.index`` and annotate() naturally drops it from the count
+    matrix — no other file needs touching.
+
+    ``filter`` drops every PAS whose BED score column (poly(A) clip-read
+    support, written by peak calling when --polya-evidence is on) is 0 —
+    i.e. exactly the coverage-only tier.  ``require`` does the same and then
+    FAILS the run when nothing clip-supported remains (the R2 chemistry
+    failure mode: poly(A) trimmed upstream leaves support at 0 everywhere).
+
+    No-op returning ``None`` when --polya-evidence is off or --polya-mode is
+    'annotate' (the default), so default runs never enter this code path.
+    """
+    import os
+
+    polya_on = str(getattr(args, "polya_evidence", "on")).lower() != "off"
+    polya_mode = str(getattr(args, "polya_mode", "annotate"))
+    if not polya_on or polya_mode not in ("filter", "require"):
+        return None
+
+    stats: dict = {"polya_mode": polya_mode}
+    total_kept = 0
+    total_seen = 0
+    for strand_label, bed_path in (
+        ("pos", directory_config.posbed),
+        ("neg", directory_config.negbed),
+    ):
+        bed_path = str(bed_path)
+        if not os.path.exists(bed_path) or os.path.getsize(bed_path) == 0:
+            stats[strand_label] = {"total": 0, "kept": 0, "dropped": 0}
+            continue
+        tmp_out = bed_path + ".polya_gate_tmp"
+        total = kept = 0
+        with open(bed_path) as src, open(tmp_out, "w") as dst:
+            for line in src:
+                if not line.strip():
+                    continue
+                total += 1
+                parts = line.rstrip("\n").split("\t")
+                try:
+                    support = int(float(parts[4]))
+                except (IndexError, ValueError):
+                    support = 0
+                if support >= 1:
+                    dst.write(line)
+                    kept += 1
+        os.replace(tmp_out, bed_path)
+        stats[strand_label] = {
+            "total": total, "kept": kept, "dropped": total - kept,
+        }
+        total_seen += total
+        total_kept += kept
+
+    if polya_mode == "require" and total_kept == 0:
+        raise RuntimeError(
+            "--polya-mode require: none of the "
+            f"{total_seen} PAS carry any poly(A) clip support (BED score "
+            "column all 0). Either the BAM's poly(A) evidence was destroyed "
+            "upstream (trimming / chemistry — see the startup clip-rate "
+            "warning) or peak calling ran with --polya-evidence off. "
+            "Refusing to ship an unsupported call set."
+        )
+
+    log.info(
+        "polya_gate: mode=%s pos(kept=%s/%s) neg(kept=%s/%s)",
+        polya_mode,
+        stats["pos"]["kept"], stats["pos"]["total"],
+        stats["neg"]["kept"], stats["neg"]["total"],
+    )
+    try:
+        _stats_path = output_mgr.path("pas_gene", "polya_gate_stats.json")
+        with open(_stats_path, "w") as _f:
+            json.dump(stats, _f, indent=2)
+    except Exception as e:  # bookkeeping only — never fail the run
+        log.warning("polya_gate: stats write failed: %s", e)
+    return stats
+
+
 def _apply_pas_filters(output_mgr) -> dict | None:
     """Apply the enabled PAS filter(s) to the pos/neg PAS BEDs, in place.
 
@@ -382,10 +464,15 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     """
     import os
 
+    # Stage 1: the poly(A) support gate shares this seam (same point, same
+    # in-place BED rewrite) and runs FIRST so --ip-filter statistics are
+    # computed on the clip-supported set when both are enabled.
+    polya_stats = _apply_polya_gate(output_mgr)
+
     ip_filter = bool(getattr(args, "ip_filter", False))
     annot_filter = bool(getattr(args, "annot_filter", False))
     if not ip_filter and not annot_filter:
-        return None
+        return {"polya_gate": polya_stats} if polya_stats else None
 
     ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
 
@@ -415,6 +502,8 @@ def _apply_pas_filters(output_mgr) -> dict | None:
         "genome_fasta": genome_fasta if ip_filter else None,
         "annotation_bed": annotation_bed if annot_filter else None,
     }
+    if polya_stats:
+        combined_stats["polya_gate"] = polya_stats
     filtered_any = False
     ip_of: dict = {}  # D9: merged {pas_id: internal_priming_bool} across pos+neg
     for strand_label, bed_path in (
@@ -572,6 +661,19 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         log.warning("strategy %r kwarg filter failed: %s — using empty kwargs", args.strategy, exc)
         _filtered_kwargs = {}
     strategy = get_strategy(args.strategy, **_filtered_kwargs)
+
+    # Stage 1: read-level poly(A) evidence settings (see
+    # ema/countmatrix/polya.py).  Threaded identically into the monolithic,
+    # tile and pipeline paths so all three agree.
+    _polya_kwargs = dict(
+        polya_enabled=(str(getattr(args, "polya_evidence", "on")).lower() != "off"),
+        polya_min_clip=int(getattr(args, "polya_min_clip", 6)),
+        polya_min_purity=float(getattr(args, "polya_min_purity", 0.8)),
+        polya_window=int(getattr(args, "polya_window", 100)),
+        polya_seed_window=int(getattr(args, "polya_seed_window", 25)),
+        polya_min_reads=int(getattr(args, "polya_min_reads", 1)),
+    )
+
     peak_kwargs = dict(
         strategy=strategy,
         dynamic_threshold=args.dynamic_threshold,
@@ -586,6 +688,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         # to compute_lambda(heights).
         min_pas_spacing=variable_config.min_pas_spacing,
         min_pas_prominence=variable_config.min_pas_prominence,
+        **_polya_kwargs,
     )
 
     # Start GTF pre-processing in a background thread (with caching).
@@ -714,7 +817,20 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             per_bam_tile_sizes=per_bam_tile_sizes if _tile_size_is_auto else None,
             min_pas_spacing=variable_config.min_pas_spacing,
             min_pas_prominence=variable_config.min_pas_prominence,
+            **_polya_kwargs,
         )
+
+        # Stage 1: once-per-BAM clip-rate QC — tile workers use region
+        # fetches and never full-scan, so the check runs here instead.
+        if _polya_kwargs["polya_enabled"]:
+            from ema.countmatrix.polya import check_clip_rate
+            for _ds_id, _bam_path in {(d, str(b)) for d, b in bam_list}:
+                check_clip_rate(
+                    str(_bam_path),
+                    min_clip=_polya_kwargs["polya_min_clip"],
+                    min_purity=_polya_kwargs["polya_min_purity"],
+                    barcode_tag=variable_config.barcode_tag or "CB",
+                )
 
         log.info(
             "%d dataset(s) -> %d jobs through Pool(%d)",
@@ -865,6 +981,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "floor_threshold": args.floor_threshold,
         "lambda_fold_change": args.lambda_fold_change,
         "lambda_window": args.lambda_window,
+        **_polya_kwargs,
+        "polya_mode": str(getattr(args, "polya_mode", "annotate")),
     })
 
     # ---- 3' cleavage-site offset correction (issue #72) ------------------
@@ -894,17 +1012,24 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     if _cleavage_offset > 0:
         from ema.countmatrix.cleavage_offset import rewrite_bed_3prime_offset
 
+        # clip_seeded places tier-1 PAS at the observed poly(A) clip site (the
+        # true cleavage coordinate, recorded as a >0 BED score); only its
+        # coverage-only tier (score 0) carries the R2 read-length offset.
+        _skip_supported = str(getattr(args, "strategy", "")) == "clip_seeded"
         _n_shifted = 0
         for _bed in list(all_pos_beds) + list(all_neg_beds):
             try:
-                _n_shifted += rewrite_bed_3prime_offset(_bed, _cleavage_offset)
+                _n_shifted += rewrite_bed_3prime_offset(
+                    _bed, _cleavage_offset, skip_supported=_skip_supported
+                )
             except FileNotFoundError:
                 # A strand may legitimately produce no BED for a dataset.
                 continue
         log.info(
             "3' cleavage-offset correction: shifted %d PAS 3' ends downstream "
-            "by %d bp (%s)", _n_shifted, _cleavage_offset,
+            "by %d bp (%s)%s", _n_shifted, _cleavage_offset,
             "auto-estimated" if _auto_offset else "--cleavage-offset",
+            " [clip-supported tier exempt]" if _skip_supported else "",
         )
         _stats = {
             "cleavage_offset_bp": _cleavage_offset,

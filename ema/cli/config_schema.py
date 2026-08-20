@@ -598,6 +598,103 @@ class RunConfig:
             description="Internal-priming check window, bp downstream of the PAS.",
         ),
     )
+
+    # ─── read-level poly(A) evidence (Stage 1; ema/countmatrix/polya.py) ──
+    polya_evidence: str = field(
+        default="on",
+        metadata=_spec(
+            cli_flag="--polya-evidence", yaml_key="polya_evidence",
+            choice=("on", "off"),
+            legacy_args_attr="polya_evidence",
+            description=(
+                "Collect read-level poly(A) soft-clip evidence during peak "
+                "calling (default on). Annotate-only by default: each PAS's "
+                "clip-read support is written into BED column 5 of "
+                "pasbed.bed (previously hardcoded 0); coordinates, counts "
+                "and PAS selection are unchanged unless --polya-mode or the "
+                "clip_seeded strategy says otherwise. 'off' restores the "
+                "pre-Stage-1 byte-identical output."
+            ),
+        ),
+    )
+    polya_mode: str = field(
+        default="annotate",
+        metadata=_spec(
+            cli_flag="--polya-mode", yaml_key="polya_mode",
+            choice=("annotate", "filter", "require"),
+            legacy_args_attr="polya_mode",
+            description=(
+                "How poly(A) support is enforced (only relevant when "
+                "--polya-evidence is on). 'annotate' (default) keeps every "
+                "PAS. 'filter' drops PAS with zero clip support (BED score "
+                "0 == coverage-only tier) at the same seam as --ip-filter, "
+                "before gene assignment. 'require' additionally FAILS the "
+                "run when no clip-supported PAS remain — use it when an "
+                "unsupported call set must never ship silently."
+            ),
+        ),
+    )
+    polya_min_clip: int = field(
+        default=6,
+        metadata=_spec(
+            cli_flag="--polya-min-clip", yaml_key="polya_min_clip",
+            legacy_args_attr="polya_min_clip",
+            description=(
+                "Minimum terminal soft-clip length AND minimum A/T run "
+                "adjacent to the alignment boundary for a read to count as "
+                "poly(A) evidence (default 6; measured 92x wrong-end "
+                "specificity on PBMC)."
+            ),
+        ),
+    )
+    polya_min_purity: float = field(
+        default=0.8,
+        metadata=_spec(
+            cli_flag="--polya-min-purity", yaml_key="polya_min_purity",
+            legacy_args_attr="polya_min_purity",
+            click_type=click.FLOAT,
+            description=(
+                "Minimum A (forward) / T (reverse) fraction over the "
+                "clipped bases (default 0.8)."
+            ),
+        ),
+    )
+    polya_window: int = field(
+        default=100,
+        metadata=_spec(
+            cli_flag="--polya-window", yaml_key="polya_window",
+            legacy_args_attr="polya_window",
+            description=(
+                "Half-window in bp around a PAS's strand-aware 3' base "
+                "within which clip reads count as support for that PAS "
+                "(default 100 — the benchmark's matching cutoff)."
+            ),
+        ),
+    )
+    polya_seed_window: int = field(
+        default=25,
+        metadata=_spec(
+            cli_flag="--polya-seed-window", yaml_key="polya_seed_window",
+            legacy_args_attr="polya_seed_window",
+            description=(
+                "Single-linkage gap in bp for clustering clip sites into "
+                "PAS candidates (clip_seeded strategy only; default 25)."
+            ),
+        ),
+    )
+    polya_min_reads: int = field(
+        default=1,
+        metadata=_spec(
+            cli_flag="--polya-min-reads", yaml_key="polya_min_reads",
+            legacy_args_attr="polya_min_reads",
+            description=(
+                "Minimum distinct molecules (UMI-deduplicated; reads "
+                "without a UB tag count as one molecule each) for a clip "
+                "cluster to be emitted as a tier-1 PAS (clip_seeded "
+                "strategy only; default 1)."
+            ),
+        ),
+    )
     min_pas_per_cell: int = field(
         default=50,
         metadata=_spec(

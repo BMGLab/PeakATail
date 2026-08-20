@@ -283,6 +283,31 @@ constant `DEFAULT_CLEAVAGE_OFFSET = 95` as the current fallback (see the
 | `--min-read` | INT | 1500 | Minimum total read count per cell barcode. Cells below this are discarded before count matrix construction. Reduce to 500 for low-depth protocols. |
 | `--min-cells` | INT | 3 | Minimum number of cells a PAS must be expressed in to survive preprocessing. |
 
+### Poly(A) read evidence
+
+PeakATail reads the non-templated poly(A) tail off the reads themselves: a
+read sequenced through the cleavage site carries the tail as a terminal soft
+clip (A on `+`, T on `-`). This is **on by default and annotate-only** — each
+PAS's clip-read support is written into **BED column 5** of `pasbed.bed`
+(historically a hardcoded `0`), and `annotatedpas.bed` inherits it. No
+coordinate or count changes unless you also change `--polya-mode` or pick the
+[`clip_seeded`](../strategies/peak-calling.md#clip_seeded) strategy, which
+*seeds* PAS candidates from clip clusters instead of coverage summits.
+
+At startup the caller reports the observed clip rate and **warns loudly below
+0.3% of CB reads** — a pipeline that trims poly(A) before alignment destroys
+this evidence, and the run should not be read as clip-supported when it fires.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--polya-evidence` | `on`/`off` | `on` | Collect read-level poly(A) clip evidence during peak calling. `off` restores byte-identical pre-feature output. |
+| `--polya-mode` | TEXT | `annotate` | `annotate` keeps every PAS and records support in BED column 5. `filter` drops PAS with zero support (the coverage-only tier) at the same seam as `--ip-filter`. `require` does the same and **fails the run** if nothing clip-supported survives. |
+| `--polya-min-clip` | INT | 6 | Minimum terminal soft-clip length, and minimum A/T run flush against the alignment boundary. The adjacency requirement is what buys the measured 92x wrong-end specificity. |
+| `--polya-min-purity` | FLOAT | 0.8 | Minimum A (`+`) / T (`-`) fraction across the clipped bases. |
+| `--polya-window` | INT | 100 | Radius in bp around a PAS's strand-aware 3' base within which clip reads count as its support. |
+| `--polya-seed-window` | INT | 25 | Single-linkage gap for clustering clip sites into candidates (`clip_seeded` only). |
+| `--polya-min-reads` | INT | 1 | Minimum distinct molecules (UMI-deduplicated; a read with no `UB` tag counts as one molecule) for a cluster to be called (`clip_seeded` only). |
+
 ### Internal-priming annotation (D9)
 
 Like the atlas, the internal-priming filter is **off unless enabled** and

@@ -158,6 +158,13 @@ class JobSpec:
     # JobSpec for best efficiency (single header scan instead of N workers).
     min_pas_spacing: int = -1
     min_pas_prominence: float = 5.0
+    # Stage 1: read-level poly(A) evidence (see ema/countmatrix/polya.py).
+    polya_enabled: bool = True
+    polya_min_clip: int = 6
+    polya_min_purity: float = 0.8
+    polya_window: int = 100
+    polya_seed_window: int = 25
+    polya_min_reads: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +314,14 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_default_sample_id = args.default_sample_id
         _args_min_pas_spacing = args.min_pas_spacing
         _args_min_pas_prominence = args.min_pas_prominence
+        _args_polya = dict(
+            polya_enabled=args.polya_enabled,
+            polya_min_clip=args.polya_min_clip,
+            polya_min_purity=args.polya_min_purity,
+            polya_window=args.polya_window,
+            polya_seed_window=args.polya_seed_window,
+            polya_min_reads=args.polya_min_reads,
+        )
     else:
         tile_id = args["tile_id"]
         dataset_id = args.get("dataset_id", "default")
@@ -328,6 +343,14 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_default_sample_id = args["default_sample_id"]
         _args_min_pas_spacing = args.get("min_pas_spacing", -1)
         _args_min_pas_prominence = args.get("min_pas_prominence", 5.0)
+        _args_polya = dict(
+            polya_enabled=args.get("polya_enabled", True),
+            polya_min_clip=args.get("polya_min_clip", 6),
+            polya_min_purity=args.get("polya_min_purity", 0.8),
+            polya_window=args.get("polya_window", 100),
+            polya_seed_window=args.get("polya_seed_window", 25),
+            polya_min_reads=args.get("polya_min_reads", 1),
+        )
 
     # Per-worker isolation: reset all process-global mutable state
     reset_index()
@@ -365,6 +388,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             region=(chrom, fetch_start, fetch_end),
             min_pas_spacing=_args_min_pas_spacing,
             min_pas_prominence=_args_min_pas_prominence,
+            **_args_polya,
         )
 
         # ----------------------------------------------------------------
@@ -607,6 +631,12 @@ def build_job_specs(
     per_bam_tile_sizes: dict[str, int] | None = None,
     min_pas_spacing: int = -1,
     min_pas_prominence: float = 5.0,
+    polya_enabled: bool = True,
+    polya_min_clip: int = 6,
+    polya_min_purity: float = 0.8,
+    polya_window: int = 100,
+    polya_seed_window: int = 25,
+    polya_min_reads: int = 1,
 ) -> list[JobSpec]:
     """Build a flat list of :class:`JobSpec` across all datasets × chroms × tiles × directions.
 
@@ -678,6 +708,12 @@ def build_job_specs(
                         default_sample_id=dataset_id,
                         min_pas_spacing=per_bam_spacing,
                         min_pas_prominence=min_pas_prominence,
+                        polya_enabled=polya_enabled,
+                        polya_min_clip=polya_min_clip,
+                        polya_min_purity=polya_min_purity,
+                        polya_window=polya_window,
+                        polya_seed_window=polya_seed_window,
+                        polya_min_reads=polya_min_reads,
                     ))
                     job_id += 1
 
@@ -813,6 +849,12 @@ def run_tiled(
     default_sample_id: str = "default",
     min_pas_spacing: int = -1,
     min_pas_prominence: float = 5.0,
+    polya_enabled: bool = True,
+    polya_min_clip: int = 6,
+    polya_min_purity: float = 0.8,
+    polya_window: int = 100,
+    polya_seed_window: int = 25,
+    polya_min_reads: int = 1,
 ) -> None:
     """Run tile-parallel peak calling and merge results into final output files.
 
@@ -877,6 +919,26 @@ def run_tiled(
     if n_workers is None:
         n_workers = ResourceManager().get_n_jobs(per_worker_mb=500)
 
+    # Stage 1: once-per-BAM clip-rate QC in the dispatcher (tile workers use
+    # region fetches and inherit this check — see peak_calling).
+    _polya_kwargs = dict(
+        polya_enabled=polya_enabled,
+        polya_min_clip=polya_min_clip,
+        polya_min_purity=polya_min_purity,
+        polya_window=polya_window,
+        polya_seed_window=polya_seed_window,
+        polya_min_reads=polya_min_reads,
+    )
+    if polya_enabled:
+        from ema.config import variable_config as _vc
+        from ema.countmatrix.polya import check_clip_rate
+        check_clip_rate(
+            str(bamfile_dir),
+            min_clip=polya_min_clip,
+            min_purity=polya_min_purity,
+            barcode_tag=_vc.barcode_tag or "CB",
+        )
+
     # Derive CB output path (sits next to the MTX)
     mtx_path = Path(matrixpath)
     cb_output = str(mtx_path.parent / (mtx_path.stem + "_cb.tsv"))
@@ -920,6 +982,7 @@ def run_tiled(
             bam_threads=bam_threads,
             min_pas_spacing=min_pas_spacing,
             min_pas_prominence=min_pas_prominence,
+            **_polya_kwargs,
         )
         # Write CB list for consistency
         from ema.countmatrix.indexing import get_mapping
@@ -968,6 +1031,7 @@ def run_tiled(
             "default_sample_id": default_sample_id,
             "min_pas_spacing": _resolved_spacing,
             "min_pas_prominence": min_pas_prominence,
+            **_polya_kwargs,
         })
 
     # ----------------------------------------------------------------
