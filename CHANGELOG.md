@@ -86,6 +86,24 @@
   accounting (`clip_seeded counting: {...}`) so a run can show where every
   count came from.
 
+  Measured on GSE104556 mouse1 (`--seq-len 98`, 12 threads, 55 min wall):
+  every caller BED (`posbed.bed`, `negbed.bed`, `01_peak_calling/*`,
+  `annotatedpas.bed`) is byte-identical to the Stage-2 run. Raw matrices:
+  140.7M counts vs 132.9M shipped (1.059x) — the suppressed candidates'
+  partitions plus the tier-2 rows reproduce the shipped per-strand totals
+  to the read (`+` 58,221,832 + 5,131,499 = 63,353,331; `-` 64,246,477 +
+  5,330,874 = 69,577,351), the +7.8M is the cleavage-window remainder.
+  `min_read` keeps 10,339 cells including 1,294/1,294 STARsolo cells (the
+  clip-only run kept 995). Gene-assigned mass on the shipped run's cells:
+  51.8M vs 49.2M shipped when the shipped `filterdmatrix.mtx` is keyed
+  correctly (1.053x; per-gene Spearman 0.991, median per-gene ratio 1.039).
+  The shipped `annotated_matrix.mtx` itself is mis-keyed (bug 0a: 226 of
+  45,921 rows aligned) and sums to 31.8M counts — the often-quoted
+  41,944,353 is that figure plus its MatrixMarket size line. Post-filter
+  `pasbed.bed` grows from 58,848 to 85,993 PAS because 27k tier-1 rows now
+  carry enough counts to pass `min_cells`; 120 one-to-two-read clusters
+  drop out because their counts moved to cells below `min_read`.
+
 ### Notes
 - The evidence is computed in all three peak-calling paths (monolithic,
   `--pipeline`, `--tiles`) from the `AlignedSegment` at the call site;
