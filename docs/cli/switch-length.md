@@ -230,3 +230,15 @@ for uniform distribution across N PAS (maximally dispersed usage).
 
 - Strategy pages in [`../strategies/`](../strategies/) — mathematical details of PDUI computation.
 - Tutorial in [`../tutorials/`](../tutorials/) — length quantification walkthrough.
+
+## Flags added in the strand/counts correctness fix (2026-08)
+
+| Flag | Meaning |
+|---|---|
+| `--pasbed PATH` | PAS coordinate BED used for strand-aware proximal/distal ordering. **Required** when the h5ad lacks embedded coordinates; the command now RAISES instead of silently falling back to a plus-strand convention. |
+| `--counts-layer NAME` | AnnData layer holding raw integer counts (default `counts`). PDUI is computed on this layer, never on `.X`, which clustering overwrites with TF-IDF weights. |
+| `--allow-non-count-matrix` | Escape hatch: proceed even if the selected matrix is non-integral. Off by default; without it a non-count matrix is an error, not a warning. |
+
+**Breaking change:** runs that previously "worked" by silently using TF-IDF-normalised `.X` and
+plus-strand ordering now fail fast with an actionable message. This is deliberate: those runs produced
+inverted PDUI for 100% of minus-strand genes.

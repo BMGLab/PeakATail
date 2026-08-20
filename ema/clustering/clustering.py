@@ -19,15 +19,60 @@ Usage:
                        external_clusters='/path/to/labels.csv')
 """
 
+import logging
 import os
 import anndata as ad
 import pandas as pd
 from ema.clustering.strategies import get_strategy
+from ema.utils import COUNTS_LAYER
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
 # Private helpers shared by all _do_* functions
 # ---------------------------------------------------------------------------
+
+def _stash_counts_layer(adata: ad.AnnData) -> ad.AnnData:
+    """Preserve the raw count matrix in ``adata.layers['counts']``.
+
+    Every clustering strategy normalises ``.X`` IN PLACE -- ``leiden_tfidf``
+    replaces it with ``log1p(TF * IDF * scale_factor)``, ``leiden_libsize``
+    with scaled log1p CPM -- and nothing in the package kept a raw copy.
+    Downstream count consumers (``ema switch length`` PDUI, ``ema switch
+    diff``) then quantified TF-IDF weights as if they were reads: 100% of the
+    non-zero ``proximal_reads``/``distal_reads`` in the shipped 3'UTR tables
+    were non-integer, and 10.6% of cluster-pair dPDUI signs flipped against
+    the same computation on real counts.
+
+    Stashing costs one reference to the matrix the caller already handed us
+    (it is copied, not aliased, because the strategies mutate ``.X``), and
+    ``anndata.concat(join="outer", merge="first")`` carries layers through
+    ``ema switch combine``, so the layer survives to the switch tests.
+
+    An existing ``counts`` layer is never overwritten -- if a caller already
+    supplied one it is authoritative.
+
+    Args:
+        adata: AnnData whose ``.X`` still holds raw counts.
+
+    Returns:
+        The same AnnData, with ``layers['counts']`` guaranteed present.
+    """
+    layers = getattr(adata, "layers", None)
+    if layers is None:
+        return adata
+    if COUNTS_LAYER in layers:
+        log.info("clustering: layers[%r] already present; leaving it alone", COUNTS_LAYER)
+        return adata
+    adata.layers[COUNTS_LAYER] = adata.X.copy()
+    log.info(
+        "clustering: stashed raw counts into layers[%r] before normalisation "
+        "(PDUI/differential must read counts, not normalised .X)",
+        COUNTS_LAYER,
+    )
+    return adata
+
 
 def _save_and_report(adata: ad.AnnData, outputpath=None, output_h5ad=None):
     """Save cluster labels + AnnData and print summary; returns adata."""
@@ -192,6 +237,10 @@ def clustering(adata: ad.AnnData,
     # Resolve method-specific n_neighbors defaults when caller passes None.
     if n_neighbors is None:
         n_neighbors = 10 if method == "leiden_libsize" else 30
+
+    # Stash raw counts BEFORE any strategy touches .X -- this is the only
+    # point in the pipeline that still holds them.
+    adata = _stash_counts_layer(adata)
 
     from ema.clustering.registry import get_clustering_strategy
     return get_clustering_strategy(method)(

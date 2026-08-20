@@ -43,6 +43,15 @@ def _list_strategies_callback(ctx, param, value):
               help="Per-dataset clusters.h5ad. Repeat for multi-dataset.")
 @click.option("--pasbed", type=click.Path(exists=True, dir_okay=False),
               default=None, help="Optional PAS BED for context.")
+@click.option("--counts-layer", "counts_layer", type=str, default=None,
+              help="AnnData layer holding raw counts. Default: prefer "
+                   "layers['counts'], else .X. Pass 'X' to force .X. The "
+                   "differential tests cast to integers, so testing "
+                   "normalised .X makes the effective n meaningless.")
+@click.option("--allow-non-count-matrix", "allow_non_count_matrix",
+              is_flag=True, default=False,
+              help="Proceed even when the chosen matrix is non-integral "
+                   "(i.e. normalised, not counts). Diagnostics only.")
 @click.option("--gtf", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Required when --isoform-agg=within_utr/between_utr "
                    "(needed to resolve each PAS's 3'UTR isoform).")
@@ -148,6 +157,8 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 min_cells_per_group=kwargs["min_cells_per_group"],
                 isoform_agg=kwargs["isoform_agg"],
                 utr_unmatched=kwargs["utr_unmatched"],
+                counts_layer=kwargs["counts_layer"],
+                allow_non_count_matrix=kwargs["allow_non_count_matrix"],
                 progress_manager=pm,
             )
             render_switch_diff_outputs(
