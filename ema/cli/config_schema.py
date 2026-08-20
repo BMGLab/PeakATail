@@ -468,6 +468,41 @@ class RunConfig:
             ),
         ),
     )
+    cleavage_offset: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--cleavage-offset", yaml_key="cleavage_offset",
+            legacy_dataclass_attr="variable_config.cleavage_offset",
+            description=(
+                "3' cleavage-site offset correction (bp; issue #72).  Called "
+                "peak 3' ends stop ~90-105 nt short of the true cleavage site "
+                "because 10x R2 coverage runs out before the poly(A) junction. "
+                "When > 0, the reported PAS 3' end is shifted downstream by "
+                "this many bp after peak calling, so tight-cutoff benchmarks "
+                "and atlas annotation use the inferred cleavage position. "
+                "A sane data-driven constant is ~90-100 (try 95). "
+                "0 (default) preserves legacy behaviour (no shift). "
+                "Use --auto-cleavage-offset to estimate this from the data."
+            ),
+        ),
+    )
+    auto_cleavage_offset: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--auto-cleavage-offset", yaml_key="auto_cleavage_offset",
+            is_flag=True,
+            legacy_dataclass_attr="variable_config.auto_cleavage_offset",
+            description=(
+                "Data-driven 3' cleavage-offset estimation (issue #72).  When "
+                "set, the offset is inferred per run from the called peaks and "
+                "--genome-fasta (genomic A-fraction crest + AATAAA density "
+                "downstream of each peak 3' end) instead of using the fixed "
+                "--cleavage-offset constant, then applied the same way.  "
+                "Requires --genome-fasta; falls back to ~95 bp if the profiles "
+                "are inconclusive.  Off (default) preserves legacy behaviour."
+            ),
+        ),
+    )
 
     # ─── filters (D6: wired into `ema run`; see ema/main.py::_apply_pas_filters) ──
     ip_filter: bool = field(

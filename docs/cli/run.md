@@ -248,6 +248,32 @@ Options:
 | `--pas-gap` | INT | 100 | Minimum bp gap between two PAS within the same peak. Increase to merge closely-spaced PAS that likely represent the same site. |
 | `--min-pas-spacing` | INT | `-1` | Tier-1 (distance) of the post-detection PAS merger. Adjacent PAS within one peak whose gap < this value are merged unconditionally. `-1` auto-detects the median read length per BAM (e.g. ~98 bp for 10x v2, ~150 bp for v3). `0` disables Tier 1. See [Post-Detection PAS Merger](../strategies/pas-merger.md). |
 | `--min-pas-prominence` | FLOAT | `5.0` | Tier-2 (valley depth) of the post-detection PAS merger. Lambda strategies (`lambda_poisson`, `lambda_gradient`) **ignore** this value and use their own `compute_lambda(heights)` instead — fully dynamic. Non-lambda strategies (`original`, `sierra_iterative`) treat this as a static coverage-depth threshold. Negative disables Tier 2. |
+| `--cleavage-offset` | INT | `0` | **3' cleavage-site offset correction** (issue #72). Called peak 3' ends stop ~90–105 nt short of the true cleavage site because 10x R2 coverage runs out before the poly(A) junction. When `> 0`, the reported PAS 3' end is shifted **downstream** (strand-aware) by this many bp after peak calling, so tight-cutoff benchmarks and atlas annotation score the inferred cleavage position rather than the coverage edge. A sane data-driven constant is ~90–100 (try `95`). `0` (default) preserves legacy behaviour (no shift). See [3' cleavage offset](#3-cleavage-site-offset-issue-72) below. |
+
+### 3' cleavage-site offset (issue #72)
+
+Atlas-independent motif analysis of PeakATail's calls (Laughney cohort,
+22,629 PAS) showed the reported peak 3' end systematically stops **~90–105 nt
+short** of the true cleavage site: AATAAA positional density peaks at +75 nt
+downstream of the peak end (canonical AATAAA→cleavage spacing 15–30 nt), and
+genomic A-fraction crests at +98 nt then cliffs to background — exactly where
+10x R2 coverage runs out. Under tight-cutoff benchmarks this offset is scored
+as a miss, punishing the *offset* rather than the calls.
+
+`--cleavage-offset N` shifts each reported PAS 3' end downstream by `N` bp
+(in the direction of transcription: increasing coordinate on `+`, decreasing,
+clamped at 0, on `-`). The correction is applied in place to the per-dataset
+strand BEDs immediately after peak calling, so every downstream artifact —
+`pasbed.bed`, `annotatedpas.bed`, gene assignment, atlas matching, and the
+benchmark harness — uses the inferred cleavage coordinate consistently. The
+5' end of each peak (where R2 coverage is real) is preserved.
+
+The offset is chemistry-dependent (R2 read length), so a per-run data-driven
+estimate (AATAAA-mode + canonical spacing, or the A-fraction cliff) is
+preferred over a constant; that estimator is stubbed in
+`ema/countmatrix/cleavage_offset.py::estimate_cleavage_offset` with the
+constant `DEFAULT_CLEAVAGE_OFFSET = 95` as the current fallback (see the
+`TODO(issue #72)` there). Leave the flag at `0` for legacy behaviour.
 
 ### Filters
 
