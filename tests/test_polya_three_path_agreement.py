@@ -6,7 +6,9 @@ monolithic path — so a divergence in the other two would never be caught by
 re-running the benchmark (see the Stage-0 stop signal in
 ``manuscript/10_caller_fix_plan.md``).  Stage 1 adds a per-read measurement
 to all three; these tests pin that they produce the same BED — and, since
-the Stage-2 counting fix, the same per-PAS counts.
+the Stage-2 counting fix, the same per-PAS counts, and since Stage 1c the
+same per-PAS support sidecar (molecules, raw clip reads and the ``-F 3844``
+counts).
 
 The pipeline path spawns three subprocesses and the tile path a process
 pool, so both are slow — but they are the only way to prove the mirrors are
@@ -118,6 +120,27 @@ def _counts_by_coord(bed: Path):
     }
 
 
+def _support_by_coord(bed: Path):
+    """``{(chrom, start, end, strand): support row}`` — the sidecar joined
+    back onto the BED through the pas_id, so path-specific renumbering does
+    not matter."""
+    from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
+
+    lines = Path(support_path_for(bed)).read_text().splitlines()
+    assert lines[0].split("\t") == list(SUPPORT_COLUMNS)
+    rows = {}
+    for line in lines[1:]:
+        f = line.split("\t")
+        rows[f[0]] = tuple(int(x) for x in f[1:])
+    out = {}
+    for r in _rows(bed):
+        key = (r["chrom"], r["start"], r["end"], r["strand"])
+        out[key] = rows[str(r["name"])]
+        # BED column 5 is the molecule count from the same sidecar row
+        assert int(r["score"]) == rows[str(r["name"])][1]
+    return out
+
+
 @pytest.mark.parametrize("strategy_name", ["lambda_gradient", "clip_seeded"])
 def test_pipeline_path_matches_monolithic(bam, tmp_path, strategy_name):
     mono = _call(bam, tmp_path, f"mono_{strategy_name}", strategy_name)
@@ -128,6 +151,10 @@ def test_pipeline_path_matches_monolithic(bam, tmp_path, strategy_name):
     )
     assert _counts_by_coord(pipe) == _counts_by_coord(mono), (
         "--pipeline diverged from the monolithic path on PAS counts"
+    )
+    assert _support_by_coord(pipe) == _support_by_coord(mono), (
+        "--pipeline diverged from the monolithic path on clip support "
+        "(molecules / raw reads / -F 3844)"
     )
 
 
@@ -144,6 +171,10 @@ def test_tile_path_matches_monolithic(bam, tmp_path, strategy_name):
     )
     assert _counts_by_coord(tiled) == _counts_by_coord(mono), (
         "--tiles diverged from the monolithic path on PAS counts"
+    )
+    assert _support_by_coord(tiled) == _support_by_coord(mono), (
+        "--tiles diverged from the monolithic path on clip support "
+        "(molecules / raw reads / -F 3844)"
     )
 
 

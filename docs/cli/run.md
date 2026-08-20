@@ -306,8 +306,33 @@ this evidence, and the run should not be read as clip-supported when it fires.
 | `--polya-min-purity` | FLOAT | 0.8 | Minimum A (`+`) / T (`-`) fraction across the clipped bases. |
 | `--polya-window` | INT | 100 | Radius in bp around a PAS's strand-aware 3' base within which clip reads count as its support. |
 | `--polya-seed-window` | INT | 25 | Single-linkage gap for clustering clip sites into candidates (`clip_seeded` only). |
-| `--polya-min-reads` | INT | 1 | Minimum distinct molecules (UMI-deduplicated; a read with no `UB` tag counts as one molecule) for a cluster to be called (`clip_seeded` only). |
+| `--polya-min-umis` | INT | 1 | Minimum distinct `(cell barcode, UMI)` molecules for a clip cluster to be called, and the unit of BED column 5 (`clip_seeded` only). A read with no `UB` tag counts as one molecule; PCR duplicates of one molecule count once. **`--polya-min-reads` is a deprecated alias** — the gate always counted molecules; only the flag name and the score column said "reads". |
+| `--polya-clip-filter` | `none`/`f3844` | `none` | Alignment filter on the clip-evidence channel. `f3844` counts only reads passing samtools `-F 3844` (drops secondary / supplementary / duplicate / qcfail / unmapped), which also **drops clusters whose evidence is entirely such alignments** — a call-set change (measured on PBMC: −8.3% of chr19 (+), −27.0% of chr21 (+) tier-1 clusters), so it is opt-in. `none` still de-duplicates by `(barcode, UMI)`, which is what makes PCR duplicates uncountable. Both counts are always in `pas_support.tsv`. |
 | `--polya-count-window` | TEXT | `auto,25` | `UP,DOWN` bp, transcript orientation, around a tier-1 cluster's cleavage site. Read ends in `[site-UP, site+DOWN]` that belong to no coverage candidate are counted on the tier-1 row (a cluster inside a coverage peak also takes that peak's counts). `auto` == `--seq-len`, because R2 3' ends pile up just upstream of cleavage (`clip_seeded` only). |
+
+#### `pas_support.tsv` — where the raw counts went
+
+`pasbed.bed` stays plain **BED6**, so column 5 can carry exactly one number
+and it carries the one the gate uses (molecules). Everything else is written
+to a sidecar next to each caller BED (`<bed>.support.tsv`) and, for
+single-BAM runs, merged into `<run>/pas_support.tsv`:
+
+| column | meaning |
+|---|---|
+| `pas_id` | BED column 4 — join key back to `pasbed.bed` / `annotatedpas.bed` |
+| `clip_reads` | raw poly(A) clip reads supporting this PAS |
+| `clip_umis` | distinct `(barcode, UMI)` molecules — **equals BED column 5** |
+| `clip_reads_f3844` | clip reads passing samtools `-F 3844` |
+| `clip_umis_f3844` | distinct molecules among those reads |
+| `window_reads` | reads counted into this PAS's count-matrix row |
+| `tier` | `1` = clip-seeded cluster, `2` = coverage candidate |
+
+The sidecar is a superset of the run-root `pasbed.bed`, which is rewritten
+after the cell/count filters; join on `pas_id`.
+
+Comparing `clip_reads` with `clip_umis` is the honest way to see PCR
+duplication at a site, and `clip_umis_f3844` shows what the stricter
+`--polya-clip-filter f3844` gate would keep — without re-running.
 
 ### Internal-priming annotation (D9)
 

@@ -124,7 +124,10 @@ def reader_loop(
     """Reader stage: iterate BAM, validate, batch, emit on *out_queue*.
 
     Each batch placed on the queue is a ``list`` of
-    ``(chrom_str, start, end, strand_bool, cb_str, clip_site, umi)`` tuples.
+    ``(chrom_str, start, end, strand_bool, cb_str, clip_site, umi,
+    clip_ok)`` tuples, where ``clip_ok`` is
+    :func:`~ema.countmatrix.polya.clip_read_ok` (samtools ``-F 3844``) for
+    the read carrying the clip.
     Only valid reads (those for which
     :func:`~ema.countmatrix.read.read_check` returns a non-zero chrom) are
     included.  Invalid reads are silently skipped.
@@ -152,25 +155,27 @@ def reader_loop(
     """
     import pysam
 
-    from ema.countmatrix.polya import clip_site, read_umi
+    from ema.countmatrix.polya import clip_read_ok, clip_site, read_umi
     from ema.countmatrix.read import read_check, set_default_sample_id
 
     set_default_sample_id(default_sample_id)
 
     bamfile = pysam.AlignmentFile(bam_path, "rb", threads=bam_threads)
 
-    batch: list[tuple[str, int, int, bool, str, int | None, str | None]] = []
+    batch: list[tuple[str, int, int, bool, str, int | None, str | None, bool]] = []
     try:
         for read in bamfile:
             chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
             if chro1 == 0:
                 continue
             clip = umi = None
+            clip_ok = True
             if polya_enabled:
                 clip = clip_site(read, polya_min_clip, polya_min_purity)
                 if clip is not None:
                     umi = read_umi(read)
-            batch.append((chro1, start1, end1, strand, cb, clip, umi))
+                    clip_ok = clip_read_ok(read)
+            batch.append((chro1, start1, end1, strand, cb, clip, umi, clip_ok))
             if len(batch) >= batch_size:
                 out_queue.put(batch)
                 batch = []
@@ -258,7 +263,7 @@ def finder_loop(
                 in_queue.put(None)  # defensive re-put for multi-consumer safety
                 break
 
-            for chro1, start1, end1, strand, cb, clip, umi in batch:
+            for chro1, start1, end1, strand, cb, clip, umi, clip_ok in batch:
 
                 # --- chromosome change: flush pending peak ---
                 if chro1 != chro:
@@ -290,7 +295,7 @@ def finder_loop(
                 if clip_accum is not None:
                     clip_accum.add_read(start1, end1, cb)
                     if clip is not None:
-                        clip_accum.add_clip(clip, cb, umi)
+                        clip_accum.add_clip(clip, cb, umi, end1, clip_ok)
 
                 # --- dynamic threshold update ---
                 if dynamic_threshold:
@@ -312,7 +317,7 @@ def finder_loop(
                         # Phase 1: per-peak clip accumulation, mirroring
                         # the monolithic hook next to cb_position_counting.
                         if clip is not None:
-                            peak.polya_counting(clip, cb, umi)
+                            peak.polya_counting(clip, cb, umi, clip_ok)
 
                 if signal and start1 > l_end:
                     signal = False
@@ -370,7 +375,8 @@ def writer_loop(
     polya_enabled: bool = True,
     polya_window: int = 100,
     polya_seed_window: int = 25,
-    polya_min_reads: int = 1,
+    polya_min_umis: int = 1,
+    polya_clip_filter: str = "none",
     direction: bool = False,
     polya_count_window: tuple = (-1, 25),
 ) -> None:
@@ -397,7 +403,9 @@ def writer_loop(
         strategy_name: Strategy name key for :func:`~ema.strategies.get_strategy`.
     """
     from ema.countmatrix.peak import Peak
-    from ema.countmatrix.paswrite import pas_write, matrix_write
+    from ema.countmatrix.paswrite import (
+        matrix_write, open_support, pas_write, support_write,
+    )
     from ema.countmatrix.polya import ClipSeeder
     from ema.strategies import get_strategy
     from ema.strategies.utils import merge_close_or_low_prominence
@@ -409,14 +417,18 @@ def writer_loop(
     # Reset process-local global state so this worker starts clean
     Peak.reset_pasnumber()
 
+    _collect = polya_enabled or polya_seeded
+    _strict_clip = polya_clip_filter == "f3844"
     with open(bedfilepath, "w") as bedfile, open(matrixpath, "w") as matrix:
+        supportfile = open_support(bedfilepath) if _collect else None
         seeder: ClipSeeder | None = (
             ClipSeeder(
                 direction,
                 seed_window=polya_seed_window,
-                min_reads=polya_min_reads,
+                min_umis=polya_min_umis,
                 window=polya_window,
                 count_window=polya_count_window,
+                clip_filter=polya_clip_filter,
             )
             if polya_seeded
             else None
@@ -425,12 +437,16 @@ def writer_loop(
         def _flush_seeded(chro_out: str) -> None:
             if seeder is None:
                 return
-            for _start, _end, _support, _cb_dict in seeder.flush():
+            _supports: list = []
+            for (_start, _end, _support, _cb_dict), _row in zip(
+                seeder.flush(support_out=_supports), _supports
+            ):
                 Peak.pasnumber += 1
                 pas_write(
                     chro_out, _start, _end, direction,
                     pasnumber=Peak.pasnumber, output=bedfile, score=_support,
                 )
+                support_write(supportfile, Peak.pasnumber, _row)
                 matrix_write(_cb_dict, Peak.pasnumber, matrix)
 
         while True:
@@ -466,11 +482,13 @@ def writer_loop(
                     continue
                 Peak.pasnumber += 1
                 if polya_enabled:
-                    _support, _ = peak.polya_support(
+                    _reads, _umis, _reads_f, _umis_f = peak.polya_support(
                         pas_1, pas_2, peak.peak_strand, polya_window
                     )
+                    # BED column 5 is distinct molecules (see paswrite).
+                    _support = _umis_f if _strict_clip else _umis
                 else:
-                    _support = 0
+                    _reads = _umis = _reads_f = _umis_f = _support = 0
                 pas_write(
                     chro,
                     pas_1,
@@ -480,7 +498,17 @@ def writer_loop(
                     output=bedfile,
                     score=_support,
                 )
+                if supportfile is not None:
+                    support_write(supportfile, Peak.pasnumber, {
+                        "clip_reads": _reads, "clip_umis": _umis,
+                        "clip_reads_f3844": _reads_f, "clip_umis_f3844": _umis_f,
+                        "window_reads": sum(pas_cb_dict.values()),
+                        "tier": 2,
+                    })
                 matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
+
+        if supportfile is not None:
+            supportfile.close()
 
         if seeder is not None:
             import logging
@@ -518,7 +546,8 @@ def run_pipeline(
     polya_min_purity: float = 0.8,
     polya_window: int = 100,
     polya_seed_window: int = 25,
-    polya_min_reads: int = 1,
+    polya_min_umis: int = 1,
+    polya_clip_filter: str = "none",
     polya_count_window: tuple = (-1, 25),
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
@@ -649,7 +678,8 @@ def run_pipeline(
             _polya_collect,
             polya_window,
             polya_seed_window,
-            polya_min_reads,
+            polya_min_umis,
+            polya_clip_filter,
             direction,
             polya_count_window,
         ),

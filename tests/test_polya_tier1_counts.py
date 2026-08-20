@@ -353,7 +353,9 @@ def test_seeder_splits_a_candidate_between_two_clusters_at_the_midpoint():
     assert [(r[0], r[1]) for r in recs] == [(1000, 1001), (1300, 1301)]
     assert recs[0][3] == {"A": 9, "X": 1}
     assert recs[1][3] == {"Y": 1, "B": 13}
-    assert recs[0][2] == 3 and recs[1][2] == 2, "score stays the clip support"
+    assert recs[0][2] == 3 and recs[1][2] == 2, (
+        "score stays the clip support (in molecules)"
+    )
 
 
 def test_seeder_does_not_invent_reads_for_a_non_positional_candidate():

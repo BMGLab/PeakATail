@@ -116,3 +116,10 @@ Thumbs.db
 *~
 *.swp
 .gstack/
+
+# CLI run debris at the repo root: every `ema`/`ema switch ...` invocation
+# opens `<output>/peakatail_<timestamp>.log` as its run log, and
+# `ema switch combine` defaults `--output` to ./switch_combined -- so running
+# the CLI (or the test suite) from a checkout leaves both behind.
+peakatail_*.log
+switch_combined/

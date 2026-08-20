@@ -177,7 +177,7 @@ def test_seeder_output_is_coordinate_sorted():
     assert starts == sorted(starts)
 
 
-def test_seeder_min_reads_gate_uses_molecules_not_reads():
+def test_seeder_min_umis_gate_uses_molecules_not_reads():
     s = ClipSeeder(direction=False, min_reads=2)
     for _ in range(10):
         s.add_clip(1000, cb="CB1", umi="SAME")  # 10 reads, 1 molecule
@@ -257,10 +257,15 @@ def test_tier_two_may_score_above_zero_only_via_a_rejected_cluster():
     assert score == 1
 
 
-def test_support_window_counts_reads_not_molecules():
+def test_support_window_counts_molecules_not_reads():
+    """Stage 1c: the tier-2 score is in the same unit as the tier-1 score and
+    the gate — distinct (CB, UMI) molecules.  Five reads from two molecules
+    score 2, not 5 (the sidecar keeps the raw 5)."""
     s = ClipSeeder(direction=False, window=100, min_reads=99)
     for i in range(5):
-        s.add_clip(1350, cb=f"CB{i}", umi=f"u{i}")
+        s.add_clip(1350, cb=f"CB{i % 2}", umi=f"u{i % 2}")
     s.add_coverage_pas(1300, 1400, {"CB1": 1})
-    (_, _, score, _), = s.flush()
-    assert score == 5
+    sup = []
+    (_, _, score, _), = s.flush(support_out=sup)
+    assert score == 2
+    assert sup[0]["clip_reads"] == 5 and sup[0]["clip_umis"] == 2

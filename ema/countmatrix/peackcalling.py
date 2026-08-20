@@ -7,8 +7,12 @@ from sortedcontainers import SortedList
 from ema.countmatrix.peak import Peak
 from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.read import read_check
-from ema.countmatrix.paswrite import matrix_write, pas_write
-from ema.countmatrix.polya import ClipSeeder, check_clip_rate, clip_site, read_umi
+from ema.countmatrix.paswrite import (
+    matrix_write, open_support, pas_write, support_write,
+)
+from ema.countmatrix.polya import (
+    ClipSeeder, check_clip_rate, clip_read_ok, clip_site, read_umi,
+)
 from ema.config import directory_config, variable_config
 from ema.strategies.utils import merge_close_or_low_prominence
 from typing import TYPE_CHECKING
@@ -65,7 +69,11 @@ def peak_calling(
                     polya_min_purity: float = 0.8,
                     polya_window: int = 100,
                     polya_seed_window: int = 25,
-                    polya_min_reads: int = 1,
+                    polya_min_umis: int = 1,
+                    polya_clip_filter: str = "none",
+                    # Deprecated alias of polya_min_umis (the flag was
+                    # --polya-min-reads and always gated on molecules).
+                    polya_min_reads: int | None = None,
                     # (up, down) bp of the tier-1 count window in transcript
                     # orientation; up == -1 means seq_len (--polya-count-window).
                     polya_count_window: tuple = (-1, 25),
@@ -135,6 +143,11 @@ def peak_calling(
             preserves backward compatibility for all existing callers.  Only
             applies to the monolithic path.
     """
+    if polya_min_reads is not None:
+        # Deprecated alias: --polya-min-reads named reads but has always
+        # gated on distinct molecules (see ClipSeeder.flush).
+        polya_min_umis = polya_min_reads
+
     # --- Tile dispatch (takes precedence over pipeline) -------------------
     if use_tiles:
         from ema.countmatrix.tile_runner import run_tiled
@@ -175,7 +188,8 @@ def peak_calling(
             polya_min_purity=polya_min_purity,
             polya_window=polya_window,
             polya_seed_window=polya_seed_window,
-            polya_min_reads=polya_min_reads,
+            polya_min_umis=polya_min_umis,
+            polya_clip_filter=polya_clip_filter,
             polya_count_window=polya_count_window,
         )
     # --- End tile dispatch ------------------------------------------------
@@ -223,7 +237,8 @@ def peak_calling(
             polya_min_purity=polya_min_purity,
             polya_window=polya_window,
             polya_seed_window=polya_seed_window,
-            polya_min_reads=polya_min_reads,
+            polya_min_umis=polya_min_umis,
+            polya_clip_filter=polya_clip_filter,
             polya_count_window=polya_count_window,
         )
     # --- End pipeline dispatch --------------------------------------------
@@ -243,13 +258,21 @@ def peak_calling(
             "do not combine it with --polya-evidence off."
         )
     _polya_collect = polya_enabled or _polya_seeded
+    from ema.countmatrix.polya import CLIP_FILTERS as _CLIP_FILTERS
+    if polya_clip_filter not in _CLIP_FILTERS:
+        raise ValueError(
+            f"--polya-clip-filter must be one of {_CLIP_FILTERS}, "
+            f"got {polya_clip_filter!r}"
+        )
+    _strict_clip = polya_clip_filter == "f3844"
     _seeder = (
         ClipSeeder(
             direction,
             seed_window=polya_seed_window,
-            min_reads=polya_min_reads,
+            min_umis=polya_min_umis,
             window=polya_window,
             count_window=polya_count_window,
+            clip_filter=polya_clip_filter,
         )
         if _polya_seeded
         else None
@@ -338,6 +361,9 @@ def peak_calling(
             pass
     matrix = open(matrixpath, "w")
     bedfile = open(bedfilepath, "w")
+    # Per-PAS poly(A) support sidecar (raw clip reads, molecules, -F 3844
+    # counts, matrix-row reads) — BED6 stays BED6.
+    supportfile = open_support(bedfilepath) if _polya_collect else None
     data_array = SortedList()
     signal = False
     chro = "1"
@@ -369,26 +395,40 @@ def peak_calling(
                 continue
             pasnumber = state.bump_pasnumber()
             if _polya_collect:
-                _support, _ = peak_obj.polya_support(
+                _reads, _umis, _reads_f, _umis_f = peak_obj.polya_support(
                     pas_1, pas_2, direction, polya_window
                 )
+                # BED column 5 is DISTINCT MOLECULES, the unit
+                # --polya-min-umis documents (raw reads go to the sidecar).
+                _support = _umis_f if _strict_clip else _umis
             else:
-                _support = 0
+                _reads = _umis = _reads_f = _umis_f = _support = 0
             pas_write(
                 chro_out, pas_1, pas_2, direction,
                 pasnumber=pasnumber, output=bedfile, score=_support,
             )
+            if supportfile is not None:
+                support_write(supportfile, pasnumber, {
+                    "clip_reads": _reads, "clip_umis": _umis,
+                    "clip_reads_f3844": _reads_f, "clip_umis_f3844": _umis_f,
+                    "window_reads": sum(pas_cb_dict.values()),
+                    "tier": 2,
+                })
             matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
     def _flush_seeded(chro_out):
         if _seeder is None:
             return
-        for _start, _end, _support, _cb_dict in _seeder.flush():
+        _supports: list = []
+        for (_start, _end, _support, _cb_dict), _row in zip(
+            _seeder.flush(support_out=_supports), _supports
+        ):
             pasnumber = state.bump_pasnumber()
             pas_write(
                 chro_out, _start, _end, direction,
                 pasnumber=pasnumber, output=bedfile, score=_support,
             )
+            support_write(supportfile, pasnumber, _row)
             matrix_write(_cb_dict, pasnumber, matrix, index=index)
     # --- End Stage 1 helpers -----------------------------------------------
 
@@ -425,10 +465,14 @@ def peak_calling(
         # widened (Stage-0 stop signal).  The UMI lookup only happens for
         # the ~1% of reads that actually carry a qualifying clip.
         _clip = _umi = None
+        _clip_ok = True
         if _polya_collect:
             _clip = clip_site(read, polya_min_clip, polya_min_purity)
             if _clip is not None:
                 _umi = read_umi(read)
+                # samtools -F 3844 on the clip-evidence channel only:
+                # read_check's 5-tuple (the coverage contract) is untouched.
+                _clip_ok = clip_read_ok(read)
 
         if chro1 != chro:  # Chromosome changed — flush peaks from OLD chromosome
             if signal:
@@ -469,7 +513,7 @@ def peak_calling(
             # read ends in its cleavage window, not from its clip reads).
             _seeder.add_read(start1, end1, cb)
             if _clip is not None:
-                _seeder.add_clip(_clip, cb, _umi)
+                _seeder.add_clip(_clip, cb, _umi, end1, _clip_ok)
 
         # Update window-based local lambda from trailing deque of read positions
         if dynamic_threshold:
@@ -489,7 +533,7 @@ def peak_calling(
                 # cb_position_counting (annotate mode scores each emitted
                 # PAS from its own peak's clip evidence).
                 if _clip is not None:
-                    peak.polya_counting(_clip, cb, _umi)
+                    peak.polya_counting(_clip, cb, _umi, _clip_ok)
 
 
         # If newread start_point is more than l_end(where height is more than threshold)
@@ -540,6 +584,8 @@ def peak_calling(
 
     matrix.close()
     bedfile.close()
+    if supportfile is not None:
+        supportfile.close()
 
     if _seeder is not None:
         log.info("clip_seeded counting (%s strand%s): %s",

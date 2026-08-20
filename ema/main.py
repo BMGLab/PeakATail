@@ -309,6 +309,36 @@ def run(
 # least one is enabled, so the default-off pipeline never enters this code
 # path at all — output is byte-identical to pre-D6 behaviour.
 # ---------------------------------------------------------------------------
+def _write_run_support(bed_paths, out_path) -> None:
+    """Concatenate the caller BEDs' poly(A) support sidecars into one
+    run-root ``pas_support.tsv`` (pas_id, clip_reads, clip_umis,
+    clip_reads_f3844, clip_umis_f3844, window_reads, tier).
+
+    Best-effort and non-fatal: the sidecar is an annotation, never an input
+    to the pipeline.  Only written when the pas_ids are still the caller's
+    (single-BAM path); multi-BAM runs re-key their PAS in merge_pas_beds,
+    so their sidecars stay next to each caller BED.
+    """
+    from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
+    try:
+        srcs = [Path(support_path_for(b)) for b in bed_paths]
+        srcs = [s for s in srcs if s.exists()]
+        if not srcs:
+            return
+        with open(out_path, "w") as out:
+            out.write("\t".join(SUPPORT_COLUMNS) + "\n")
+            for s in srcs:
+                with open(s) as fh:
+                    first = fh.readline()
+                    if not first.startswith("pas_id") and first.strip():
+                        out.write(first)
+                    for line in fh:
+                        if line.strip():
+                            out.write(line)
+    except Exception as exc:  # pragma: no cover - annotation only
+        log.warning("poly(A) support sidecar not written: %s", exc)
+
+
 def _resolve_annotation_bed() -> str:
     """Return the annotation BED source for --annot-filter.
 
@@ -666,13 +696,28 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # ema/countmatrix/polya.py).  Threaded identically into the monolithic,
     # tile and pipeline paths so all three agree.
     from ema.countmatrix.polya import parse_count_window as _parse_count_window
+    import sys as _sys
+    if any(a.split("=", 1)[0] == "--polya-min-reads" for a in _sys.argv):
+        log.warning(
+            "--polya-min-reads is DEPRECATED and now spelled --polya-min-umis: "
+            "the gate has always counted distinct (CB, UMI) molecules, and BED "
+            "column 5 now reports the same unit (raw clip reads are in "
+            "pas_support.tsv)."
+        )
     _polya_kwargs = dict(
         polya_enabled=(str(getattr(args, "polya_evidence", "on")).lower() != "off"),
         polya_min_clip=int(getattr(args, "polya_min_clip", 6)),
         polya_min_purity=float(getattr(args, "polya_min_purity", 0.8)),
         polya_window=int(getattr(args, "polya_window", 100)),
         polya_seed_window=int(getattr(args, "polya_seed_window", 25)),
-        polya_min_reads=int(getattr(args, "polya_min_reads", 1)),
+        # --polya-min-umis, with the deprecated --polya-min-reads spelling
+        # mapping to the same (always molecule-based) gate.
+        polya_min_umis=int(
+            getattr(args, "polya_min_umis", None)
+            if getattr(args, "polya_min_umis", None) is not None
+            else getattr(args, "polya_min_reads", 1)
+        ),
+        polya_clip_filter=str(getattr(args, "polya_clip_filter", "none")),
         polya_count_window=_parse_count_window(
             getattr(args, "polya_count_window", "auto,25")
         ),
@@ -1085,6 +1130,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     if len(bam_list) == 1:
         shutil.copy(all_pos_beds[0], directory_config.posbed)
         shutil.copy(all_neg_beds[0], directory_config.negbed)
+        # poly(A) support sidecar: concatenate the two strand files into
+        # <run>/pas_support.tsv, keyed by the same pas_id as pasbed.bed.
+        _write_run_support(
+            [all_pos_beds[0], all_neg_beds[0]],
+            Path(directory_config.output_dir) / "pas_support.tsv",
+        )
         shutil.copy(all_pos_mtxs[0], directory_config.posmatrixpath)
         shutil.copy(all_neg_mtxs[0], directory_config.negmatrixpath)
 
