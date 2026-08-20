@@ -1,0 +1,6 @@
+run_name	peak_strategy	atlas_mode	ip_mode	note
+lg_annotate	lambda_gradient	annotate	annotate	IP baseline (keep-all): annotate mode NEVER drops or edits a pasbed.bed row (the internal_priming flag lands only in annotatedpas.bed), so this IS the "IP off" pasbed. A separate ip_mode=off arm reproduces this file byte-for-byte (issue #69). Genuine IP contrast = this row vs lg_ip_filter.
+lp_annotate	lambda_poisson	annotate	annotate	strategy axis: Poisson-lambda peak calling
+si_annotate	sierra_iterative	annotate	annotate	strategy axis: Sierra-style iterative peak calling
+lg_ip_filter	lambda_gradient	annotate	filter	FASTA-FILTER experiment: DROP internal-priming PAS, do NOT carry them into clustering/switch — the ONLY IP arm whose pasbed.bed differs from lg_annotate.
+# lg_ip_off REMOVED (issue #69): ip_mode=off == keep-all == ip_mode=annotate at the pasbed.bed / benchmark_vs_polyasite_v3.json level, so it produced output byte-identical to lg_annotate. annotate mode rewrites the pos/neg BEDs unchanged and never touches pasbed.bed; the internal_priming flag is emitted only to annotatedpas.bed. A '#'-prefixed run_name is skipped by both peakcall_grid parsers in main.nf (eachLine startsWith('#') and the splitCsv filter { !it.run_name.startsWith('#') }).
