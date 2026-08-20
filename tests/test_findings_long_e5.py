@@ -124,15 +124,19 @@ def test_length_long_proportion_with_pas_uid_and_rank() -> None:
     assert list(out["value"]) == [0.7, 0.3]
     assert list(out["pas_uid"]) == ["chr1:9:+", "chr1:50:+"]
     assert list(out["rank"]) == [0, 1]
-    # '_gene_' sentinel normalized to None
-    assert out["transcript_id"].tolist() == ["ENST1", None]
+    # '_gene_' sentinel normalized to a missing value. pandas>=3 stores object
+    # missings as NaN (not None), so assert missingness with pd.isna — the check
+    # every consumer (and parquet round-trip) actually uses — not identity.
+    tids = out["transcript_id"].tolist()
+    assert tids[0] == "ENST1"
+    assert pd.isna(tids[1])
 
 
 def test_length_long_shannon_gene_level() -> None:
     df = pd.DataFrame({"gene_id": ["ENSG1"], "cell": ["AAAA"], "entropy": [1.2], "cluster": ["B"]})
     out = length_long(df, strategy="shannon", value_col="entropy", dataset_id="dsA")
     assert out.iloc[0]["value"] == 1.2
-    assert out.iloc[0]["pas_uid"] is None
+    assert pd.isna(out.iloc[0]["pas_uid"])
     # shannon (entropy) has no proximal/distal polarity → undetermined, never NA.
     assert out.iloc[0]["direction"] == "undetermined"
     assert out.iloc[0]["direction_basis"] == "structural"
