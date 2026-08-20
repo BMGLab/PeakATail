@@ -342,6 +342,18 @@ class variable_config:
     # ignore this and use compute_lambda(heights) instead.  Negative
     # disables Tier 2 entirely.
     min_pas_prominence = 5.0
+    # 3' cleavage-site offset correction (issue #72).  Called peak 3' ends
+    # stop ~90-105 nt short of the true cleavage site (10x R2 coverage runs
+    # out before the poly(A) junction).  When > 0, the reported PAS 3' end is
+    # shifted downstream by this many bp after peak calling so tight-cutoff
+    # benchmarks and atlas annotation use the inferred cleavage position.
+    # 0 (default) = legacy behaviour (no shift).  See
+    # ema/countmatrix/cleavage_offset.py.
+    cleavage_offset = 0
+    # When True, cleavage_offset is estimated per run from the called peaks +
+    # genome FASTA instead of the fixed constant (issue #72; --auto-cleavage-
+    # offset).  False (default) = use the cleavage_offset constant as-is.
+    auto_cleavage_offset = False
     # Cache populated once per BAM by peak_calling when min_pas_spacing == -1.
     # Keyed by str(bam_path) -> int median read length.  Plain class-level
     # dict (not a dataclass field) so it's accessible on the class itself,

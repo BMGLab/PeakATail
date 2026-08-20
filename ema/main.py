@@ -867,6 +867,64 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "lambda_window": args.lambda_window,
     })
 
+    # ---- 3' cleavage-site offset correction (issue #72) ------------------
+    # Called peak 3' ends stop ~90-105 nt short of the true cleavage site
+    # (10x R2 coverage runs out before the poly(A) junction).  When the
+    # opt-in --cleavage-offset flag is > 0 we shift each reported PAS 3' end
+    # downstream, in place, on the per-(dataset,bam) strand BEDs produced by
+    # BOTH the tiled and sequential paths.  Doing it here -- the single point
+    # where all_pos_beds/all_neg_beds are finalised and before any snapshot,
+    # legacy copy, find_close() or annotatedpas.bed derives from them -- keeps
+    # the correction path-agnostic without threading a parameter through the
+    # spawn-based peak-calling workers.  0 (default) is a no-op (legacy).
+    _cleavage_offset = int(getattr(variable_config, "cleavage_offset", 0) or 0)
+    _auto_offset = bool(getattr(variable_config, "auto_cleavage_offset", False))
+    _offset_diag = None
+    if _auto_offset:
+        # Data-driven mode: infer the offset from the called peaks + FASTA.
+        from ema.countmatrix.cleavage_offset import resolve_cleavage_offset
+
+        _genome_fasta = getattr(args, "genome_fasta", None)
+        _cleavage_offset, _offset_diag = resolve_cleavage_offset(
+            _cleavage_offset,
+            auto=True,
+            bed_paths=list(all_pos_beds) + list(all_neg_beds),
+            genome_fasta=_genome_fasta,
+        )
+    if _cleavage_offset > 0:
+        from ema.countmatrix.cleavage_offset import rewrite_bed_3prime_offset
+
+        _n_shifted = 0
+        for _bed in list(all_pos_beds) + list(all_neg_beds):
+            try:
+                _n_shifted += rewrite_bed_3prime_offset(_bed, _cleavage_offset)
+            except FileNotFoundError:
+                # A strand may legitimately produce no BED for a dataset.
+                continue
+        log.info(
+            "3' cleavage-offset correction: shifted %d PAS 3' ends downstream "
+            "by %d bp (%s)", _n_shifted, _cleavage_offset,
+            "auto-estimated" if _auto_offset else "--cleavage-offset",
+        )
+        _stats = {
+            "cleavage_offset_bp": _cleavage_offset,
+            "n_pas_shifted": _n_shifted,
+            "auto": _auto_offset,
+        }
+        if _offset_diag is not None:
+            _stats["diagnostics"] = _offset_diag
+        # There is no dedicated "cleavage_offset" stage dir, so
+        # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
+        # real-run validation, not unit tests). The offset is a peak-calling
+        # correction -> persist alongside the peak-calling outputs. Use a local
+        # alias: a later `import json` in this function makes bare `json`
+        # function-local, so the module-level name is shadowed here.
+        import json as _json_coff
+        with open(
+            output_mgr.path("peak_calling", "cleavage_offset_stats.json"), "w"
+        ) as _coff:
+            _json_coff.dump(_stats, _coff, indent=2, default=str)
+
     # Per-stage data snapshots — every step that mutates the data gets a
     # canonical file on disk.  See ema/outputs.py for the layout.
     from ema.outputs import write_per_dataset_beds, write_raw_peak_outputs
@@ -1335,7 +1393,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # ------------------------------------------------------------------ #
     # Pre-build (sub_indices, sub_cbs) for every dataset in the parent
     # process — O(n_cells) each, cheap.  Empty datasets are filtered out.
-    import json
+    # NB: `json` is imported at module scope (top of file). A local `import
+    # json` here would make the name function-local for the WHOLE function,
+    # breaking earlier bare-`json` uses (cleavage-offset write, atlas-snap
+    # reads) with UnboundLocalError — so do NOT re-import it locally.
     import multiprocessing
     import pickle
 

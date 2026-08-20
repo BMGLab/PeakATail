@@ -468,6 +468,41 @@ class RunConfig:
             ),
         ),
     )
+    cleavage_offset: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--cleavage-offset", yaml_key="cleavage_offset",
+            legacy_dataclass_attr="variable_config.cleavage_offset",
+            description=(
+                "3' cleavage-site offset correction (bp; issue #72).  Called "
+                "peak 3' ends stop ~90-105 nt short of the true cleavage site "
+                "because 10x R2 coverage runs out before the poly(A) junction. "
+                "When > 0, the reported PAS 3' end is shifted downstream by "
+                "this many bp after peak calling, so tight-cutoff benchmarks "
+                "and atlas annotation use the inferred cleavage position. "
+                "A sane data-driven constant is ~90-100 (try 95). "
+                "0 (default) preserves legacy behaviour (no shift). "
+                "Use --auto-cleavage-offset to estimate this from the data."
+            ),
+        ),
+    )
+    auto_cleavage_offset: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--auto-cleavage-offset", yaml_key="auto_cleavage_offset",
+            is_flag=True,
+            legacy_dataclass_attr="variable_config.auto_cleavage_offset",
+            description=(
+                "Data-driven 3' cleavage-offset estimation (issue #72).  When "
+                "set, the offset is inferred per run from the called peaks and "
+                "--genome-fasta (genomic A-fraction crest + AATAAA density "
+                "downstream of each peak 3' end) instead of using the fixed "
+                "--cleavage-offset constant, then applied the same way.  "
+                "Requires --genome-fasta; falls back to ~95 bp if the profiles "
+                "are inconclusive.  Off (default) preserves legacy behaviour."
+            ),
+        ),
+    )
 
     # ─── filters (D6: wired into `ema run`; see ema/main.py::_apply_pas_filters) ──
     ip_filter: bool = field(
@@ -805,6 +840,30 @@ class RunConfig:
                 "Minimum cells (with non-zero counts for NB strategies) in each "
                 "cluster group for a PAS to be included in differential testing. "
                 "Default 10."
+            ),
+            applies_to=frozenset({"diff"}),
+        ),
+    )
+
+    count_mode: str = field(
+        default="cells",
+        metadata=_spec(
+            cli_flag="--count-mode", yaml_key="count_mode",
+            skip_legacy_bridge=True,
+            description=(
+                "Unit the fisher strategy aggregates for its 2xN contingency "
+                "table. 'cells' (default, D4, calibrated): each cell "
+                "contributes at most once via per-cell PAS detection among "
+                "gene-expressing cells, de-pseudoreplicating the test. 'reads' "
+                "(legacy, opt-in): sum read/UMI counts per group -- reads "
+                "within a cell are correlated, so read-level fisher q-values "
+                "are NOT FDR-calibrated (a permutation null reports q<0.05 "
+                "hits in 100% of runs; see issue #74) and should be treated as "
+                "a ranking screen only. The default was flipped reads->cells "
+                "in issue #74 so the out-of-the-box path is calibrated; pass "
+                "'reads' explicitly only for backward comparison. Ignored by "
+                "the NB strategies, which model per-cell overdispersion "
+                "directly."
             ),
             applies_to=frozenset({"diff"}),
         ),
