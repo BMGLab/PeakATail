@@ -368,9 +368,15 @@ def _filter_cb_legacy(*, matrix_paths, cb_lookup, min_read,
 def make_dataframe(matrixpath=None, collist=None):
     """Read filtered MatrixMarket file and return sparse matrix with PAS IDs preserved.
 
+    The returned matrix is ROW-ALIGNED with ``pas_ids``: row ``i`` holds the
+    counts of PAS ``pas_ids[i]``.  Downstream (:func:`ema.annotate.annotate`)
+    resolves a PAS to a matrix row by its POSITION in ``pas_ids``, so this
+    invariant is load-bearing — see the guard in ``annotate()``.
+
     Returns:
         tuple: (sparse_matrix, pas_ids, collist)
-            - sparse_matrix: scipy.sparse.csc_matrix (rows=PAS, cols=cells)
+            - sparse_matrix: scipy.sparse.csc_matrix (rows=PAS, cols=cells),
+              ``shape[0] == len(pas_ids)``
             - pas_ids: numpy array of original PAS row indices (1-based from MatrixMarket)
             - collist: list of cell barcode strings
     """
@@ -392,6 +398,22 @@ def make_dataframe(matrixpath=None, collist=None):
     else:
         # Dense fallback: rows with any non-zero value
         pas_ids = np.sort(np.where(np.any(coo != 0, axis=1))[0] + 1)
+
+    # RE-KEY THE MATRIX TO pas_ids.
+    #
+    # mmread returns a FULL-height matrix: rows 1..<the row count in the
+    # MatrixMarket dimension header>, which is ``max(pas_id)`` over the kept
+    # rows.  ``pas_ids`` above lists only the rows that actually carry counts.
+    # Every PAS whose reads all belonged to barcodes dropped by the min_read
+    # CB filter leaves an EMPTY row behind, so the two indexings drift apart by
+    # the number of empty rows above each PAS (observed: 0 -> 1540 on a real
+    # mouse testis run).  ``annotate()`` looks rows up by POSITION in
+    # ``pas_ids``, so without this subset every PAS below the first gap would
+    # be handed a different PAS's counts.
+    if len(pas_ids):
+        sparse_csc = sp.csc_matrix(sparse_csc.tocsr()[pas_ids - 1, :])
+    else:
+        sparse_csc = sp.csc_matrix((0, sparse_csc.shape[1]), dtype=sparse_csc.dtype)
 
     return sparse_csc, pas_ids, collist
 
@@ -425,7 +447,16 @@ def preprocessing(sparse_matrix, pas_ids, collist,
         min_genes = filter_config.min_genes
 
     # Build AnnData: scanpy expects cells-by-features (cells x PAS)
-    # Our matrix is PAS x cells, so transpose
+    # Our matrix is PAS x cells, so transpose.
+    # ``pas_ids`` becomes var_names positionally, so row i of sparse_matrix must
+    # be PAS pas_ids[i]; a height mismatch would silently relabel every PAS
+    # (AnnData's own error names shapes, not the cause), so check it here.
+    if sparse_matrix.shape[0] != len(pas_ids):
+        raise ValueError(
+            f"sparse_matrix has {sparse_matrix.shape[0]} rows but pas_ids has "
+            f"{len(pas_ids)} entries — pas_ids labels the rows positionally, "
+            "so a mismatch mis-keys every PAS."
+        )
     var_dict = {'pas_id': pas_ids}
     if gene_ids is not None:
         if len(gene_ids) != len(pas_ids):

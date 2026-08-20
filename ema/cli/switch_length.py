@@ -40,6 +40,25 @@ def _list_strategies_callback(ctx, param, value):
 @common_options(output_default="switch_out")
 @click.option("--h5ad", "-i", "h5ad", multiple=True, required=True,
               type=click.Path(exists=True, dir_okay=False))
+@click.option("--pasbed", type=click.Path(exists=True, dir_okay=False),
+              default=None,
+              help="PAS BED6 (chrom/start/end/pas_id/score/strand). Supplies "
+                   "the strand + coordinates that define proximal vs distal. "
+                   "When omitted it is resolved by walking up from each "
+                   "--h5ad; if that fails the run ABORTS rather than ranking "
+                   "PAS by input order (which inverts every minus-strand "
+                   "gene).")
+@click.option("--counts-layer", "counts_layer", type=str, default=None,
+              help="AnnData layer holding raw counts. Default: prefer "
+                   "layers['counts'], else .X. Pass 'X' to force .X. "
+                   "Clustering overwrites .X with normalised values, so a "
+                   "clusters.h5ad written before the counts stash landed "
+                   "needs the layer backfilled.")
+@click.option("--allow-non-count-matrix", "allow_non_count_matrix",
+              is_flag=True, default=False,
+              help="Proceed even when the chosen matrix is non-integral "
+                   "(i.e. normalised, not counts). PDUI is then not a count "
+                   "ratio -- diagnostics only, never a published number.")
 @click.option("--gtf", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Required when --isoform-agg=per_isoform.")
 @click.option("--cluster-pairs", "cluster_pairs", type=str, default=None)
@@ -124,6 +143,9 @@ def length(ctx: click.Context, **kwargs) -> None:
                 threads=kwargs["threads"],
                 pseudocount=kwargs["pdui_pseudocount"],
                 utr_unmatched=kwargs["utr_unmatched"],
+                pasbed=kwargs["pasbed"],
+                counts_layer=kwargs["counts_layer"],
+                allow_non_count_matrix=kwargs["allow_non_count_matrix"],
                 progress_client=_pdui_client,
             )
 

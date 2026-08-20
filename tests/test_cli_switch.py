@@ -84,19 +84,7 @@ def test_switch_length_isoform_collapse_choices():
         assert token in h.output, f"expected {token} in help output"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN-RED DRIFT, tracked in the Stage-0 fix campaign (PeakATail_wd analysis, 2026-08; see PR description and issues #67-#72)"
-        "ema/switch_test/runner.py:1168 now reads `adata.var.columns` when it "
-        "synthesises the per_gene isoform map (the rank_pas_by_genomic_position "
-        "rework that replaced the (gene, '_gene_', 0, 1, 1) sentinel), but this "
-        "test's _FakeAdata stub has no `.var` -> AttributeError. The stub, not "
-        "the library, is stale; Stage 0b touches the same code path."
-        " Marked xfail (non-strict) so CI is green on day one -- an XPASS here means the drift is gone: delete this marker in the same commit."
-    ),
-    strict=False,
-)
-def test_isoform_agg_per_gene_dispatches_to_per_gene_branch(monkeypatch):
+def test_isoform_agg_per_gene_dispatches_to_per_gene_branch(monkeypatch, tmp_path):
     """`--isoform-agg per_gene` must invoke the per_gene branch in strategies.
 
     Direct regression for BLOCKER 1 — strategy code branches on the literal
@@ -120,19 +108,33 @@ def test_isoform_agg_per_gene_dispatches_to_per_gene_branch(monkeypatch):
 
     # Stub anndata + count matrix path so we don't hit disk
     class _FakeAdata:
-        pass
+        def __init__(self):
+            import pandas as pd
+            self.var = pd.DataFrame({"gene_id": ["G1", "G1"]}, index=["1", "2"])
+            self.obs = pd.DataFrame(index=[])
 
     monkeypatch.setattr(_runner_mod.ad, "read_h5ad", lambda _p: _FakeAdata())
     monkeypatch.setattr(
         _runner_mod, "build_count_dfs",
-        lambda _adata, which="both": (__import__("pandas").DataFrame(), None, None, None),
+        lambda _adata, which="both", **_kw: (
+            __import__("pandas").DataFrame(), None, None, None),
     )
 
-    # Use a path that exists so the loop body runs (we patched read_h5ad anyway)
+    # run_length resolves pasbed.bed next to the h5ad and REFUSES to run
+    # without it (ranking PAS by input order inverts every minus-strand gene).
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "pasbed.bed").write_text(
+        "chr1\t100\t101\t1\t0\t+\n"
+        "chr1\t500\t501\t2\t0\t+\n"
+    )
+
+    # Use a path whose directory exists so the loop body runs (we patched
+    # read_h5ad anyway)
     _runner_mod.run_length(
-        h5ad_paths=["/dev/null"],
+        h5ad_paths=[str(run_dir / "clusters.h5ad")],
         gtf=None,
-        output_dir="/tmp/_isoform_test_out",
+        output_dir=str(tmp_path / "out"),
         cluster_pairs=None,
         cluster_key="leiden",
         strategy="stub",
@@ -185,7 +187,7 @@ def test_per_gene_pas_isoform_map_rank_from_pasbed(monkeypatch, tmp_path):
     monkeypatch.setattr(_runner_mod.ad, "read_h5ad", lambda _p: _FakeAdata())
     monkeypatch.setattr(
         _runner_mod, "build_count_dfs",
-        lambda _adata, which="both": (pd.DataFrame(), None, None, None),
+        lambda _adata, which="both", **_kw: (pd.DataFrame(), None, None, None),
     )
 
     # Real pasbed.bed sibling to the (stubbed) h5ad path — this is what
@@ -218,3 +220,60 @@ def test_per_gene_pas_isoform_map_rank_from_pasbed(monkeypatch, tmp_path):
     assert pas_map[11][0][3] == 2 and pas_map[11][0][4] == 2   # GENE_PLUS distal
     assert pas_map[20][0][3] == 1 and pas_map[20][0][4] == 2   # GENE_MINUS proximal (high coord)
     assert pas_map[21][0][3] == 2 and pas_map[21][0][4] == 2   # GENE_MINUS distal (low coord)
+
+
+def test_switch_length_exposes_pasbed_and_counts_flags():
+    """0b/0c: `switch length` must be able to be TOLD where the truth is.
+
+    Without ``--pasbed`` the only way to supply PAS strand was the directory
+    walk-up, and when that missed, ranking fell back to input order (a silent
+    plus-strand convention).  Without ``--counts-layer`` there was no way to
+    point PDUI at raw counts once clustering had overwritten ``.X``.
+    """
+    runner = CliRunner()
+    result = runner.invoke(main, ["switch", "length", "--help"])
+    assert result.exit_code == 0
+    for flag in ("--pasbed", "--counts-layer", "--allow-non-count-matrix"):
+        assert flag in result.output, f"{flag} missing from `switch length --help`"
+
+
+def test_switch_diff_exposes_counts_flags():
+    runner = CliRunner()
+    result = runner.invoke(main, ["switch", "diff", "--help"])
+    assert result.exit_code == 0
+    for flag in ("--counts-layer", "--allow-non-count-matrix"):
+        assert flag in result.output, f"{flag} missing from `switch diff --help`"
+
+
+def test_switch_length_cli_forwards_new_flags_to_run_length(monkeypatch, tmp_path):
+    """The flags must actually reach ``run_length`` (not just parse)."""
+    import ema.cli.switch_length as _cli_mod
+
+    captured: dict = {}
+
+    def _fake_run_length(**kw):
+        captured.update(kw)
+        return None, None
+
+    monkeypatch.setattr(
+        "ema.switch_test.runner.run_length", _fake_run_length, raising=True
+    )
+    monkeypatch.setattr(
+        _cli_mod, "resolve_subcommand_output_dir",
+        lambda *a, **k: tmp_path / "out", raising=True,
+    )
+    h5 = tmp_path / "clusters.h5ad"
+    h5.write_bytes(b"")
+    pasbed = tmp_path / "pasbed.bed"
+    pasbed.write_text("chr1\t1\t2\t1\t0\t+\n")
+
+    runner = CliRunner()
+    result = runner.invoke(main, [
+        "switch", "length", "--h5ad", str(h5), "--pasbed", str(pasbed),
+        "--counts-layer", "counts", "--allow-non-count-matrix",
+        "--no-plots", "--no-log-file",
+    ])
+    assert result.exit_code == 0, result.output
+    assert captured["pasbed"] == str(pasbed)
+    assert captured["counts_layer"] == "counts"
+    assert captured["allow_non_count_matrix"] is True
