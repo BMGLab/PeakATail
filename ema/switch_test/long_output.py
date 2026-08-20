@@ -364,8 +364,10 @@ def length_long(
     value column (pdui / proportion / entropy). ``pas_col``/``rank_col`` are only
     passed for the per-PAS ``proportion`` strategy; ``pas_uid_map`` maps a pas_id
     to its content-addressed pas_uid (from ``unified/pas_uid.tsv`` / the ledger).
-    The ``_gene_`` isoform sentinel is normalized to ``None`` (contract: "no
-    specific isoform" is an explicit null, not a fabricated transcript).
+    The ``_gene_`` isoform sentinel is normalized to a missing value (contract:
+    "no specific isoform" is null, not a fabricated transcript). pandas>=3 stores
+    the object-column missing as ``NaN`` rather than ``None``; test with
+    ``pd.isna``, which is what consumers and the parquet round-trip use.
 
     Direction (D8 length polarity) is the deterministic structural shorten/
     lengthen call from :func:`structural_length_direction` — a one-vs-rest
