@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased — read-level poly(A) evidence
+
+### Added
+- **`ema/countmatrix/polya.py`: PeakATail now reads poly(A) evidence off the
+  reads.** `clip_site()` is a strand-aware terminal soft-clip A/T detector
+  returning the inferred cleavage coordinate. Measured on the pbmc_10k_v3
+  BAM: 1.152% of CB-bearing reads carry a qualifying clip, the wrong-end
+  control fires on 0.0125% (92x specificity), and 73.9% of clip sites fall
+  within 100 bp of a PolyASite 2.0 site (13.9% for arbitrary read 3' ends).
+- **BED column 5 of `pasbed.bed` now carries per-PAS clip-read support.** It
+  was hardcoded to `0`; every downstream reader already names it `score` and
+  ignores it, and `annotatedpas.bed` inherits it. `--polya-evidence off`
+  restores the previous byte-identical output.
+- **New `clip_seeded` peak strategy — the accuracy fix.** Clip-site clusters
+  (single-linkage, `--polya-seed-window`, read-weighted modal position) are
+  PRIMARY PAS candidates; coverage peaks that overlap no cluster are emitted
+  as an explicit SECOND TIER with `score == 0`. Seeding rather than filtering
+  is required because ~60% of the clip evidence lies outside every coverage
+  peak window.
+
+  Measured end-to-end on chr19+chr21 of pbmc_10k_v3 and scored with
+  `scripts/benchmark_tools/score_tool.py` (detected-gene-restricted
+  PolyASite 2.0 atlas, both arms taken through the identical gene-assignment
+  stage the shipped benchmark reports at):
+
+  | arm | n | P@100 | R@100 | F1@100 |
+  |---|---:|---:|---:|---:|
+  | shipped caller (`lambda_gradient`) | 12,928 | 0.1610 | 0.1956 | **0.1766** |
+  | `clip_seeded`, both tiers | 19,354 | 0.2371 | 0.3782 | **0.2914** |
+  | `clip_seeded`, clip-supported tier only | 11,318 | 0.3591 | 0.3379 | **0.3482** |
+  | `clip_seeded`, coverage-only tier | 8,036 | 0.0652 | 0.0404 | 0.0499 |
+
+  Precision and recall both roughly double. The clip-supported tier's recall
+  (0.3379) sits at the measured ceiling for this slice — 33.56% of its
+  detected-gene atlas sites carry any clip read within 100 bp — so that tier
+  extracts essentially all the recall this evidence type can provide, and the
+  coverage-only tier is what carries the rest. **Always report the two tiers
+  separately, with their n.**
+- New flags alongside the `ip_*` block: `--polya-evidence`, `--polya-mode`
+  (`annotate` default / `filter` / `require`), `--polya-min-clip`,
+  `--polya-min-purity`, `--polya-window`, `--polya-seed-window`,
+  `--polya-min-reads`. `filter` and `require` are enforced at the existing
+  `_apply_pas_filters()` seam and drop exactly the coverage-only tier.
+- **Startup warning when the observed clip rate is below 0.3% of CB reads** —
+  a pipeline that trims poly(A) before alignment destroys this evidence
+  channel, and the caller now says so instead of silently emitting an
+  unsupported call set.
+
+### Notes
+- The evidence is computed in all three peak-calling paths (monolithic,
+  `--pipeline`, `--tiles`) from the `AlignedSegment` at the call site;
+  `read_check`'s 5-tuple return is deliberately unchanged.
+  `tests/test_polya_three_path_agreement.py` pins that the three paths
+  produce identical BED output.
 ## Unreleased
 
 ### Added

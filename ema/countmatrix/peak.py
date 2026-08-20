@@ -16,13 +16,16 @@ class Peak():
         """
         cls.pasnumber = 0
 
-    def __init__(self, peak_list=None, peak_start=0, last_peak_end=0, peak_strand=True, cb_dict=None, cb_positions=None):
+    def __init__(self, peak_list=None, peak_start=0, last_peak_end=0, peak_strand=True, cb_dict=None, cb_positions=None, polya_sites=None):
         '''
         :param peak_list: [[read_end1, height1], [read_end2, height]...., [read_endn, heightendn]]
         :param peak_start: this point is one read endpoint that detect as peak start but it not mean firat start of peak cause coulde merge multiple peaks
             peak_start assigne when signal turn True in peakcalling function
         :param peak_strand: presents gene strand
         :param cb_dict: collect all CellBarcodes are in peak
+        :param polya_sites: poly(A) soft-clip evidence accumulated into this
+            peak: {cleavage_site: [n_reads, umi_set, n_reads_without_umi]}.
+            Populated via polya_counting() when --polya-evidence is on.
         '''
         self.peak_list = peak_list if peak_list is not None else []
         self.peak_start = peak_start
@@ -30,6 +33,7 @@ class Peak():
         self.peak_strand = peak_strand
         self.cb_dict = cb_dict if cb_dict is not None else {}
         self.cb_positions = cb_positions if cb_positions is not None else {}
+        self.polya_sites = polya_sites if polya_sites is not None else {}
 
     # each time data_array slicing ubdate peak_add 
     def peak_add(self, data_array:list, slice_loc:int):
@@ -55,6 +59,50 @@ class Peak():
         except KeyError:
             self.cb_positions[end_pos][cb] = 1
 
+
+    def polya_counting(self, site: int, cb: str, umi=None):
+        '''Record one poly(A)-clipped read's inferred cleavage site.
+
+        Mirrors cb_position_counting: called from the peak-calling loop for
+        reads counted into this peak that carry a qualifying terminal
+        poly(A) soft clip (see ema.countmatrix.polya.clip_site).
+
+        :param site: 0-based cleavage coordinate from clip_site().
+        :param cb: cell barcode (composite sample_cb string).
+        :param umi: UMI (UB tag) or None. Distinct molecules per site are
+            len(umi_set) + n_reads_without_umi.
+        '''
+        rec = self.polya_sites.get(site)
+        if rec is None:
+            rec = [0, set(), 0]
+            self.polya_sites[site] = rec
+        rec[0] += 1
+        if umi is None:
+            rec[2] += 1
+        else:
+            rec[1].add((cb, umi))
+
+    def polya_support(self, pas_1: int, pas_2: int, strand: bool, window: int):
+        '''Clip support for one emitted PAS: reads and distinct molecules
+        whose cleavage site lies within +/-window of the PAS's strand-aware
+        3' base (forward: bed_end - 1; reverse: bed_start).
+
+        Returns (n_clip_reads, n_distinct_umis).
+        '''
+        if not self.polya_sites:
+            return 0, 0
+        bed_start = min(pas_1, pas_2)
+        bed_end = max(pas_1, pas_2)
+        three = bed_start if strand else bed_end - 1
+        nreads = 0
+        n_no_umi = 0
+        umis = set()
+        for site, rec in self.polya_sites.items():
+            if abs(site - three) <= window:
+                nreads += rec[0]
+                umis |= rec[1]
+                n_no_umi += rec[2]
+        return nreads, len(umis) + n_no_umi
 
     def pasfind(self) -> int:
         '''

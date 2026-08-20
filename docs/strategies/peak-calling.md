@@ -1,7 +1,7 @@
 # Peak-calling strategies
 
 The peak-calling stage finds polyadenylation sites (PAS) within each merged
-"peak region" (a stretch of contiguous 3'-end coverage). PeakATail ships four
+"peak region" (a stretch of contiguous 3'-end coverage). PeakATail ships five
 registered strategies — each implements `PeakFinderStrategy` in
 `ema/strategies/`, each registered via `@register("<name>")`.
 
@@ -16,6 +16,11 @@ YAML config.
 | `lambda_poisson` | `LambdaPoissonStrategy` | MACS2-style single-peak detection with local background | 1 PAS per region |
 | `sierra_iterative` | `SierraIterativeStrategy` | Recovering multiple PAS per 3' UTR (closest to Sierra, Patrick et al. 2020) | Yes — iterative subtraction |
 | `lambda_gradient` | `LambdaGradientStrategy` | Multiple-PAS detection with Poisson significance per candidate | Yes — gradient-based candidate detection + per-summit test |
+| `clip_seeded` | `ClipSeededStrategy` | **Accuracy.** Seeds PAS from read-level poly(A) soft clips and reports coverage-only peaks as an explicit second tier | Yes — one PAS per clip cluster, plus tier-2 coverage peaks |
+
+The first four strategies see only coverage shape and cell barcodes.
+`clip_seeded` is the only one that uses orthogonal, read-level evidence; see
+[its section](#clip_seeded) for why that matters and what it costs.
 
 ![Peak-calling strategy comparison](../assets/figures/peak_strategy_comparison.png)
 *Strategy-level comparison across the benchmark set: number of detected PAS,
@@ -181,6 +186,89 @@ isoforms, reduce `smooth_window`.
 
 ---
 
+## `clip_seeded` {#clip_seeded}
+
+**Registered name:** `clip_seeded`
+**Source:** `ema/strategies/clip_seeded.py`, `ema/countmatrix/polya.py`
+
+The only strategy that uses evidence other than coverage shape. PAS candidates
+are **seeded from read-level poly(A) soft clips** — the non-templated A (or T,
+on the minus strand) tail a read carries when it was sequenced through the
+cleavage site — rather than being read off the coverage profile alone.
+
+### Why seeding and not filtering
+
+On the pbmc_10k_v3 BAM, 1.152% of CB-bearing reads carry a qualifying clip and
+**73.9%** of those clip sites fall within 100 bp of a PolyASite 2.0 site (the
+same statistic for an arbitrary read 3' end is 13.9%). But **~60% of that clip
+evidence lies outside every coverage-peak window**, so no post-hoc filter on
+coverage peaks can reach it. Candidates have to start from the clips.
+
+### Algorithm
+
+1. During peak calling, every read that passes `read_check` is measured with
+   `polya.clip_site()`; qualifying clips accumulate per chromosome (this is
+   caller-level, not per-peak — a strategy only ever sees one peak window).
+2. Clip sites are clustered by single linkage at `--polya-seed-window` (25 bp).
+3. Each cluster clearing `--polya-min-reads` distinct molecules is emitted as a
+   **tier-1** PAS at the cluster's read-weighted **modal** position, as the
+   1-bp interval `[mode, mode+1)`.
+4. The inner coverage strategy (`--peak-strategy clip_seeded` uses
+   `lambda_gradient` by default) still runs; its PAS that overlap no tier-1
+   cluster are emitted as **tier 2**, tagged `coverage_only`.
+5. Both tiers go to `pasbed.bed` as ordinary BED6 rows. The **tier tag is BED
+   column 5**: clip-read support, so `score == 0` means coverage-only.
+   `--polya-mode filter` drops exactly that tier.
+
+### Tunable hyperparameters
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--polya-min-clip` | 6 | Minimum soft-clip length AND minimum A/T run flush against the alignment boundary |
+| `--polya-min-purity` | 0.8 | Minimum A (or T) fraction over the clipped bases |
+| `--polya-seed-window` | 25 | Single-linkage gap for clustering clip sites |
+| `--polya-min-reads` | 1 | Minimum distinct molecules per emitted cluster |
+| `--polya-window` | 100 | Radius for attributing clip support to a PAS, and for tier-1/tier-2 overlap suppression |
+
+### When to use
+
+Accuracy. Measured on chr19+chr21 of pbmc_10k_v3, scored with
+`scripts/benchmark_tools/score_tool.py` against the detected-gene-restricted
+PolyASite 2.0 atlas (both arms taken through the identical gene-assignment
+stage):
+
+| arm | n | P@100 | R@100 | F1@100 |
+|---|---:|---:|---:|---:|
+| `lambda_gradient` (shipped) | 12,928 | 0.1610 | 0.1956 | **0.1766** |
+| `clip_seeded`, both tiers | 19,354 | 0.2371 | 0.3782 | **0.2914** |
+| `clip_seeded`, clip-supported tier | 11,318 | 0.3591 | 0.3379 | **0.3482** |
+| `clip_seeded`, coverage-only tier | 8,036 | 0.0652 | 0.0404 | 0.0499 |
+
+Precision and recall both roughly double. Tightening the clip-read gate
+trades recall for precision along a steep curve — on the same slice,
+`score >= 2` gives P@100 0.478 at n=6,597 and `score >= 5` gives P@100 0.727
+at n=2,361.
+
+### Limitations
+
+- **Hard recall ceiling.** Only ~29% of detected-gene atlas sites genome-wide
+  carry any clip read within 100 bp (33.6% on this chr19+21 slice), so a
+  strictly clip-gated call set cannot exceed that recall — and the measured
+  tier-1 recall of 0.3379 is already sitting on the slice's 0.3356 ceiling.
+  Nothing further is available from clips alone. This is why tier 2 exists,
+  and why the two tiers must always be reported separately, with their n.
+- **Chemistry-dependent.** Any pipeline that trims poly(A) before alignment
+  destroys the evidence. The caller warns at startup when the observed clip
+  rate falls below 0.3% of CB reads; treat its output as unsupported when it
+  does.
+- **Internal priming** — a genomic A-run downstream of a cluster — is this
+  evidence type's one systematic false positive, and is not covered by the
+  wrong-end control. Pair with `--ip-filter --genome-fasta`.
+- Higher memory than the coverage-only strategies: clip sites and buffered
+  coverage candidates are held for one chromosome at a time.
+
+---
+
 ## Performance vs. the reference annotation
 
 The PeakATail Technical Report (Mar 2026) benchmarks each strategy against the
@@ -217,16 +305,22 @@ Are you comparing against an existing PeakATail run from before
 the strategy refactor?
   └─ Yes → use `original` (exact reproducibility)
   └─ No  →
-      Do you want multiple PAS per UTR?
-        ├─ No  → use `lambda_poisson` (single-summit + significance)
-        └─ Yes →
-            Do you also want a significance test per summit?
-              ├─ No  → use `sierra_iterative` (fastest multi-PAS)
-              └─ Yes → use `lambda_gradient` (multi-PAS + p-value)
+      Does your BAM keep untrimmed poly(A) tails as soft clips?
+        (check the startup clip-rate line: >0.3% of CB reads)
+        ├─ Yes → use `clip_seeded` — best PAS positional accuracy;
+        │        report its two tiers separately
+        └─ No  →
+            Do you want multiple PAS per UTR?
+              ├─ No  → use `lambda_poisson` (single-summit + significance)
+              └─ Yes →
+                  Do you also want a significance test per summit?
+                    ├─ No  → use `sierra_iterative` (fastest multi-PAS)
+                    └─ Yes → use `lambda_gradient` (multi-PAS + p-value)
 ```
 
-The default in the YAML schema is `lambda_gradient`, matching the
-report's benchmark winner.
+The default in the YAML schema is `lambda_gradient`. `clip_seeded` is the
+accuracy-oriented choice where the chemistry supports it; it uses
+`lambda_gradient` internally for its second tier, so nothing is lost.
 
 ## See also
 

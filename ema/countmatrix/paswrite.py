@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from ema.countmatrix.indexing import BarcodeIndex
 
 strand_char: dict[bool, str] = {True: "-", False: "+"}
-score: int = 0
 
 
 def pas_write(
@@ -31,6 +30,7 @@ def pas_write(
     strand: bool,
     pasnumber: int | str,
     output,
+    score: int = 0,
 ) -> None:
     """Write a single peak record to a BED-format file.
 
@@ -41,6 +41,10 @@ def pas_write(
         strand: ``True`` for reverse strand (``-``), ``False`` for forward (``+``).
         pasnumber: Peak identifier written to the BED name field.
         output: Writable file-like object.
+        score: BED column 5. Historically hardcoded to 0; with
+            ``--polya-evidence on`` it carries the PAS's poly(A) clip-read
+            support (0 == coverage-only, >=1 == clip-supported), which every
+            existing downstream reader already names ``score`` and ignores.
     """
     bed_start = min(peak_start, l_end)
     bed_end = max(peak_start, l_end)

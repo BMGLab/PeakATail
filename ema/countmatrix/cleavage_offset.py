@@ -482,7 +482,7 @@ def resolve_cleavage_offset(
     return int(offset), diag
 
 
-def rewrite_bed_3prime_offset(path, offset: int) -> int:
+def rewrite_bed_3prime_offset(path, offset: int, *, skip_supported: bool = False) -> int:
     """Rewrite a 6-column PAS BED in place, shifting each 3' end downstream.
 
     Reads a strand-aware BED (strand in column 6), applies
@@ -494,6 +494,12 @@ def rewrite_bed_3prime_offset(path, offset: int) -> int:
         path: Path to the BED file (str or :class:`pathlib.Path`).
         offset: Non-negative shift in bp.  ``<= 0`` is a no-op (returns 0)
             and leaves the file byte-identical -- the legacy default.
+        skip_supported: When True, rows whose BED score (column 5) is > 0
+            are passed through UNSHIFTED.  The ``clip_seeded`` strategy
+            writes the poly(A) clip-read count there, and those PAS are
+            already placed at the observed cleavage site -- shifting them
+            would push them *past* it.  Only coverage-only rows (score 0)
+            carry the R2-read-length offset this correction exists for.
 
     Returns:
         Number of records whose coordinates were shifted.
@@ -521,6 +527,13 @@ def rewrite_bed_3prime_offset(path, offset: int) -> int:
                 dst.write(line)
                 continue
             strand = parts[5]
+            if skip_supported:
+                try:
+                    if float(parts[4]) > 0:
+                        dst.write(line)
+                        continue
+                except ValueError:
+                    pass
             new_start, new_end = shift_3prime_end(start, end, strand, offset)
             if (new_start, new_end) != (start, end):
                 shifted += 1

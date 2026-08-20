@@ -26,6 +26,7 @@ from ema.strategies.original import OriginalStrategy  # noqa: E402
 from ema.strategies.lambda_poisson import LambdaPoissonStrategy  # noqa: E402
 from ema.strategies.sierra_iterative import SierraIterativeStrategy  # noqa: E402
 from ema.strategies.lambda_gradient import LambdaGradientStrategy  # noqa: E402
+from ema.strategies.clip_seeded import ClipSeededStrategy  # noqa: E402
 
 # Alias so all 5 registry helpers share the `list_*_strategies()` shape.
 list_peak_strategies = list_strategies
