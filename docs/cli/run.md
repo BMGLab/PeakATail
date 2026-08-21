@@ -359,6 +359,7 @@ explicit "off" arm alongside an `annotate` arm is a duplicate (see issue #69).
 | `--ip-a-stretch` | INT | 6 | Minimum consecutive genomic A's downstream of a PAS (in transcript orientation) to flag it as internal priming. |
 | `--ip-a-fraction` | FLOAT | 0.7 | Alternative trigger: flag when the A-fraction of the window reaches this value. |
 | `--ip-window-left` / `--ip-window-right` | INT | 10 / 30 | Window (bp) **upstream / downstream of the cleavage site in transcript orientation** examined for the A-stretch, on both strands. |
+| `--annot-filter` | FLAG | off | Enable the annotation-region filter (drops PAS that do not overlap a gene region). Requires `--gtf` or `--annotation-bed`. Distinct from `--ip-filter`; it always drops non-overlapping peaks. |
 
 **Strand handling.** Internal priming comes from a genome-encoded A-stretch
 *downstream* of the cleavage site in the direction of transcription, so the
@@ -378,8 +379,6 @@ coordinates on the `-` strand (`pos` = BED `end` on `+`, BED `start` on `-`):
     that is wrong for roughly 3–4 % of `-`-strand sites in each direction
     (sites missed and sites wrongly flagged). Re-run the filter
     (`ema reannotate --genome-fasta`) if you use the per-site flag.
-| `--ip-a-fraction` | FLOAT | 0.7 | Alternative: flag if the A-fraction in the window exceeds this. |
-| `--annot-filter` | FLAG | off | Enable the annotation-region filter (drops PAS that do not overlap a gene region). Requires `--gtf` or `--annotation-bed`. Distinct from `--ip-filter`; it always drops non-overlapping peaks. |
 
 ### Annotation
 
