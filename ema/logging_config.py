@@ -140,6 +140,12 @@ def teardown_logging() -> None:
             except Exception:
                 pass
             log.removeHandler(h)
+    # setup_logging() sets ema_logger.propagate = False so records do not
+    # double-emit via root.  Leaving it False after teardown leaks into the
+    # rest of the process: anything listening on the root logger (pytest's
+    # caplog, a notebook's handler, an embedding application) stops seeing
+    # PeakATail records entirely.  Teardown must restore the default.
+    logging.getLogger("ema").propagate = True
     _FILE_HANDLER = None
     _CONSOLE_HANDLER = None
 
