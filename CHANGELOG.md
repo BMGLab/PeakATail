@@ -59,6 +59,35 @@
   unsupported call set.
 
 ### Fixed
+- **Internal-priming filter now tests the correct side on the `-` strand.**
+  `ema/experimental/internal_priming.py` applied the `+` genomic window
+  `[pos-10, pos+30)` to both strands, so on `-` it scanned 30 bp *upstream* /
+  10 bp downstream of the cleavage site in transcript orientation — mostly
+  the wrong side for an oligo-dT priming artifact. The window is now defined
+  in transcript orientation (`--ip-window-left` upstream, `--ip-window-right`
+  downstream, both strands) and mirrored in genomic coordinates on `-`
+  (`[pos-30, pos+10)`, reverse-complemented before the A-run / A-fraction
+  scan). `+`-strand calls are byte-identical; flags, defaults and the
+  `--ip-*` CLI are unchanged. New pure helpers `ip_window()`,
+  `call_internal_priming()` and `check_internal_priming()` are unit-tested
+  in `tests/test_internal_priming_strand.py` (implanted runs on a C/G-only
+  genome, both strands, fraction rule, contig edges, end-to-end through
+  `filter_internal_priming` and `apply_filters`).
+
+  Measured post hoc on the Stage-2 final run (4efeb12) by re-applying both
+  rules to the emitted `pasbed.bed` without re-running the caller: `+`
+  strand, 0 changes on every dataset. On `-`, the corrected rule flags
+  5,599 / 160,464 (3.5 %) of the PBMC sites that had passed the old filter
+  (testis mouse1 1,505 / 35,487 = 4.2 %, mouse2 1,302 / 35,946 = 3.6 %),
+  and of the 39,244 `-` sites the old rule removed from the PBMC candidate
+  set, 11,217 would be kept by the corrected rule. On the pre-registered
+  precision default (PBMC, tier-1, ≥2 molecules; PolyASite 2.0 within
+  100 bp) removing the 386 newly-flagged sites moves P@100 0.7167 → 0.7184;
+  the full corrected filter (newly flagged removed AND wrongly removed sites
+  restored, 46,524 vs 44,394 sites) gives P@100 0.7062, R@100 0.1754 (was
+  0.1707). Every pre-registered gate still passes; benchmark conclusions
+  are unchanged. Any use of the per-site `internal_priming` flag from a
+  pre-fix run should re-run the filter (`ema reannotate --genome-fasta`).
 - **BED column 5 is now DISTINCT MOLECULES, the unit the flag always gated
   on.** `--polya-min-reads` documented "distinct molecules" and
   `ClipSeeder.flush()` did gate on them, but the score column wrote the raw

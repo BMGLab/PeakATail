@@ -356,10 +356,29 @@ explicit "off" arm alongside an `annotate` arm is a duplicate (see issue #69).
 | `--ip-filter` | FLAG | off | Enable the internal-priming check. Requires `--genome-fasta`. |
 | `--ip-filter-mode` | TEXT | `annotate` | `annotate` flags A-stretch PAS but keeps them; `filter` drops them. |
 | `--genome-fasta` | PATH | — | Genome FASTA (`.fai` indexed) — required with `--ip-filter`; used to read the sequence downstream of each PAS. |
-| `--ip-a-stretch` | INT | 6 | Minimum consecutive genomic A's downstream of a PAS to flag it as internal priming. |
-| `--ip-window-left` / `--ip-window-right` | INT | 10 / 30 | Window (bp) around the PAS examined for the A-stretch. |
-| `--ip-a-fraction` | FLOAT | 0.7 | Alternative: flag if the A-fraction in the window exceeds this. |
+| `--ip-a-stretch` | INT | 6 | Minimum consecutive genomic A's downstream of a PAS (in transcript orientation) to flag it as internal priming. |
+| `--ip-a-fraction` | FLOAT | 0.7 | Alternative trigger: flag when the A-fraction of the window reaches this value. |
+| `--ip-window-left` / `--ip-window-right` | INT | 10 / 30 | Window (bp) **upstream / downstream of the cleavage site in transcript orientation** examined for the A-stretch, on both strands. |
 | `--annot-filter` | FLAG | off | Enable the annotation-region filter (drops PAS that do not overlap a gene region). Requires `--gtf` or `--annotation-bed`. Distinct from `--ip-filter`; it always drops non-overlapping peaks. |
+
+**Strand handling.** Internal priming comes from a genome-encoded A-stretch
+*downstream* of the cleavage site in the direction of transcription, so the
+window is defined relative to the transcript and mirrored in genomic
+coordinates on the `-` strand (`pos` = BED `end` on `+`, BED `start` on `-`):
+
+```text
++ strand:  genomic [pos-left,  pos+right)   ...UUUUU|cleavage>AAAAAA...   scan for A-run / A-fraction
+- strand:  genomic [pos-right, pos+left )   ...TTTTTT<cleavage|UUUUU...   reverse-complemented, same scan
+```
+
+!!! warning "Versions up to the 4efeb12 line tested the wrong side on `-`"
+    Earlier builds applied the `+` genomic window to both strands, so on `-`
+    the check covered 30 bp *upstream* / 10 bp downstream of the cleavage
+    site in transcript orientation. Runs made with those builds carry an
+    `internal_priming` flag (and, in `--ip-filter-mode filter`, a drop set)
+    that is wrong for roughly 3–4 % of `-`-strand sites in each direction
+    (sites missed and sites wrongly flagged). Re-run the filter
+    (`ema reannotate --genome-fasta`) if you use the per-site flag.
 
 ### Annotation
 
