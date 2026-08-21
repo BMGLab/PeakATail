@@ -30,6 +30,13 @@ Genome-wide the discard is 13.74 % of valid-CB reads, 96 % of them spliced —
 **88.8 M reads on the full PBMC BAM**. The slices are spliced-richer than
 average, so every slice figure here over-states the genome-wide effect.
 
+`keep` and `true` recover **11,526,534** of those reads on the PBMC slice
+(23.69 % of valid-CB reads, 97.94 % of what was discarded) and **2,227,952**
+on the mouse slice (19.64 % / 98.42 %) — **100 % of them spliced**, by
+construction: only an intron can shrink a read's footprint below its span, so
+an unspliced read the old rule rejected is still rejected. Scaling onto the
+genome-wide census, ≈ **87 M reads** on the full PBMC BAM.
+
 ### Added
 
 - **`--read-geometry {fixed,keep,true}`** (`read_geometry`), **default
