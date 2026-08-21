@@ -348,6 +348,16 @@ def build_resolved_run_config() -> dict:
         for k in (
             "seqlen", "cb_len", "barcode_tag", "default_threshold",
             "merge_len", "min_pas_spacing", "min_pas_prominence",
+            # peakAtail-prime: the read acceptance geometry decides which
+            # reads reach the clip detector and the count matrix at all, so a
+            # run record that omits it is not reproducible.  It has to be
+            # HERE and not left to the "args" grab-bag below: that block is
+            # the argparse namespace, which carries schema DEFAULTS for
+            # anything the Click layer resolved (`--read-geometry fixed` on
+            # the command line still shows as args.read_geometry == "true",
+            # the same class of defect bug B0 fixed for atlas/gtf).
+            # variable_config is what read_check actually reads.
+            "read_geometry", "read_exclude_flags",
         )
     }
     resolved["filters"] = {

@@ -619,11 +619,22 @@ class ClipStream:
         if self._sorted or not self.ends:
             return
         import numpy as np
+        # Round-trip through BYTES, never through a Python list.  `.tolist()`
+        # on a 19.8 M-element int32 array materialises 19.8 M int objects
+        # (~28 B each) plus the list of pointers -- measured at +1.1 GB on the
+        # chr19 (+) worker of the PBMC slice, which on its own pushed peak RSS
+        # to 2.21x v2 and through the 1.5x compute guard rail of
+        # manuscript/24 3.2.4.  frombuffer/tobytes keeps the transient at
+        # ~24 B per read (int64 argsort + two int32 copies + two array copies).
         ends = np.frombuffer(self.ends, dtype=np.int32)
         cbids = np.frombuffer(self.cbids, dtype=np.int32)
         order = np.argsort(ends, kind="stable")
-        self.ends = array("i", ends[order].tolist())
-        self.cbids = array("i", cbids[order].tolist())
+        new_ends = array("i")
+        new_ends.frombytes(ends[order].tobytes())
+        new_cbids = array("i")
+        new_cbids.frombytes(cbids[order].tobytes())
+        self.ends = new_ends
+        self.cbids = new_cbids
         self._sorted = True
 
     @property

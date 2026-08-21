@@ -213,6 +213,75 @@ Options:
 | `--seq-len` | INT | 150 | Sequencing read length. Warns and defaults to 150 if not set. |
 | `--cb-len` | INT | 16 | Cell-barcode length in bp. Warns and defaults to 16 if not set. |
 | `--barcode-tag` | TEXT | CB | BAM tag carrying the cell barcode. Defaults to `CB` (Cell Ranger convention). |
+| `--read-geometry` | `fixed`/`keep`/`true` | `true` | How a read's genomic interval is derived. See below. |
+| `--read-exclude-flags` | INT | 0 | SAM flag mask vetoed on the coverage/count channel, like `samtools view -F`. `0` = no filtering. See below. |
+
+#### `--read-geometry` — how a read becomes an interval
+
+Historically the caller normalised **every** accepted read to exactly
+`--seq-len` bp of *reference* span: a read whose span was longer was
+**discarded**, and a shorter one had its end rewritten to `start + seq_len`.
+A spliced alignment's reference span includes its introns, so the discard fell
+almost entirely on spliced reads — before the poly(A) clip detector **and**
+before the count matrix.
+
+Measured on the PBMC 10k v3 chr19+21 development slice (50,898,456 records,
+`--seq-len 91`):
+
+| | reads | share of valid-CB reads |
+|---|---:|---:|
+| valid-CB reads reaching the rule | 48,647,964 | 100 % |
+| **discarded** because reference span > `--seq-len` | 11,768,752 | **24.19 %** |
+| …of those, spliced | 11,542,490 | 98.08 % of the discard |
+| **end rewritten** because span < `--seq-len` | 4,752,308 | 9.77 % |
+| qualifying poly(A) clip reads lost with the discard | 12,427 | +4.65 % on top of the 267,520 kept |
+
+The rewrite moves a read's 3' end a mean **13.53 bp downstream** of its real
+last aligned base (up to 50 bp). Genome-wide the discard is smaller than on
+this slice — 13.74 % of valid-CB reads, 96 % of them spliced, **88.8 M reads**
+on the full PBMC BAM — because chr19+21 are spliced-richer than average.
+
+| value | what it does |
+|---|---|
+| `fixed` | The historical rule, unchanged: discard span > `--seq-len`, pad shorter reads to `start + seq_len`. Use it to reproduce pre-existing output byte-for-byte. |
+| `keep` | Stop discarding, change nothing else — the read still becomes a `seq_len`-long interval. This is the ablation arm: it isolates "stop throwing reads away" from "stop fabricating the 3' end". |
+| `true` | **Default.** The read's real aligned reference footprint. |
+
+What `true` does with each CIGAR operation, exactly:
+
+* **soft clip (`S`)** — excluded at *both* ends. Soft-clipped bases are not
+  aligned to the reference, and the terminal poly(A) clip in particular is the
+  clip detector's evidence, not coverage: counting it would push a clipped
+  read's 3' end *past* its own cleavage site.
+* **hard clip (`H`)** — never part of the reference span; nothing to do.
+* **deletion (`D`)** — advances the reference and stays **inside** the span.
+* **skipped region / intron (`N`)** — **removed** from the span. A spliced read
+  does not cover its intron. On 7.82 M valid-CB reads of the slice the introns
+  carry 10.02 Gb, about **14×** the real read mass over the same 105 Mb, so
+  admitting them would turn the coverage state machine into a gene-body
+  detector.
+
+Acceptance is on that **de-introned footprint**, not on the query length. The
+distinction matters: a short alignment carrying a long terminal soft clip has
+reference span ≤ `--seq-len` but query length > `--seq-len`, so a query-length
+rule would *drop* a read the old rule kept — and that shape is precisely a
+poly(A) clip read. The footprint rule accepts **every** read `fixed` accepts,
+plus the spliced ones whose aligned length fits; a read whose real aligned
+footprint genuinely exceeds `--seq-len` (a very long deletion) is still
+rejected, exactly as before.
+
+#### `--read-exclude-flags` — multimappers on the coverage channel
+
+The coverage/count channel applies **no** SAM-flag filter by default, so a read
+aligned to *N* places contributes *N* reads of coverage and *N* matrix counts.
+On the PBMC chr19+21 slice **10.42 %** of valid-CB reads are secondary
+alignments (`0x100`); on GSE104556 (STARsolo) the rate is higher still.
+`--read-exclude-flags 256` drops secondary alignments; `3844` is samtools'
+`unmapped+secondary+qcfail+duplicate+supplementary`. It is **off by default**
+because it is a call-set change, not a bug fix — and note that PCR duplicates
+cannot inflate a *molecule* count in the first place, since duplicate reads
+share their `(CB, UMI)` key. The independent clip-evidence channel has its own
+switch, `--polya-clip-filter`.
 
 ### Output
 

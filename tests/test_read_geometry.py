@@ -393,3 +393,30 @@ def test_every_geometry_runs_end_to_end_and_they_differ(tmp_path):
     assert len({v for v in out.values()}) > 1, (
         "the three geometries produced identical output — the flag is inert"
     )
+
+
+# ---------------------------------------------------------------------------
+# the run record
+# ---------------------------------------------------------------------------
+
+def test_run_config_records_the_geometry_that_actually_ran():
+    """``run_config.json`` must say which geometry produced the output.
+
+    Without this the shipped/v2/prime comparison cannot be audited from the
+    run tree, and the ``args`` block is no substitute: it is the argparse
+    namespace and carries schema DEFAULTS for anything Click resolved, so a
+    run invoked with ``--read-geometry fixed`` still shows
+    ``args.read_geometry == "true"`` there (the same class of defect bug B0
+    fixed for atlas/gtf).
+    """
+    from ema.outputs import build_resolved_run_config
+
+    saved = variable_config.read_geometry
+    try:
+        for geometry in READ_GEOMETRIES:
+            variable_config.read_geometry = geometry
+            v = build_resolved_run_config()["variables"]
+            assert v["read_geometry"] == geometry
+            assert "read_exclude_flags" in v
+    finally:
+        variable_config.read_geometry = saved
