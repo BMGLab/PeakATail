@@ -224,8 +224,9 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--threads` | INT | auto | Absolute ceiling passed to `ResourceManager`. Wired directly into the singleton before pipeline dispatch; omitting this flag lets `ResourceManager` detect available cores automatically. |
-| `--bam-threads` | INT | 4 | pysam decompression threads per BAM file. Increase to 8–16 on machines with fast storage to reduce BAM-read I/O time. |
+| `--threads` | INT | auto | Absolute worker ceiling passed to `ResourceManager`. It bounds **peak calling** (one worker per contig and strand, see `--peak-workers`), the `--tiles` pool and the per-dataset downstream pool. Omitting it lets `ResourceManager` detect available cores. It is *not* a BLAS/OpenMP setting: the clustering libraries read `OMP_NUM_THREADS` from the environment. |
+| `--peak-workers` | INT | auto | Worker processes for peak calling. Each job is one (contig, strand) pair called through a region fetch and merged deterministically, so the output is byte-identical to the single-process caller. Defaults to `ResourceManager.get_n_jobs(per_worker_mb=2500)`, i.e. the `--threads` ceiling capped by free RAM. `1` runs the legacy single-process two-pass caller. Requires a BAM index (`.bai`); without one the legacy caller runs and a warning says so. |
+| `--bam-threads` | INT | 4 | pysam BGZF decompression threads per BAM reader. Budgeted per worker so `peak_workers × bam_threads` stays within the `--threads` ceiling (with 16 workers and `--threads 16` each worker gets 1). |
 | `--batch-size` | INT | 10000 | Worker batch size when streaming reads in tile mode. Lower this if workers are hitting memory limits on large chromosomes. |
 | `--tiles` | FLAG | off | Enable tile-based parallel peak calling. Splits chromosomes into overlapping tiles processed by a multiprocessing pool. Recommended for very large BAMs (>5 GB). |
 | `--tile-size` | INT | auto | Tile size in bp. When unset, the pipeline picks a value based on chromosome lengths. |
@@ -457,6 +458,46 @@ All paths below are relative to the run root
 
 **`tile_timings.json`**
 : Per-tile peak-calling wall times. Only written when `--tiles` is active.
+
+## Performance and resources
+
+Peak calling runs one spawned worker per (contig, strand) and the merge is
+deterministic, so **`--threads` changes the wall time and nothing else** —
+every output file is byte-identical to a `--peak-workers 1` run (pinned by
+`tests/test_chrom_parallel_identity.py` and re-verified end-to-end on the
+runs below).
+
+Measured on one machine (dual-socket, `/usr/bin/time -v` peak RSS = the
+largest single process, wall = whole `ema run`, `--peak-strategy
+clip_seeded`, plots off):
+
+| Dataset | BAM | Cells × PAS | Flags | Wall | Peak RSS |
+|---|---|---|---|---|---|
+| PBMC 10k v3, chr19+21 slice | 3 GB | 7,121 × 17,968 | `--threads 16` | 6 min 11 s | 1.2 GB |
+| Mouse testis (GSE104556, STARsolo) | 15.7 GB | 10,339 × 65,075 | `--threads 12 --ip-filter` | 9 min 03 s | 3.7 GB |
+| PBMC 10k v3, full CellRanger BAM | 44 GB | 23,303 × 390,493 | `--threads 16` | 27 min 43 s | 12.4 GB |
+
+Where the time and the memory go on that last (largest) run: peak calling
+11 min in 252 parallel jobs plus a 3 min single-threaded merge, cell-barcode
+filter 8 min, annotation 1 min, clustering 4 min; the 12.4 GB peak is the
+clustering stage, and no peak-calling worker exceeded 3.0 GB.
+
+Rules of thumb:
+
+- **Peak calling** costs 1–3 GB per worker (the deepest contig sets the
+  ceiling) and its wall time is bounded by the largest contig — 10 min for
+  human chr1 — so more workers than contigs buys nothing. Budget
+  `--threads × 2.5 GB`.
+- **Everything after it is single-process** and scales with the number of
+  non-zeros, not with cells × PAS: the cell-barcode filter holds ~12 bytes
+  per non-zero (2.5 GB for the 200 M non-zeros of the full PBMC run) and
+  clustering ~3 × nnz × 8 bytes for the annotated matrix.
+- **Disk** is the bigger constraint at scale: the raw and filtered
+  MatrixMarket files of the full PBMC run are ~7 GB together.
+
+If a run is memory-bound rather than CPU-bound, lower `--peak-workers`
+(peak calling is the only stage that scales with it); the outputs do not
+change.
 
 ## How it relates to other commands
 

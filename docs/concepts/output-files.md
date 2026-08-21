@@ -156,6 +156,7 @@ One pair of files per BAM per direction:
 | `<id>_<n>.pos.mtx` | Positive-strand count matrix |
 | `<id>_<n>.neg.mtx` | Negative-strand count matrix |
 | `<id>_<n>.cb.tsv` | Unified cell barcode list for this BAM |
+| `<id>_<n>.peak_jobs.json` | Per-(contig, strand) peak-calling worker timings, PAS/cell counts and peak RSS. Only written when peak calling ran in parallel (see `--peak-workers`). |
 
 These are intermediate files. The canonical per-dataset view is under `per_dataset/<id>/`.
 
