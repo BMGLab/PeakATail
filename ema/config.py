@@ -370,8 +370,26 @@ class variable_config:
     # making 15 tests order-dependent.  One default, one place.
     # RunConfig.read_geometry must carry the same literal; that is asserted by
     # tests/test_read_geometry.py::test_the_branch_default_is_single_valued.
-    # v2 is reached with --read-geometry fixed (equivalently `--compat v2`).
-    read_geometry = "true"
+    #
+    # THE DEFAULT IS "fixed" BECAUSE THE MEASUREMENT SAID SO, not because the
+    # change is unfinished.  `true` was implemented as the intended branch
+    # default and then measured on two dev slices against
+    # manuscript/24 3.1, which requires (i) dP@100 >= -0.005, (ii) dR_det
+    # >= +0.010 and (iii) dF1 > 0 on every dataset:
+    #   PBMC chr19+21   dP -0.0026 (i ok)   dR +0.0031 (ii FAILS)  dF1 +0.0030
+    #   mouse1 ch18+19  dP -0.0292 (i FAILS by 5.9x)  dR +0.0063 (ii FAILS)
+    # The mouse precision loss survives --read-exclude-flags 256 (-0.0117) and
+    # the ablation puts essentially all of it on "stop discarding", not on
+    # "stop fabricating the 3' end".  Per 24 3.1 a FAIL means the behaviour
+    # stays behind a non-default flag.
+    #
+    # This is NOT the whole story and the flag is not dead: `true` is worth
+    # +31.2 % (PBMC) / +23.5 % (mouse) of RAW COUNT-MATRIX MASS on those
+    # slices -- 88.8 M reads genome-wide -- and 24 3.1 measures detection
+    # only.  See results/prime/taskA_read_geometry_slice.tsv and the
+    # CHANGELOG; the decision to move this literal belongs to whoever owns
+    # the pre-registration, and needs a quantification criterion first.
+    read_geometry = "fixed"
     # SAM flag mask vetoed on the COVERAGE channel (--read-exclude-flags).
     # 0 (default, = v2) means no filtering: read_check applies no `-F`, so a
     # multimapper contributes one coverage read PER ALIGNMENT.  3844 is

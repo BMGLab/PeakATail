@@ -175,30 +175,35 @@ def test_v2_output_is_reproduced_byte_for_byte(
 
 
 def test_the_compat_pin_is_load_bearing(tmp_path: Path) -> None:
-    """`_v2_settings` must be doing work, not agreeing with the defaults.
+    """`_v2_settings` must be doing work, not agreeing with whatever is set.
 
-    If the branch default ever produced the v2 goldens by itself, the two
-    tests above would pass while proving nothing.  The branch default
-    (``--read-geometry true``) restores 24.19 % of reads that v2 discards, so
-    it MUST move bytes on a fixture that contains spliced or soft-clipped
-    reads.  If this test starts failing, either the branch has no behavioural
-    change left or the fixture stopped covering it -- both worth knowing.
+    If the pinned values reproduced the v2 goldens no matter what, the two
+    tests above would pass while proving nothing.  ``--read-geometry true``
+    restores 24.19 % of the reads v2 discards, so it MUST move bytes on a
+    fixture containing spliced or soft-clipped reads.  If this test starts
+    failing, either the branch has no behavioural change left or the fixture
+    stopped covering it -- both worth knowing.
+
+    Deliberately independent of which value the branch DEFAULTS to: the
+    default is an adoption decision that measurement can flip either way,
+    while the compatibility guarantee must hold regardless.
     """
-    from ema.countmatrix.read import V2_READ_GEOMETRY
+    from ema.countmatrix.read import READ_GEOMETRIES, V2_READ_GEOMETRY
 
-    assert variable_config.read_geometry != V2_READ_GEOMETRY, (
-        "the branch default is back at v2; the compat guarantee is vacuous"
-    )
+    non_v2 = [g for g in READ_GEOMETRIES if g != V2_READ_GEOMETRY]
+    assert non_v2, "there is no non-v2 geometry left to gate"
     branch_dir = tmp_path / "branch"
     branch_dir.mkdir()
     index = BarcodeIndex()
     state = PeakCallingState(pasnumber=0)
     digests: dict[str, str] = {}
-    # NB: deliberately does NOT call _v2_settings() -- only the three
-    # BAM-shape knobs, so the geometry stays at the branch default.
+    # NB: deliberately does NOT call _v2_settings().  The three BAM-shape
+    # knobs are set by hand and the geometry is forced to a NON-v2 value, so
+    # this test says the same thing whichever value the branch defaults to.
     variable_config.seqlen = 91
     variable_config.cb_len = 16
     variable_config.barcode_tag = "CB"
+    variable_config.read_geometry = non_v2[-1]
     for direction in (False, True):
         bed = branch_dir / f"pas_{int(direction)}.bed"
         matrix = branch_dir / f"matrix_{int(direction)}.txt"

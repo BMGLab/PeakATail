@@ -1,5 +1,113 @@
 # Changelog
 
+## Unreleased (branch `peakAtail-prime`) — read acceptance geometry
+
+**Two new flags. Both default to the previous behaviour, and one of them
+does so because the measurement said to.**
+
+`ema/countmatrix/read.py` normalised every accepted read to exactly
+`--seq-len` bp of *reference* span: a read whose span was longer was
+**discarded**, a shorter one had its end rewritten to `start + seq_len`. A
+spliced alignment's reference span includes its introns, so the discard fell
+almost entirely on spliced reads — **before the poly(A) clip detector and
+before the count matrix**.
+
+Census on the PBMC 10k v3 chr19+21 dev slice (50,898,456 records,
+`--seq-len 91`) and a GSE104556 mouse1 chr18+19 slice (11,580,142 records,
+`--seq-len 98`):
+
+| | PBMC slice | mouse1 slice |
+|---|---:|---:|
+| valid-CB reads reaching the rule | 48,647,964 | 11,343,946 |
+| **discarded**, reference span > `--seq-len` | 11,768,752 (24.19 %) | 2,263,738 (19.96 %) |
+| …spliced | 98.08 % | 98.72 % |
+| **end rewritten**, span < `--seq-len` | 4,752,308 (9.77 %) | 2,462,026 (21.70 %) |
+| mean fabricated 3'-end shift, downstream | 13.53 bp | 25.17 bp |
+| qualifying poly(A) clip reads lost | 12,427 (+4.65 %) | 1,913 (+1.54 %) |
+| secondary alignments among valid-CB reads | 10.42 % | 12.09 % |
+
+Genome-wide the discard is 13.74 % of valid-CB reads, 96 % of them spliced —
+**88.8 M reads on the full PBMC BAM**. The slices are spliced-richer than
+average, so every slice figure here over-states the genome-wide effect.
+
+### Added
+
+- **`--read-geometry {fixed,keep,true}`** (`read_geometry`), **default
+  `fixed`** — the previous behaviour.
+  * `fixed` — discard span > `--seq-len`, pad shorter reads to
+    `start + seq_len`. **Reproduces pre-branch output byte-for-byte**:
+    validated on the real chr19+21 slice (all 50 data files identical to a
+    reference run made from the frozen pre-branch tree) and on a committed
+    fixture by `tests/test_prime_v2_compat_golden.py`.
+  * `keep` — stop discarding; keep the fixed-length interval. The ablation arm.
+  * `true` — additionally use the read's real aligned reference footprint:
+    soft clips excluded at both ends (they are not aligned, and the terminal
+    poly(A) clip is the clip detector's evidence, not coverage), deletions
+    inside the span, **introns removed**. Introns must be removed: over
+    7.82 M valid-CB slice reads they carry 10.02 Gb, ~14× the real read mass
+    over the same 105 Mb, so admitting them turns the coverage state machine
+    into a gene-body detector.
+
+  Acceptance moves to the read's **de-introned reference footprint**, not to
+  its query length. A query-length rule is *not* a strict relaxation: a short
+  alignment with a long terminal soft clip has span ≤ `--seq-len` (kept
+  before) but query length > `--seq-len` — the shape of a poly(A) clip read.
+  Every read `fixed` accepts, `keep` and `true` accept.
+
+- **`--read-exclude-flags N`** (`read_exclude_flags`), **default `0`** = the
+  previous behaviour = no filtering. The coverage/count channel applies no
+  `samtools -F`, so a read aligned to *N* places contributes *N* reads of
+  coverage and *N* matrix counts. `256` drops secondary alignments.
+
+- `run_config.json` now records both under `variables`, so a run tree states
+  which geometry produced it.
+
+### Measured — and why the defaults did not move
+
+Default precision arm (tier-1 ∩ ≥2 molecules), against `fixed`:
+
+| dataset | arm | n | ΔP@100 | ΔR_det@100 | ΔF1 | precision of the ADDED calls |
+|---|---:|---:|---:|---:|---:|---:|
+| PBMC slice | `keep` | 3,722 | −0.0026 | +0.0030 | +0.0029 | 0.519 |
+| PBMC slice | `true` | 3,724 | −0.0026 | +0.0031 | +0.0030 | 0.519 |
+| mouse1 slice | `keep` | 1,964 | −0.0283 | +0.0059 | +0.0039 | 0.353 |
+| mouse1 slice | `true` | 1,977 | **−0.0292** | +0.0063 | +0.0042 | 0.368 |
+
+(base P@100: PBMC 0.6401, mouse1 0.7156; null P@100 0.031 / 0.014.)
+
+`manuscript/24` §3.1 requires ΔP@100 ≥ −0.005, ΔR_det ≥ +0.010 and ΔF1 > 0 on
+every dataset. **`true` fails (ii) on PBMC and fails (i) on mouse1 by 5.9×**,
+so per the pre-registration it stays behind a non-default flag. The mouse
+precision loss survives `--read-exclude-flags 256` (−0.0117) and the ablation
+puts essentially all of it on *stopping the discard*, not on the 3'-end fix:
+`keep`→`true` is worth ΔP −0.0001 / ΔR +0.0001 on PBMC and −0.0010 / +0.0004
+on mouse1. The recovered spliced reads carry real evidence — their calls agree
+with the atlas 12–26× better than the genic null — but less precisely than the
+evidence already in hand, so admitting them slides along the curve instead of
+lifting it.
+
+**What `true` does buy, and what §3.1 does not measure:** raw count-matrix
+mass **+31.2 %** (PBMC slice) and **+23.5 %** (mouse1 slice), ~**+15.9 %**
+genome-wide from the 13.74 % genome-wide discard. That is the reason the flag
+exists, and moving the default on the strength of it needs a quantification
+criterion the pre-registration does not currently have. (The *filtered*
+matrix and cell counts move much more — +89 % mass, 7,133 → 13,516 cells —
+but that is a slice artefact: `--min-read 1500` bites hard when a cell is only
+seen on 7 % of the genome.)
+
+`--read-exclude-flags 256` is a clean precision-for-recall trade, not a lift:
+on the default arm it is ΔP@100 +0.0125 / ΔR −0.0008 (PBMC) and +0.0218 /
+−0.0031 (mouse1). Filtering can only slide along the curve, so it stays off.
+
+The geometry adds calls rather than moving them: **97.6 %** (PBMC) and
+**91.1 %** (mouse1) of `true`'s default-arm calls sit at *exactly* the same
+coordinate as a `fixed` call, and the median signed distance from a call to
+the nearest Kinnex long-read 3' end is unchanged at −2 bp.
+
+Compute on the PBMC slice at 8 threads: wall 6:31 → 8:38 (1.32×), peak RSS
+1.16 GB → 1.74 GB (1.53×, over the 1.5× guard rail of `manuscript/24`
+§3.2.4 — declared, not hidden). On the mouse slice, 1.17× wall and 1.01× RSS.
+
 ## Unreleased — caller memory and CPU
 
 Peak RSS and wall time only: **every output file is byte-identical** at the

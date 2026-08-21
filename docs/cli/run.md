@@ -213,7 +213,7 @@ Options:
 | `--seq-len` | INT | 150 | Sequencing read length. Warns and defaults to 150 if not set. |
 | `--cb-len` | INT | 16 | Cell-barcode length in bp. Warns and defaults to 16 if not set. |
 | `--barcode-tag` | TEXT | CB | BAM tag carrying the cell barcode. Defaults to `CB` (Cell Ranger convention). |
-| `--read-geometry` | `fixed`/`keep`/`true` | `true` | How a read's genomic interval is derived. See below. |
+| `--read-geometry` | `fixed`/`keep`/`true` | `fixed` | How a read's genomic interval is derived. See below. |
 | `--read-exclude-flags` | INT | 0 | SAM flag mask vetoed on the coverage/count channel, like `samtools view -F`. `0` = no filtering. See below. |
 
 #### `--read-geometry` — how a read becomes an interval
@@ -243,9 +243,25 @@ on the full PBMC BAM — because chr19+21 are spliced-richer than average.
 
 | value | what it does |
 |---|---|
-| `fixed` | The historical rule, unchanged: discard span > `--seq-len`, pad shorter reads to `start + seq_len`. Use it to reproduce pre-existing output byte-for-byte. |
-| `keep` | Stop discarding, change nothing else — the read still becomes a `seq_len`-long interval. This is the ablation arm: it isolates "stop throwing reads away" from "stop fabricating the 3' end". |
-| `true` | **Default.** The read's real aligned reference footprint. |
+| `fixed` | **Default.** The historical rule, unchanged: discard span > `--seq-len`, pad shorter reads to `start + seq_len`. Reproduces pre-existing output byte-for-byte. |
+| `keep` | Stop discarding, change nothing else — the read still becomes a `seq_len`-long interval. The ablation arm: it isolates "stop throwing reads away" from "stop fabricating the 3' end". |
+| `true` | The read's real aligned reference footprint. |
+
+**Why `fixed` is still the default.** `true` was measured against `fixed` on
+two development slices. On the default precision arm it is worth **+31.2 %**
+(PBMC) and **+23.5 %** (mouse) of raw count-matrix mass — the reads it
+restores really were missing from your quantification — but on detection it
+costs **2.9 P@100 points on the mouse slice** for +0.6 points of recall, and
+gains only +0.3 points of recall on PBMC. The calls it adds do agree with the
+curated atlas far better than chance (0.37–0.52 vs a genic null of
+0.014–0.031), just less well than the calls already being made, so it slides
+along the precision/recall curve rather than lifting it.
+
+**Turn it on when quantification is what you care about** — differential
+usage, PDUI, anything reading the count matrix — and leave it off when you
+are optimising the called PAS set. It changes coverage, so it changes peak
+boundaries, the coverage-only tier and both matrices; expect a full re-run,
+about 1.3× the wall time and 1.5× the peak RSS.
 
 What `true` does with each CIGAR operation, exactly:
 
@@ -277,8 +293,10 @@ aligned to *N* places contributes *N* reads of coverage and *N* matrix counts.
 On the PBMC chr19+21 slice **10.42 %** of valid-CB reads are secondary
 alignments (`0x100`); on GSE104556 (STARsolo) the rate is higher still.
 `--read-exclude-flags 256` drops secondary alignments; `3844` is samtools'
-`unmapped+secondary+qcfail+duplicate+supplementary`. It is **off by default**
-because it is a call-set change, not a bug fix — and note that PCR duplicates
+`unmapped+secondary+qcfail+duplicate+supplementary`. Measured on the default
+precision arm, `256` buys **+1.2 P@100 points on PBMC and +2.2 on mouse** for
+**−0.1 / −0.3 points of recall** — a clean precision-for-recall trade, which
+is a move *along* the curve rather than a lift, so it is **off by default** — and note that PCR duplicates
 cannot inflate a *molecule* count in the first place, since duplicate reads
 share their `(CB, UMI)` key. The independent clip-evidence channel has its own
 switch, `--polya-clip-filter`.

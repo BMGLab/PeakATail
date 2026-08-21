@@ -224,44 +224,71 @@ existing clip counts (+1.9 % to +5.8 %, inside the noise of a threshold change).
 
 ---
 
-## Change 3 — read acceptance geometry: stop truncating and discarding reads
+## Change 3 — read acceptance geometry: stop truncating and discarding reads  *(LANDED; default NOT moved)*
 
-**Where.** `ema/countmatrix/read.py:106` (`read_check`).
+**STATUS: implemented, measured, and the default deliberately left at v2.** Flags are
+`--read-geometry {fixed,keep,true}` (default `fixed`) and `--read-exclude-flags N` (default `0`),
+not the `--read-span-mode {truncate,exact}` this plan originally proposed — a third value was added
+because the ablation turned out to matter (see below). Evidence:
+`results/prime/read_geometry_census_{pbmc,mouse1}_slice.tsv`,
+`results/prime/taskA_read_geometry_slice.tsv`, `results/prime/taskA_read_geometry_mass.tsv`,
+`results/prime/taskA_prereg_evaluation.tsv`, `results/prime/taskA_called_position_shift.tsv`,
+`results/prime/identity_taskA_branch_default_vs_v2.txt`.
 
-**Today.** A read whose *reference* span exceeds `--seq-len` is **discarded**; a shorter read has its
-end coordinate **rewritten** to `read_start + seq_len`. Downstream geometry is therefore partly
-synthetic, and a spliced alignment is discarded for the length of its intron.
+**Where.** `ema/countmatrix/read.py` (`read_check`).
 
-**Measured [A2 — not independently re-verified].** The span rule discards **13.74 %** of valid-CB
-reads genome-wide (88,778,573 / 646,342,981), **96 % of them spliced**, before the clip detector and
-before the count matrix. It throws away 56,335 reads carrying a qualifying poly(A) clip — **+1.76 %**
-on top of the 3,195,067 the caller keeps. Detection payoff is small (projected **~+0.4 %** recall),
-but it is the only relaxation in A2's table that is positive on **both** truths at every operating
-point, and its increment has the same truth:decoy quality as the evidence we already have
-(3.0 : 1 vs 3.67 : 1). Note A2 itself discounted its slice estimate 2.6× to get the genome-wide
-figure — do the same for anything measured on the slice.
+**Today (`fixed`).** A read whose *reference* span exceeds `--seq-len` is **discarded**; a shorter
+read has its end coordinate **rewritten** to `read_start + seq_len`.
 
-**The larger prize is quantification, not detection: 88.8 M reads never enter the matrix** because a
-spliced alignment's *reference* span exceeds `--seq-len`. This should be a span-vs-**query**-length
-test.
+**Census, re-measured on this branch (A2's genome-wide figures held up).** On the PBMC chr19+21
+slice the discard removes **24.19 %** of valid-CB reads, **98.08 %** of them spliced, and costs
+12,427 qualifying clip reads (**+4.65 %**); on a GSE104556 mouse1 chr18+19 slice, 19.96 % / 98.72 %
+/ +1.54 %. The rewrite fabricates the 3' end of 9.77 % (PBMC, mean +13.53 bp) and 21.70 % (mouse,
+mean +25.17 bp) of kept reads. Genome-wide: 13.74 %, 96 % spliced, 88.8 M reads — the slices are
+spliced-richer, so slice figures over-state it.
 
-**Flags.** `--read-span-mode {truncate,exact}` (config `read_span_mode`).
-* `truncate` — v2: discard span > `--seq-len`, rewrite `read_end = read_start + seq_len`.
-* `exact` — keep every accepted read, use its true aligned span.
+**Two design decisions the measurement forced, both away from the obvious choice:**
 
-**Default on prime.** `exact`, *if* it clears [24] §3.1 on all three datasets — this one is a
-candidate default, not a foregone one, because its blast radius is the whole pipeline.
-**v2 reachable via** `--read-span-mode truncate`.
+1. **Acceptance is on the de-introned reference footprint, not on query length.** A query-length
+   test is *not* a strict relaxation: a short alignment with a long terminal soft clip has
+   span ≤ `--seq-len` (v2 keeps it) but query length > `--seq-len`. That is the shape of a poly(A)
+   clip read. Caught live by `tests/test_polya_three_path_agreement.py`.
+2. **N is removed from the span.** Over 7.82 M valid-CB slice reads the introns carry **10.02 Gb**,
+   ~14× the real read mass over the same 105 Mb. Feeding genomic spans to the coverage state machine
+   would turn it into a gene-body detector.
 
-**Watch for.** It changes coverage, so it changes *everything* downstream — peak boundaries, tier-2,
-both matrices. Land it alone, measure it alone, and expect the identity check to show differences
-everywhere in prime mode and none in compat mode. It also raises read counts and peak RSS: check the
-compute guard rail ([24] §3.2.4: 2× wall, 1.5× RSS) at this step, not at the end. Because it changes
-the count matrix it needs the full three-dataset re-run and a re-verification before any manuscript
-number moves.
+**Outcome against [24] §3.1** (needs ΔP@100 ≥ −0.005, ΔR_det ≥ +0.010, ΔF1 > 0 on every dataset),
+default precision arm, `true` vs `fixed`:
 
-**Not in scope here** (measured, separate): `read_check` applies no `-F 3844`, so a 5-way multimapper
-contributes 5 coverage reads [A1 §10]. Fix or flag it only with its own measurement.
+| dataset | ΔP@100 | ΔR_det@100 | ΔF1 | precision of the ADDED calls | verdict |
+|---|---:|---:|---:|---:|---|
+| PBMC chr19+21 | −0.0026 | +0.0031 | +0.0030 | 0.519 (base 0.640, null 0.031) | fails (ii) |
+| mouse1 chr18+19 | **−0.0292** | +0.0063 | +0.0042 | 0.368 (base 0.716, null 0.014) | fails (i) by 5.9×, and (ii) |
+
+**FAIL ⇒ the default stays at v2**, exactly as §3.1 says. The ablation is the useful part: `keep`
+carries essentially the whole precision loss (mouse −0.0283 of the −0.0292), so it is *stopping the
+discard* that costs precision, not the 3'-end fix — `keep`→`true` is ΔP −0.0001 / ΔR +0.0001 (PBMC)
+and −0.0010 / +0.0004 (mouse). The recovered spliced reads carry real evidence (12–26× the genic
+null) but weaker evidence than what is already in hand, so they slide along the curve.
+
+**What the flag is still for.** Raw count-matrix mass **+31.2 %** (PBMC) / **+23.5 %** (mouse),
+~+15.9 % genome-wide. §3.1 is a *detection* criterion and does not see this at all. Anyone wanting
+`true` as a default needs a quantification criterion first; that decision belongs to whoever owns
+[24].
+
+**Not a threat to the compatibility guarantee.** A no-flag run of the branch reproduces v2 on the
+real slice: **all 50 data files byte-identical**, the only difference in the whole tree being the
+two new keys in `run_config.json` / `run_manifest.json`, both recording the v2 value.
+
+**Compute.** PBMC slice at 8 threads: wall 1.32×, peak RSS **1.53×** — through §3.2.4's 1.5× guard
+rail, declared. (It was 2.21× until `ClipStream.finalize()` stopped round-tripping through Python
+ints.) Mouse slice: 1.17× wall, 1.01× RSS.
+
+**`--read-exclude-flags` (the multimapper item, measured as this plan required).** `read_check`
+applies no `-F`, so a 5-way multimapper contributes 5 coverage reads and 5 matrix counts; 10.42 %
+(PBMC) / 12.09 % (mouse) of valid-CB reads are secondary. `256` is a clean precision-for-recall
+trade on the default arm — ΔP@100 +0.0125 / ΔR −0.0008 (PBMC), +0.0218 / −0.0031 (mouse) — i.e. a
+move *along* the curve, which is what this branch is explicitly not trying to do. **Default 0.**
 
 ---
 

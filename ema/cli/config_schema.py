@@ -261,7 +261,9 @@ class RunConfig:
         ),
     )
     read_geometry: str = field(
-        default="true",
+        # Must equal ema.config.variable_config.read_geometry -- see the long
+        # note there for why the measured default is v2's "fixed".
+        default="fixed",
         metadata=_spec(
             cli_flag="--read-geometry", yaml_key="read_geometry",
             legacy_dataclass_attr="variable_config.read_geometry",
@@ -273,13 +275,16 @@ class RunConfig:
                 "'keep' replaces the discard with a query-length test (a "
                 "spliced alignment is no longer thrown away for the length of "
                 "its intron) but keeps v2's fixed-length interval. 'true' "
-                "(default on this branch) additionally uses the read's real "
-                "aligned reference footprint: soft clips excluded, deletions "
-                "inside the span, introns (CIGAR N) removed. Measured on the "
-                "PBMC chr19+21 slice, 'fixed' discards 24.19% of valid-CB "
-                "reads (98.1% of them spliced) before BOTH the poly(A) clip "
-                "detector and the count matrix. --read-geometry fixed is the "
-                "v2-compatibility value."
+                "additionally uses the read's real aligned reference "
+                "footprint: soft clips excluded, deletions inside the span, "
+                "introns (CIGAR N) removed. Measured on the PBMC chr19+21 "
+                "slice, 'fixed' discards 24.19% of valid-CB reads (98.1% of "
+                "them spliced) before BOTH the poly(A) clip detector and the "
+                "count matrix, so 'true' is worth +31.2% of raw count-matrix "
+                "mass (+23.5% on a GSE104556 mouse slice) -- but it costs "
+                "2.9 precision points (P@100) on that mouse slice, so the "
+                "DEFAULT stays 'fixed', which is also the v2-compatibility "
+                "value. See the branch CHANGELOG."
             ),
         ),
     )
