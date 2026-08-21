@@ -60,6 +60,7 @@ from typing import Any
 
 import pysam
 
+from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
 from ema.utils import ResourceManager
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,9 @@ class JobSpec:
     polya_min_purity: float = 0.8
     polya_window: int = 100
     polya_seed_window: int = 25
-    polya_min_reads: int = 1
+    polya_min_umis: int = 1
+    polya_clip_filter: str = "none"
+    polya_count_window: tuple = (-1, 25)
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +323,9 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             polya_min_purity=args.polya_min_purity,
             polya_window=args.polya_window,
             polya_seed_window=args.polya_seed_window,
-            polya_min_reads=args.polya_min_reads,
+            polya_min_umis=args.polya_min_umis,
+            polya_clip_filter=args.polya_clip_filter,
+            polya_count_window=args.polya_count_window,
         )
     else:
         tile_id = args["tile_id"]
@@ -349,7 +354,11 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             polya_min_purity=args.get("polya_min_purity", 0.8),
             polya_window=args.get("polya_window", 100),
             polya_seed_window=args.get("polya_seed_window", 25),
-            polya_min_reads=args.get("polya_min_reads", 1),
+            polya_min_umis=args.get(
+                "polya_min_umis", args.get("polya_min_reads", 1)
+            ),
+            polya_clip_filter=args.get("polya_clip_filter", "none"),
+            polya_count_window=args.get("polya_count_window", (-1, 25)),
         )
 
     # Per-worker isolation: reset all process-global mutable state
@@ -364,6 +373,8 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
     final_bed = workdir / "peaks.bed"
     final_mtx = workdir / "peaks.mtx"
     cb_path = workdir / "barcodes.cb.tsv"
+    raw_support = Path(support_path_for(raw_bed))
+    final_support = Path(support_path_for(final_bed))
 
     try:
         # ----------------------------------------------------------------
@@ -421,6 +432,19 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
                     dst.write(line)
 
         # ----------------------------------------------------------------
+        # 3b. Filter the poly(A) support sidecar to the same pasnumbers
+        # ----------------------------------------------------------------
+        if raw_support.exists():
+            with open(raw_support) as src_f, open(final_support, "w") as dst:
+                header = src_f.readline()
+                dst.write(header)
+                for line in src_f:
+                    if not line.strip():
+                        continue
+                    if int(line.split("\t", 1)[0]) in kept_pasnumbers:
+                        dst.write(line)
+
+        # ----------------------------------------------------------------
         # 4. Write ordered CB list (index → CB string)
         # ----------------------------------------------------------------
         mapping: dict[str, int] = get_mapping()
@@ -438,6 +462,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         # ----------------------------------------------------------------
         raw_bed.unlink(missing_ok=True)
         raw_mtx.unlink(missing_ok=True)
+        raw_support.unlink(missing_ok=True)
 
         logger.info(
             "Tile %d done: dataset=%s chrom=%s core=[%d,%d) kept_peaks=%d",
@@ -453,6 +478,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             "tile_end": tile_end,
             "bed_path": str(final_bed),
             "mtx_path": str(final_mtx),
+            "support_path": str(final_support),
             "cb_path": str(cb_path),
             "workdir": str(workdir),
         }
@@ -485,6 +511,8 @@ def merge_tiles(
        ordering.
     2. Concatenate BED files; assign new global pasnumbers 1..N sequentially.
        Build a ``tile_id → {local_pasnum → global_pasnum}`` remapping table.
+       The poly(A) support sidecar (``<bed>.support.tsv``) is concatenated
+       and re-keyed through the same table.
     3. Union per-tile CB lists in encounter order; build a
        ``tile_id → {local_col → global_col}`` remapping table.
     4. Rewrite per-tile MTX files applying both remappings; append to final MTX.
@@ -584,6 +612,39 @@ def merge_tiles(
                     mtx_out.write(f"{new_pas} {new_col} {count}\n")
 
     # ----------------------------------------------------------------
+    # Pass 2b: poly(A) support sidecar — same pasnumber remapping
+    # ----------------------------------------------------------------
+    _support_rows: list[tuple[int, str]] = []
+    _header = "\t".join(SUPPORT_COLUMNS) + "\n"
+    _any_support = False
+    for tile in sorted_tiles:
+        sp = tile.get("support_path")
+        if not sp or not Path(sp).exists():
+            continue
+        _any_support = True
+        p_map = pas_remap.get(tile["tile_id"], {})
+        with open(sp) as src_f:
+            first = src_f.readline()
+            if first.startswith("pas_id"):
+                _header = first
+            elif first.strip():
+                src_f.seek(0)
+            for line in src_f:
+                if not line.strip():
+                    continue
+                local, rest = line.split("\t", 1)
+                new_pas = p_map.get(int(local))
+                if new_pas is None:
+                    continue
+                _support_rows.append((new_pas, rest))
+    if _any_support:
+        _support_rows.sort(key=lambda r: r[0])
+        with open(support_path_for(final_bed), "w") as sup_out:
+            sup_out.write(_header)
+            for pas, rest in _support_rows:
+                sup_out.write(f"{pas}\t{rest}")
+
+    # ----------------------------------------------------------------
     # Pass 3: Write canonical CB list
     # ----------------------------------------------------------------
     with open(final_cb, "w") as cb_out:
@@ -636,7 +697,9 @@ def build_job_specs(
     polya_min_purity: float = 0.8,
     polya_window: int = 100,
     polya_seed_window: int = 25,
-    polya_min_reads: int = 1,
+    polya_min_umis: int = 1,
+    polya_clip_filter: str = "none",
+    polya_count_window: tuple = (-1, 25),
 ) -> list[JobSpec]:
     """Build a flat list of :class:`JobSpec` across all datasets × chroms × tiles × directions.
 
@@ -713,7 +776,9 @@ def build_job_specs(
                         polya_min_purity=polya_min_purity,
                         polya_window=polya_window,
                         polya_seed_window=polya_seed_window,
-                        polya_min_reads=polya_min_reads,
+                        polya_min_umis=polya_min_umis,
+                        polya_clip_filter=polya_clip_filter,
+                        polya_count_window=tuple(polya_count_window),
                     ))
                     job_id += 1
 
@@ -854,7 +919,9 @@ def run_tiled(
     polya_min_purity: float = 0.8,
     polya_window: int = 100,
     polya_seed_window: int = 25,
-    polya_min_reads: int = 1,
+    polya_min_umis: int = 1,
+    polya_clip_filter: str = "none",
+    polya_count_window: tuple = (-1, 25),
 ) -> None:
     """Run tile-parallel peak calling and merge results into final output files.
 
@@ -927,7 +994,9 @@ def run_tiled(
         polya_min_purity=polya_min_purity,
         polya_window=polya_window,
         polya_seed_window=polya_seed_window,
-        polya_min_reads=polya_min_reads,
+        polya_min_umis=polya_min_umis,
+        polya_clip_filter=polya_clip_filter,
+        polya_count_window=tuple(polya_count_window),
     )
     if polya_enabled:
         from ema.config import variable_config as _vc

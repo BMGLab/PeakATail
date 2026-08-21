@@ -22,6 +22,47 @@ if TYPE_CHECKING:
 
 strand_char: dict[bool, str] = {True: "-", False: "+"}
 
+#: Columns of the per-PAS poly(A) support sidecar (``pas_support.tsv``).
+#: BED6 stays BED6 — the raw clip-read count and the ``-F 3844`` counts live
+#: here instead of being packed into the name field (which downstream
+#: parsers read as the PAS id) or the score column (one number only).
+SUPPORT_COLUMNS: tuple[str, ...] = (
+    "pas_id",             # BED column 4 — joins the sidecar to the BED
+    "clip_reads",         # raw poly(A) clip reads at this PAS
+    "clip_umis",          # distinct (CB, UMI) molecules == BED column 5
+    "clip_reads_f3844",   # clip reads passing samtools -F 3844
+    "clip_umis_f3844",    # distinct molecules among those reads
+    "window_reads",       # reads counted into this PAS's matrix row
+    "tier",               # 1 = clip-seeded cluster, 2 = coverage candidate
+)
+
+
+def support_path_for(bedfilepath) -> str:
+    """Sidecar path for a caller BED (``x.bed`` -> ``x.support.tsv``)."""
+    s = str(bedfilepath)
+    if s.endswith(".bed"):
+        s = s[:-4]
+    return s + ".support.tsv"
+
+
+def open_support(bedfilepath):
+    """Open the sidecar for *bedfilepath* and write its header row."""
+    fh = open(support_path_for(bedfilepath), "w")
+    fh.write("\t".join(SUPPORT_COLUMNS) + "\n")
+    return fh
+
+
+def support_write(output, pasnumber, support: dict) -> None:
+    """Append one sidecar row.  *support* is a dict as produced by
+    :meth:`~ema.countmatrix.polya.ClipSeeder.flush` (``support_out=``)."""
+    if output is None:
+        return
+    output.write(
+        f"{pasnumber}\t{support['clip_reads']}\t{support['clip_umis']}\t"
+        f"{support['clip_reads_f3844']}\t{support['clip_umis_f3844']}\t"
+        f"{support['window_reads']}\t{support['tier']}\n"
+    )
+
 
 def pas_write(
     chro: str,

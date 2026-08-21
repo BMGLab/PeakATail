@@ -68,6 +68,9 @@ class FieldSpec:
         is_flag: True if the CLI flag is a boolean ``--xxx/--no-xxx``.
         legacy_alias: Optional legacy YAML key/CLI flag to accept for
             backward compatibility (e.g. ``min_genes`` → ``min_pas_per_cell``).
+        cli_aliases: Extra (deprecated) CLI spellings Click should accept
+            for the same destination, e.g. ``--polya-min-reads`` for
+            ``--polya-min-umis``.
         click_type: Override the auto-derived Click type.  Use a
             ``click.Path`` instance for path fields that need
             ``exists=True``.
@@ -95,6 +98,7 @@ class FieldSpec:
     choice: Optional[tuple[str, ...]] = None
     is_flag: bool = False
     legacy_alias: Optional[str] = None
+    cli_aliases: tuple[str, ...] = ()
     click_type: Any = None
     click_kwargs: Optional[dict] = None
     legacy_args_attr: Optional[str] = None
@@ -609,8 +613,10 @@ class RunConfig:
             description=(
                 "Collect read-level poly(A) soft-clip evidence during peak "
                 "calling (default on). Annotate-only by default: each PAS's "
-                "clip-read support is written into BED column 5 of "
-                "pasbed.bed (previously hardcoded 0); coordinates, counts "
+                "clip support -- distinct (barcode, UMI) MOLECULES -- is "
+                "written into BED column 5 of pasbed.bed (previously "
+                "hardcoded 0), with the raw read counts in the "
+                "pas_support.tsv sidecar; coordinates, counts "
                 "and PAS selection are unchanged unless --polya-mode or the "
                 "clip_seeded strategy says otherwise. 'off' restores the "
                 "pre-Stage-1 byte-identical output."
@@ -666,7 +672,7 @@ class RunConfig:
             legacy_args_attr="polya_window",
             description=(
                 "Half-window in bp around a PAS's strand-aware 3' base "
-                "within which clip reads count as support for that PAS "
+                "within which clip molecules count as support for that PAS "
                 "(default 100 — the benchmark's matching cutoff)."
             ),
         ),
@@ -682,16 +688,57 @@ class RunConfig:
             ),
         ),
     )
-    polya_min_reads: int = field(
+    polya_min_umis: int = field(
         default=1,
         metadata=_spec(
-            cli_flag="--polya-min-reads", yaml_key="polya_min_reads",
-            legacy_args_attr="polya_min_reads",
+            cli_flag="--polya-min-umis", yaml_key="polya_min_umis",
+            cli_aliases=("--polya-min-reads",),
+            legacy_alias="polya_min_reads",
+            legacy_args_attr="polya_min_umis",
             description=(
-                "Minimum distinct molecules (UMI-deduplicated; reads "
-                "without a UB tag count as one molecule each) for a clip "
-                "cluster to be emitted as a tier-1 PAS (clip_seeded "
-                "strategy only; default 1)."
+                "Minimum distinct (CB, UMI) MOLECULES (reads without a UB "
+                "tag count as one molecule each) for a clip cluster to be "
+                "emitted as a tier-1 PAS, and the unit of BED column 5 "
+                "(clip_seeded strategy only; default 1). "
+                "--polya-min-reads is a DEPRECATED alias: the gate always "
+                "counted molecules, only the flag name and the score column "
+                "said reads."
+            ),
+        ),
+    )
+    polya_clip_filter: str = field(
+        default="none",
+        metadata=_spec(
+            cli_flag="--polya-clip-filter", yaml_key="polya_clip_filter",
+            choice=("none", "f3844"),
+            legacy_args_attr="polya_clip_filter",
+            description=(
+                "Alignment filter on the poly(A) clip-evidence channel. "
+                "'none' (default) counts a molecule from every clip read "
+                "read_check accepted — PCR duplicates cannot inflate it "
+                "because duplicates share their (CB, UMI) key. 'f3844' "
+                "counts only molecules seen on reads passing samtools "
+                "-F 3844 (drops secondary / supplementary / duplicate / "
+                "qcfail), which ALSO drops clusters whose evidence is "
+                "entirely such alignments — a call-set change, measured at "
+                "-8.3% (chr19+) / -27.0% (chr21+) tier-1 clusters on PBMC. "
+                "Both counts are always reported in pas_support.tsv."
+            ),
+        ),
+    )
+    polya_count_window: str = field(
+        default="auto,25",
+        metadata=_spec(
+            cli_flag="--polya-count-window", yaml_key="polya_count_window",
+            legacy_args_attr="polya_count_window",
+            description=(
+                "Tier-1 count window 'UP,DOWN' in bp, transcript orientation "
+                "around a clip cluster's cleavage site (clip_seeded strategy "
+                "only). A cluster that overlaps no coverage peak is counted "
+                "from every accepted read end in [site-UP, site+DOWN]; "
+                "clusters inside a coverage peak take that peak's counts "
+                "instead. 'auto' == --seq-len (R2 3' ends pile up just "
+                "upstream of cleavage). Default 'auto,25'."
             ),
         ),
     )
@@ -1133,6 +1180,15 @@ class RunConfig:
                     val = ",".join(str(v) for v in val)
                 kwargs[field_name] = val
             elif key in legacy_to_field:
+                # Deprecated spelling (e.g. ``polya_min_reads`` for
+                # ``polya_min_umis``): accept it, but say so -- the CLI
+                # alias logs the same warning.
+                import logging
+                _new = {v: k for k, v in yaml_to_field.items()}.get(
+                    legacy_to_field[key], legacy_to_field[key])
+                logging.getLogger(__name__).warning(
+                    "YAML key %r is DEPRECATED; use %r instead.", key, _new
+                )
                 kwargs[legacy_to_field[key]] = val
             # else: silent skip (loader will have warned)
         return cls(**kwargs)
@@ -1296,7 +1352,8 @@ def click_options_from_schema(
             if spec.click_kwargs:
                 opt_kwargs.update(spec.click_kwargs)
             # Variable name in callback kwargs is the field name (snake_case)
-            opts.append(click.option(spec.cli_flag, f.name, **opt_kwargs))
+            decls = (spec.cli_flag,) + tuple(spec.cli_aliases) + (f.name,)
+            opts.append(click.option(*decls, **opt_kwargs))
 
         for opt in reversed(opts):
             fn = opt(fn)

@@ -210,15 +210,37 @@ coverage peaks can reach it. Candidates have to start from the clips.
    `polya.clip_site()`; qualifying clips accumulate per chromosome (this is
    caller-level, not per-peak — a strategy only ever sees one peak window).
 2. Clip sites are clustered by single linkage at `--polya-seed-window` (25 bp).
-3. Each cluster clearing `--polya-min-reads` distinct molecules is emitted as a
-   **tier-1** PAS at the cluster's read-weighted **modal** position, as the
-   1-bp interval `[mode, mode+1)`.
+3. Each cluster clearing `--polya-min-umis` distinct `(barcode, UMI)`
+   molecules is emitted as a **tier-1** PAS at the cluster's read-weighted
+   **modal** position, as the 1-bp interval `[mode, mode+1)`. Molecules —
+   not reads — are the support unit: a PCR stack of ten reads is one
+   molecule. Cluster geometry (membership and the mode) is a pure function
+   of the accepted clip reads, so changing the support unit or the gate can
+   drop a PAS but never moves one.
 4. The inner coverage strategy (`--peak-strategy clip_seeded` uses
    `lambda_gradient` by default) still runs; its PAS that overlap no tier-1
    cluster are emitted as **tier 2**, tagged `coverage_only`.
 5. Both tiers go to `pasbed.bed` as ordinary BED6 rows. The **tier tag is BED
-   column 5**: clip-read support, so `score == 0` means coverage-only.
-   `--polya-mode filter` drops exactly that tier.
+   column 5**: distinct clip molecules, so `score == 0` means coverage-only.
+   `--polya-mode filter` drops exactly that tier. The raw clip-read count,
+   the `-F 3844` counts and the matrix-row read count are written per PAS to
+   the `pas_support.tsv` sidecar (see `docs/cli/run.md`), so BED6 stays BED6.
+6. **Counting.** A tier-1 row is counted from the reads that pile up at its
+   cleavage site, never from its clip reads alone (those are ~1% of the
+   reads — column 5 keeps them as the support annotation). A cluster that
+   suppresses a coverage candidate takes that candidate's `cb_positions`
+   counts, restricted to its partition of the candidate (several clusters
+   split a candidate at the midpoints between their anchors, exactly like
+   `find_pas` splits a multi-PAS peak); every cluster additionally counts
+   the accepted read ends inside `--polya-count-window` (default
+   `[site - seq_len, site + 25]`, transcript orientation) that belong to no
+   coverage candidate, clipped at the midpoint to its neighbours — so no
+   read is counted twice and the coverage strategy's mass is a floor.
+   Tier-2 rows are the coverage strategy's rows unchanged. A cluster left
+   with nothing by both sources falls back to its own clip reads, and that
+   fallback is midpoint-clipped and candidate-excluded the same way (a read
+   end past the midpoint is the neighbour's), so such a row can legitimately
+   come out empty rather than double-counted.
 
 ### Tunable hyperparameters
 
@@ -227,8 +249,10 @@ coverage peaks can reach it. Candidates have to start from the clips.
 | `--polya-min-clip` | 6 | Minimum soft-clip length AND minimum A/T run flush against the alignment boundary |
 | `--polya-min-purity` | 0.8 | Minimum A (or T) fraction over the clipped bases |
 | `--polya-seed-window` | 25 | Single-linkage gap for clustering clip sites |
-| `--polya-min-reads` | 1 | Minimum distinct molecules per emitted cluster |
+| `--polya-min-umis` | 1 | Minimum distinct `(barcode, UMI)` molecules per emitted cluster (deprecated alias: `--polya-min-reads`) |
+| `--polya-clip-filter` | `none` | `f3844` restricts the molecule count (and therefore the gate, the score and the tier tag) to reads passing samtools `-F 3844`; it drops clusters whose evidence is entirely secondary/duplicate/qcfail alignments, so it changes the call set |
 | `--polya-window` | 100 | Radius for attributing clip support to a PAS, and for tier-1/tier-2 overlap suppression |
+| `--polya-count-window` | `auto,25` | `UP,DOWN` bp around a tier-1 cleavage site (transcript orientation) within which read ends outside every coverage candidate are counted on the tier-1 row; `auto` == `--seq-len` |
 
 ### When to use
 

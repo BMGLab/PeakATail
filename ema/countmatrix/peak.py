@@ -1,3 +1,6 @@
+from ema.countmatrix.polya import molecule_cb
+
+
 class Peak():
 
     pasnumber = 0
@@ -24,8 +27,12 @@ class Peak():
         :param peak_strand: presents gene strand
         :param cb_dict: collect all CellBarcodes are in peak
         :param polya_sites: poly(A) soft-clip evidence accumulated into this
-            peak: {cleavage_site: [n_reads, umi_set, n_reads_without_umi]}.
+            peak: {cleavage_site: [n_reads, umi_set, n_reads_without_umi,
+            n_reads_f3844, umi_set_f3844, n_reads_without_umi_f3844]}.
             Populated via polya_counting() when --polya-evidence is on.
+            Support is reported in DISTINCT MOLECULES; the f3844 slots hold
+            the same counts restricted to reads passing samtools -F 3844
+            (see ema.countmatrix.polya.clip_read_ok).
         '''
         self.peak_list = peak_list if peak_list is not None else []
         self.peak_start = peak_start
@@ -60,7 +67,7 @@ class Peak():
             self.cb_positions[end_pos][cb] = 1
 
 
-    def polya_counting(self, site: int, cb: str, umi=None):
+    def polya_counting(self, site: int, cb: str, umi=None, primary: bool = True):
         '''Record one poly(A)-clipped read's inferred cleavage site.
 
         Mirrors cb_position_counting: called from the peak-calling loop for
@@ -71,38 +78,57 @@ class Peak():
         :param cb: cell barcode (composite sample_cb string).
         :param umi: UMI (UB tag) or None. Distinct molecules per site are
             len(umi_set) + n_reads_without_umi.
+        :param primary: clip_read_ok(read) -- False for secondary /
+            supplementary / duplicate / qcfail alignments, which are
+            tracked separately so both support units are available.
         '''
         rec = self.polya_sites.get(site)
         if rec is None:
-            rec = [0, set(), 0]
+            rec = [0, set(), 0, 0, set(), 0]
             self.polya_sites[site] = rec
         rec[0] += 1
-        if umi is None:
+        mol = None if umi is None else (molecule_cb(cb), umi)
+        if mol is None:
             rec[2] += 1
         else:
-            rec[1].add((cb, umi))
+            rec[1].add(mol)
+        if primary:
+            rec[3] += 1
+            if mol is None:
+                rec[5] += 1
+            else:
+                rec[4].add(mol)
 
     def polya_support(self, pas_1: int, pas_2: int, strand: bool, window: int):
         '''Clip support for one emitted PAS: reads and distinct molecules
         whose cleavage site lies within +/-window of the PAS's strand-aware
         3' base (forward: bed_end - 1; reverse: bed_start).
 
-        Returns (n_clip_reads, n_distinct_umis).
+        Returns (n_clip_reads, n_distinct_molecules, n_clip_reads_f3844,
+        n_distinct_molecules_f3844).  BED column 5 carries the MOLECULE
+        count; the sidecar carries all four.
         '''
         if not self.polya_sites:
-            return 0, 0
+            return 0, 0, 0, 0
         bed_start = min(pas_1, pas_2)
         bed_end = max(pas_1, pas_2)
         three = bed_start if strand else bed_end - 1
         nreads = 0
         n_no_umi = 0
         umis = set()
+        nreads_f = 0
+        n_no_umi_f = 0
+        umis_f = set()
         for site, rec in self.polya_sites.items():
             if abs(site - three) <= window:
                 nreads += rec[0]
                 umis |= rec[1]
                 n_no_umi += rec[2]
-        return nreads, len(umis) + n_no_umi
+                nreads_f += rec[3]
+                umis_f |= rec[4]
+                n_no_umi_f += rec[5]
+        return (nreads, len(umis) + n_no_umi,
+                nreads_f, len(umis_f) + n_no_umi_f)
 
     def pasfind(self) -> int:
         '''
