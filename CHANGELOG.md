@@ -18,6 +18,10 @@ three.
 | GSE104556 mouse1 testis (`--threads 12 --ip-filter`) | 1 h 01 min | 9 min 03 s | 23.12 GB | 3.68 GB |
 | PBMC 10k v3, full BAM (`--threads 16`) | 3 h 45 min 53 s | 27 min 43 s | 293.74 GB | 12.45 GB |
 
+Not all of it is parallelism: the slice re-run with `--peak-workers 1` (the
+legacy single-process caller) takes 11 min 27 s / 1.71 GB, with peak calling
+at 613 s instead of 733 s and the cell-barcode filter at 25 s instead of 64 s.
+
 ### Fixed
 
 - **TF-IDF no longer densifies the count matrix
