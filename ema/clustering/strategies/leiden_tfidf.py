@@ -28,32 +28,63 @@ def _tfidf_signac_method1(X, scale_factor=1e4):
     TF  = count / total_counts_per_cell
     IDF = n_cells / cells_with_peak
 
+    Computed on the STORED entries only.  The previous implementation
+    densified the cells x PAS matrix (``X.toarray()``) and held four
+    float64 copies of it at once (``astype``, ``tf``, ``tf * idf``,
+    ``log1p``), i.e. ``4 * n_cells * n_PAS * 8`` bytes -- 291 GB for the
+    23,303 x 390,493 PBMC 10k matrix, which was >98 % of the whole run's
+    peak RSS on every dataset measured.  The sparse form needs ~3 x nnz x 8
+    bytes (~3 GB on that matrix) and is bit-identical to the dense result:
+
+    * every zero of ``X`` maps to ``log1p(0 * idf * scale) == 0`` and was
+      dropped by the trailing ``csr_matrix(tfidf)`` anyway, so the sparsity
+      pattern is the same after :meth:`eliminate_zeros`;
+    * the per-entry arithmetic is the same scalar sequence in the same
+      order (``/ cell_total``, ``* idf``, ``* scale_factor``, ``log1p``);
+    * the row sums and the per-PAS cell counts are sums of integers
+      (counts), exact in float64 whatever the summation order.
+
+    Verified identical (``X``, ``X_lsi`` and Leiden labels) against the
+    dense implementation on two real runs (PBMC chr19+21 slice, mouse
+    testis) and in ``tests/test_tfidf_sparse_identity.py``.
+
     Args:
-        X: Count matrix (cells x peaks), sparse or dense.
+        X: Count matrix (cells x peaks), sparse or dense.  Integer-valued
+            counts are expected (bit-identity with the dense formula relies
+            on the row sums being exact; non-integer input still gives the
+            correct TF-IDF).
         scale_factor: Scaling factor (default: 10,000).
 
     Returns:
-        Sparse CSR matrix with TF-IDF values.
+        Sparse CSR matrix (float64) with TF-IDF values.
     """
-    if issparse(X):
-        X = X.toarray()
-    X = X.astype(np.float64)
+    X = csr_matrix(X, dtype=np.float64, copy=True)
+    X.sum_duplicates()     # canonical: sorted, unique column indices per row
+    X.eliminate_zeros()    # explicit zeros would be dropped by the dense path
+    n_cells, n_peaks = X.shape
 
     # Term frequency: normalize each cell by total counts
-    cell_totals = X.sum(axis=1, keepdims=True)
+    cell_totals = np.asarray(X.sum(axis=1), dtype=np.float64).ravel()
     cell_totals[cell_totals == 0] = 1  # avoid division by zero
-    tf = X / cell_totals
 
     # Inverse document frequency: n_cells / cells_with_peak
-    n_cells = X.shape[0]
-    cells_with_peak = (X > 0).sum(axis=0)
+    cells_with_peak = np.bincount(
+        X.indices[X.data > 0], minlength=n_peaks
+    ).astype(np.int64)
     cells_with_peak[cells_with_peak == 0] = 1  # avoid division by zero
     idf = n_cells / cells_with_peak
 
-    # Signac Method 1: log1p(TF * IDF * scale_factor)
-    tfidf = np.log1p(tf * idf * scale_factor)
+    # Signac Method 1: log1p(TF * IDF * scale_factor), same op order as the
+    # dense expression ``np.log1p((X / cell_totals) * idf * scale_factor)``.
+    rows = np.repeat(np.arange(n_cells), np.diff(X.indptr))
+    data = X.data / cell_totals[rows]
+    data *= idf[X.indices]
+    data *= scale_factor
+    np.log1p(data, out=data)
 
-    return csr_matrix(tfidf)
+    tfidf = csr_matrix((data, X.indices, X.indptr), shape=(n_cells, n_peaks))
+    tfidf.eliminate_zeros()
+    return tfidf
 
 
 def _remove_depth_correlated_components(X_lsi, total_counts, threshold=0.75):

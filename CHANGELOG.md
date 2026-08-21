@@ -1,5 +1,125 @@
 # Changelog
 
+## Unreleased — caller memory and CPU
+
+Peak RSS and wall time only: **every output file is byte-identical** at the
+default settings. Verified end-to-end by re-running two full benchmark arms
+on the same inputs and comparing bytes against the runs they are supposed to
+reproduce: the chr19+21 PBMC slice (21 files), GSE104556 mouse1 testis with
+`--ip-filter` (18 files) and the full PBMC 10k v3 CellRanger BAM (18 files)
+— `pasbed.bed`, `pas_support.tsv`, the raw and filtered matrices, the cell
+list, `annotatedpas.bed`, `annotated_matrix.mtx`, `pas_gene.tsv` — plus
+`preprocessed.h5ad` and `clusters.h5ad` (`X`, `X_lsi`, Leiden labels) on all
+three.
+
+| Run | Wall before | Wall after | Peak RSS before | Peak RSS after |
+|---|---|---|---|---|
+| PBMC 10k v3, chr19+21 slice (`--threads 16`) | 14 min 41 s | 6 min 11 s | 5.56 GB | 1.16 GB |
+| GSE104556 mouse1 testis (`--threads 12 --ip-filter`) | 1 h 01 min | 9 min 03 s | 23.12 GB | 3.68 GB |
+| PBMC 10k v3, full BAM (`--threads 16`) | 3 h 45 min 53 s | 27 min 43 s | 293.74 GB | 12.45 GB |
+
+Not all of it is parallelism: the slice re-run with `--peak-workers 1` (the
+legacy single-process caller) takes 11 min 27 s / 1.71 GB, with peak calling
+at 613 s instead of 733 s and the cell-barcode filter at 25 s instead of 64 s.
+
+### Fixed
+
+- **TF-IDF no longer densifies the count matrix
+  (`ema/clustering/strategies/leiden_tfidf.py`).** `_tfidf_signac_method1`
+  called `X.toarray()` and then held four dense float64 copies at once
+  (`astype`, `tf`, `tf * idf`, `log1p`), i.e. `4 × n_cells × n_PAS × 8`
+  bytes. That single function was **>98 % of peak RSS on every dataset
+  measured** — the formula predicts 104.3 GB / 140.7 GB / 236.8 GB /
+  291.2 GB / 21.5 GB against measured peaks of 105.6 / 140.2 / 239.5 /
+  293.7 / 23.1 GB — and most of the 31-minute clustering stage of the PBMC
+  run. The same scalar sequence applied to the stored entries needs
+  `~3 × nnz × 8` bytes and produces the **same bits**: structural zeros map
+  to `log1p(0) == 0` and were dropped by the trailing `csr_matrix()` anyway,
+  and the row sums / per-PAS cell counts are integer sums, exact in float64
+  in any order. Checked against the previous implementation on the real
+  `preprocessed.h5ad` of two runs (CSR structure, data, `X_lsi`, Leiden
+  labels all identical): 0.14 s / 0.56 GB vs 3.1 s / 4.5 GB on the slice,
+  0.76 s / 1.55 GB vs 17.4 s / 22.2 GB on mouse1.
+- **The cell-barcode filter streams integers instead of a per-row string
+  frame (`ema/matrixfilter.py`).** The vectorised reader kept an object
+  `cb_str` column per non-zero (~95 B/row): 2.71 GB for the slice's 14.9 M
+  rows, an estimated 20–27 GB for the ~200 M rows of the full PBMC run —
+  the next peak once the TF-IDF was fixed. Files are now parsed once in
+  4 M-row chunks into three integer arrays (int32 where the values fit,
+  12 B/row) and both passes run on those. Row semantics are unchanged; the
+  Pass-1 grouping moves from the raw token to its integer, which is the same
+  partition while every token is canonical, so a non-canonical token
+  (`"007"`, `"+7"`, `"7.0"`), a >3-token row, a non-integer token or an
+  absurd column index now defers the whole call to `_filter_cb_legacy` —
+  the byte-for-byte copy of the reference algorithm. On such pathological
+  input the result is therefore the reference's, which the previous fast
+  path only approximated (it truncated float-valued tokens instead of
+  skipping the row).
+
+### Added
+
+- **Peak calling runs one worker per (contig, strand)
+  (`ema/countmatrix/chrom_parallel.py`, `--peak-workers`).** It was a single
+  pure-Python thread streaming the whole BAM twice — 3 h 01 min of the
+  3 h 46 min PBMC run at ~143 % CPU — and `--threads` never reached it
+  (it fed only the `--tiles` pool and the downstream pool). Each job calls
+  `peak_calling(region=(contig, 0, length))` in a spawned worker with its own
+  `BarcodeIndex` and `PeakCallingState`; the merge then walks the jobs in the
+  order the sequential run emitted them (`+` strand first, contigs in BAM
+  header order, then `-`), renumbers `pas_id` across both strands (continuing
+  from the previous BAM's last id in a multi-dataset run, as the legacy loop's
+  never-reset `Peak.pasnumber` does), and
+  rebuilds the shared barcode index by appending each job's local `cb.tsv` in
+  local first-write order — which reproduces the sequential singleton's
+  column assignment exactly. Matrices and support sidecars are re-keyed
+  through those two maps.
+  - Default when the BAM has an index; without one (or with
+    `--peak-workers 1`) the legacy single-process caller runs unchanged and
+    logs why. Worker count comes from `ResourceManager` (2.5 GB per worker;
+    measured 1.5 GB on PBMC chr19 (+)), so `--threads` now governs peak
+    calling, and BGZF threads are budgeted per worker so
+    `workers × bam_threads` stays inside the ceiling.
+  - Wall time is bounded by the largest contig, not by the BAM: 253 s for
+    130 jobs on mouse1 (12 workers), and 674 s for the 252 jobs of the full PBMC BAM (16 workers, largest
+    worker 3.0 GB) against 3 h 01 min of sequential streaming.
+  - Per-job timings, PAS/cell counts and peak RSS land in
+    `peakcalling/<id>_<n>.peak_jobs.json`.
+- **`--peak-workers`** (YAML `peak_workers`).
+
+### Changed
+
+- `read_check` tests the strand — one flag bit — before the `get_tag(CB)`
+  lookup, the `reference_end` CIGAR walk and the composite build; each
+  strand pass rejects roughly half the BAM on exactly that test. Every
+  rejection returns the same sentinel, so this reorder cannot change a
+  result (pinned against a verbatim copy of the previous implementation over
+  the full grid of read shapes).
+- The `"<RG>_<CB>"` composite is interned per distinct pair, so every
+  structure holding it shares one string object per cell — tracemalloc found
+  102 MB of duplicate composites alive at a single chromosome flush of the
+  slice.
+- Region-mode `peak_calling` honours `bam_threads` instead of forcing
+  `threads=1`.
+- `ema/main.py` passes `default_threshold` / `merge_len` from
+  `variable_config` explicitly on the single-process path. They were
+  previously left to `peak_calling`'s default arguments, which froze the
+  values `variable_config` held when `peackcalling.py` was imported — before
+  the CLI/YAML bridge ran — so `--default-threshold` / `--merge-len` were
+  silently ignored there (the `--tiles` path always read them live). At the
+  defaults (5 / 100) nothing changes; a non-default value is now honoured on
+  every path.
+
+### Notes
+
+- `--tiles` remains unusable for a real run and is untouched by this work:
+  its workers crash under spawn because `barcode_tag` / `cb_len` / `seqlen`
+  are never propagated, it builds jobs for every header contig, and
+  `merge_tiles` sorts contigs as strings and unions barcodes per strand.
+  The new path deliberately passes every config value in the job spec.
+- Still single-process after peak calling: `make_dataframe`'s
+  `mmread` → CSC → CSR → CSC chain and `preprocessing`'s transpose are the
+  remaining multi-GB copies on a whole-genome run.
+
 ## Unreleased — read-level poly(A) evidence
 
 ### Added

@@ -249,3 +249,138 @@ def test_filter_cb_vectorized_falls_back_on_ragged_row(tmp_path):
 
     assert ref_mtx.read_bytes() == new_mtx.read_bytes()
     assert ref_cb.read_bytes() == new_cb.read_bytes()
+
+
+# ---------------------------------------------------------------------------
+# Streaming (low-memory) reader: same outputs, chunk boundaries and all.
+#
+# filter_cb no longer keeps a pandas frame with a per-row ``cb_str`` object
+# column alive (~95 B/non-zero, an estimated 20-27 GB on the PBMC 10k
+# matrices); it parses each file once in chunks into three integer arrays.
+# These tests pin the byte-identity of the result against the reference
+# implementation on randomised and adversarial inputs, and pin the
+# deferral cases that keep the pathological semantics exact.
+# ---------------------------------------------------------------------------
+
+import random
+
+import numpy as np
+import pytest
+
+
+def _run_both(tmp_path, matrix_paths, cb_lookup, min_read):
+    ref_mtx, ref_cb = tmp_path / "ref.mtx", tmp_path / "ref_cb.tsv"
+    ref_list = _reference_filter_cb(matrix_paths, cb_lookup, min_read, ref_mtx, ref_cb)
+    new_mtx, new_cb = tmp_path / "new.mtx", tmp_path / "new_cb.tsv"
+    mf.filter_cb(
+        input_matrix_paths=matrix_paths, cb_list=cb_lookup,
+        sorted_corrected_sparse_path=new_mtx, min_read=min_read,
+        filter_cb_file=new_cb,
+    )
+    assert ref_mtx.read_bytes() == new_mtx.read_bytes()
+    assert ref_cb.read_bytes() == new_cb.read_bytes()
+    assert mf.filtered_cb_list == ref_list
+    return new_mtx, new_cb
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+@pytest.mark.parametrize("min_read", [0, 1, 40])
+def test_streaming_matches_reference_on_random_matrices(tmp_path, seed, min_read):
+    rng = random.Random(seed)
+    n_cb = 60
+    lookup = [f"sample_BC{i:04d}" for i in range(n_cb)]
+    paths = []
+    for f in range(2):
+        rows = []
+        if f == 0:  # MatrixMarket dimension header (col[1] > n_cb)
+            rows.append("%%MatrixMarket matrix coordinate integer general")
+            rows.append("%")
+            rows.append(f"5000 {n_cb + 500} 0")
+        for _ in range(700):
+            rows.append(f"{rng.randint(1, 400)} {rng.randint(1, n_cb)} {rng.randint(1, 9)}")
+        rows.append("")  # blank line
+        p = tmp_path / f"m{f}.mtx"
+        p.write_text("\n".join(rows) + "\n")
+        paths.append(str(p))
+    _run_both(tmp_path, paths, lookup, min_read)
+
+
+def test_streaming_crosses_chunk_boundaries(tmp_path, monkeypatch):
+    """Header detection, grouping and the stable sort must not depend on
+    where a chunk ends."""
+    monkeypatch.setattr(mf, "_CHUNK_ROWS", 7)
+    rng = random.Random(11)
+    lookup = [f"BC{i}" for i in range(20)]
+    rows = ["%%MatrixMarket matrix coordinate integer general", "999 999 0"]
+    rows += [f"{rng.randint(1, 50)} {rng.randint(1, 20)} {rng.randint(1, 5)}" for _ in range(101)]
+    p = tmp_path / "chunky.mtx"
+    p.write_text("\n".join(rows) + "\n")
+    _run_both(tmp_path, [str(p)], lookup, min_read=6)
+
+
+def test_streaming_defers_non_canonical_barcode_token(tmp_path):
+    """``007`` and ``7`` are two Pass-1 buckets in the reference algorithm;
+    the integer grouping cannot express that, so the call defers."""
+    p = tmp_path / "leading_zero.mtx"
+    p.write_text("1 1 3\n1 01 4\n2 1 2\n")
+    lookup = ["BC1", "BC2", "BC3"]
+    with pytest.raises(mf._NonCanonicalBarcodeToken):
+        mf._read_matrices_streaming([str(p)], len(lookup))
+    _run_both(tmp_path, [str(p)], lookup, min_read=4)
+
+
+def test_streaming_defers_float_valued_token(tmp_path):
+    """A float count crashes the reference implementation in Pass 1
+    (``int("4.5")``); the fast path must defer to it rather than silently
+    truncating, so the SAME error surfaces."""
+    p = tmp_path / "float.mtx"
+    p.write_text("1 1 3\n1 2 4.5\n2 1 2\n")
+    with pytest.raises(mf._RaggedMatrixData):
+        mf._read_matrices_streaming([str(p)], 3)
+    with pytest.raises(ValueError):
+        _reference_filter_cb([str(p)], ["BC1", "BC2", "BC3"], 1,
+                             tmp_path / "r.mtx", tmp_path / "r_cb.tsv")
+    with pytest.raises(ValueError):
+        mf.filter_cb(input_matrix_paths=[str(p)], cb_list=["BC1", "BC2", "BC3"],
+                     sorted_corrected_sparse_path=tmp_path / "n.mtx",
+                     min_read=1, filter_cb_file=tmp_path / "n_cb.tsv")
+
+
+def test_streaming_defers_absurd_column_index(tmp_path):
+    """A column index far outside the barcode list would need a multi-GB
+    accumulator; the call defers to the reference implementation, which
+    raises the same IndexError it always did."""
+    p = tmp_path / "absurd.mtx"
+    # first row is consumed as the dimension header, the second is data
+    p.write_text("9 9 9\n1 999999999 2\n1 1 5\n")
+    with pytest.raises(IndexError):
+        _reference_filter_cb([str(p)], ["BC1", "BC2"], 1,
+                             tmp_path / "r.mtx", tmp_path / "r_cb.tsv")
+    with pytest.raises(IndexError):
+        mf.filter_cb(input_matrix_paths=[str(p)], cb_list=["BC1", "BC2"],
+                     sorted_corrected_sparse_path=tmp_path / "n.mtx",
+                     min_read=1, filter_cb_file=tmp_path / "n_cb.tsv")
+
+
+def test_streaming_handles_empty_and_comment_only_files(tmp_path):
+    empty = tmp_path / "empty.mtx"
+    empty.write_text("")
+    comments = tmp_path / "comments.mtx"
+    comments.write_text("%%MatrixMarket matrix coordinate integer general\n%\n")
+    data = tmp_path / "data.mtx"
+    data.write_text("1 1 9\n2 1 1\n")
+    _run_both(tmp_path, [str(empty), str(comments), str(data)], ["BC1", "BC2"], min_read=5)
+
+
+def test_streaming_drops_short_rows_like_the_reference(tmp_path):
+    p = tmp_path / "short.mtx"
+    p.write_text("1 1 5\n2 2\n3 1 6\n")
+    _run_both(tmp_path, [str(p)], ["BC1", "BC2"], min_read=1)
+
+
+def test_streaming_reader_returns_downcast_integer_arrays(tmp_path):
+    p = tmp_path / "ints.mtx"
+    p.write_text("7 7 7\n1 2 3\n4 5 6\n")   # first row consumed as header
+    pas, cb, count = mf._read_matrices_streaming([str(p)], 3)
+    assert pas.dtype == np.int32 and cb.dtype == np.int32 and count.dtype == np.int32
+    assert pas.tolist() == [1, 4] and cb.tolist() == [2, 5] and count.tolist() == [3, 6]

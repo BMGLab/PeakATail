@@ -24,93 +24,151 @@ class _RaggedMatrixData(Exception):
     """
 
 
-def _read_matrix_file_vectorized(path: str, n_cb: int) -> "pd.DataFrame":
-    """Vectorized read of one MatrixMarket-ish matrix file.
+class _NonCanonicalBarcodeToken(_RaggedMatrixData):
+    """Internal signal: a barcode-index token is not the canonical decimal
+    form of its integer value (``"007"``, ``"+7"``, ``"7.0"``).
 
-    Mirrors, exactly, the per-line semantics of the original ``filter_cb``
-    passes for a single file:
+    The original implementation groups Pass-1 counts by the raw STRING
+    token, so ``"007"`` and ``"7"`` are two buckets that both filter rows
+    with ``cb == 7``.  The streaming reader groups by the integer -- which
+    is exactly equivalent while every token is canonical -- so any token
+    that is not defers the whole call to :func:`_filter_cb_legacy`, the
+    byte-for-byte copy of the reference algorithm.
+    """
 
-      * blank lines and ``%``-comment lines are skipped (``comment="%"``,
-        ``skip_blank_lines=True``);
-      * a data row with fewer than 3 whitespace tokens is dropped
-        (``len(columns) < 3: continue``);
-      * a data row with MORE than 3 whitespace tokens is ambiguous for a
-        fixed-width vectorized parse (the original only ever reads the
-        first 3 tokens and ignores the rest) — raises :class:`_RaggedMatrixData`
-        so the caller falls back to the reference implementation;
-      * the FIRST surviving row of the file is the MatrixMarket dimension
-        header IFF ``int(row[1]) > n_cb`` (and ``n_cb > 0``); if
-        ``int(row[1])`` isn't parseable at all the row is also dropped
-        (matches ``first_data_line`` handling in both original passes —
-        either way the header slot is "consumed" exactly once per file);
-      * any row whose pas/cb/count token doesn't parse as an int raises
-        :class:`_RaggedMatrixData` (pass 1 of the original crashes
-        uncaught on a bad ``columns[2]``; deferring to the reference
-        implementation reproduces that crash exactly instead of trying to
-        reconcile pass-1-crashes vs. pass-2-silently-skips in vectorized
-        code).
 
-    Returns:
-        DataFrame with int64 columns ``pas``, ``cb``, ``count`` and a
-        ``cb_str`` column carrying the ORIGINAL (pre-int-cast) barcode-index
-        token — Pass 1 of the original code accumulates counts keyed by
-        that raw string, not by its int value, so this is preserved to stay
-        byte-identical on pathological inputs (e.g. a leading-zero token).
+#: Rows parsed per chunk.  4M rows x 3 int64 columns ~ 100 MB of working set.
+_CHUNK_ROWS = 4_000_000
+
+#: Refuse to build a per-barcode accumulator larger than this (a corrupt
+#: file with an absurd column index would otherwise allocate GBs); such a
+#: file goes to the reference implementation instead.
+_MAX_CB_INDEX = 100_000_000
+
+
+def _chunk_to_int(series):
+    """Integer array for one parsed column, or :class:`_RaggedMatrixData`.
+
+    ``errors="raise"`` reproduces the "non-integer token in a data row"
+    rejection of the previous whole-file reader; a float-valued token (e.g.
+    ``"3.5"``) makes pandas return a float column, which the reference
+    implementation skips row-by-row rather than truncating -- so that also
+    defers to :func:`_filter_cb_legacy`.
     """
     try:
-        df = pd.read_csv(
-            path, sep=r"\s+", comment="%", header=None, dtype=str,
-            engine="c", skip_blank_lines=True, na_filter=False,
-        )
-    except pd.errors.ParserError as exc:
-        raise _RaggedMatrixData(f"{path}: ragged whitespace tokenization") from exc
-    except pd.errors.EmptyDataError:
-        df = pd.DataFrame()
+        vals = pd.to_numeric(series, errors="raise")
+    except (ValueError, TypeError) as exc:
+        raise _RaggedMatrixData(f"non-integer token in a data row: {exc}") from exc
+    if vals.dtype.kind not in "iu":
+        raise _RaggedMatrixData("non-integer (float or out-of-range) token in a data row")
+    return vals.to_numpy(dtype=np.int64)
 
-    empty = pd.DataFrame({"pas": pd.Series(dtype="int64"),
-                           "cb_str": pd.Series(dtype=object),
-                           "cb": pd.Series(dtype="int64"),
-                           "count": pd.Series(dtype="int64")})
-    if df.shape[0] == 0:
-        return empty
-    if df.shape[1] < 3:
-        # every surviving row had <3 tokens -> all dropped
-        return empty
-    if df.shape[1] > 3:
-        raise _RaggedMatrixData(f"{path}: rows with >3 whitespace tokens")
 
-    valid = df[2] != ""  # rows with <3 tokens were padded with "" in col 2
-    df = df[valid]
-    if df.empty:
-        return empty
+def _downcast(arr: "np.ndarray") -> "np.ndarray":
+    """int32 view of *arr* when every value fits — halves the row cost of
+    the kept-row buffers (180M rows on the PBMC 10k run) and prints
+    identically."""
+    if arr.size and (arr.min() < np.iinfo(np.int32).min or arr.max() > np.iinfo(np.int32).max):
+        return arr
+    return arr.astype(np.int32, copy=False)
 
-    # -- header detection: mirrors `first_data_line` handling exactly --
-    first_pos = df.index[0]
-    first_col1 = df.at[first_pos, 1]
-    drop_first = False
-    try:
-        col_idx = int(first_col1)
-        if col_idx > n_cb and n_cb > 0:
-            drop_first = True
-    except ValueError:
-        drop_first = True
-    if drop_first:
-        df = df.drop(index=first_pos)
-    if df.empty:
-        return empty
 
-    pas_num = pd.to_numeric(df[0], errors="coerce")
-    cb_num = pd.to_numeric(df[1], errors="coerce")
-    count_num = pd.to_numeric(df[2], errors="coerce")
-    if pas_num.isna().any() or cb_num.isna().any() or count_num.isna().any():
-        raise _RaggedMatrixData(f"{path}: non-integer token in a data row")
+def _read_matrices_streaming(paths: list, n_cb: int):
+    """Parse every matrix file ONCE, in chunks, into three integer arrays.
 
-    return pd.DataFrame({
-        "pas": pas_num.to_numpy(dtype="int64"),
-        "cb_str": df[1].to_numpy(),
-        "cb": cb_num.to_numpy(dtype="int64"),
-        "count": count_num.to_numpy(dtype="int64"),
-    })
+    Mirrors, exactly, the per-line semantics of the original ``filter_cb``
+    passes (see :class:`_RaggedMatrixData` for the deferral cases):
+
+      * blank lines and ``%``-comment lines are skipped;
+      * a data row with fewer than 3 whitespace tokens is dropped;
+      * a data row with MORE than 3 whitespace tokens is ambiguous for a
+        fixed-width vectorized parse -> :class:`_RaggedMatrixData`;
+      * the FIRST surviving row of each file is the MatrixMarket dimension
+        header iff ``int(row[1]) > n_cb`` (with ``n_cb > 0``), or if that
+        token is not an integer at all;
+      * every barcode token must be the canonical decimal form of its value
+        -> :class:`_NonCanonicalBarcodeToken`.
+
+    Keeping only the integers (int32 where they fit) instead of a pandas
+    frame with an object ``cb_str`` column per row is the memory fix: the
+    previous reader held ~95 B per non-zero, i.e. an estimated 20-27 GB on
+    the PBMC 10k matrices (200M non-zeros), which was the run's peak RSS
+    once the dense TF-IDF was gone.
+
+    Returns:
+        ``(pas, cb, count)`` integer arrays, concatenated across *paths*.
+    """
+    pas_parts: list = []
+    cb_parts: list = []
+    cnt_parts: list = []
+    seen_tokens: dict[str, int] = {}
+
+    for path in paths:
+        first_row_pending = True
+        try:
+            reader = pd.read_csv(
+                path, sep=r"\s+", comment="%", header=None, dtype=str,
+                engine="c", skip_blank_lines=True, na_filter=False,
+                chunksize=_CHUNK_ROWS,
+            )
+        except pd.errors.EmptyDataError:
+            continue
+        try:
+            for chunk in reader:
+                if chunk.shape[1] > 3:
+                    raise _RaggedMatrixData(f"{path}: rows with >3 whitespace tokens")
+                if chunk.shape[1] < 3:
+                    continue  # every row had <3 tokens -> all dropped
+                chunk = chunk[chunk[2] != ""]  # rows with <3 tokens (padded)
+                if chunk.empty:
+                    continue
+                if first_row_pending:
+                    first_row_pending = False
+                    first_pos = chunk.index[0]
+                    try:
+                        col_idx = int(chunk.at[first_pos, 1])
+                        drop_first = col_idx > n_cb and n_cb > 0
+                    except ValueError:
+                        drop_first = True
+                    if drop_first:
+                        chunk = chunk.drop(index=first_pos)
+                        if chunk.empty:
+                            continue
+                cb_tokens = chunk[1]
+                for tok in pd.unique(cb_tokens.to_numpy()):
+                    if tok in seen_tokens:
+                        continue
+                    try:
+                        val = int(tok)
+                    except ValueError as exc:
+                        raise _RaggedMatrixData(
+                            f"{path}: non-integer barcode token {tok!r}"
+                        ) from exc
+                    if str(val) != tok:
+                        raise _NonCanonicalBarcodeToken(
+                            f"{path}: non-canonical barcode token {tok!r}"
+                        )
+                    seen_tokens[tok] = val
+                pas_parts.append(_downcast(_chunk_to_int(chunk[0])))
+                cb_parts.append(_downcast(_chunk_to_int(cb_tokens)))
+                cnt_parts.append(_downcast(_chunk_to_int(chunk[2])))
+        except pd.errors.ParserError as exc:
+            raise _RaggedMatrixData(f"{path}: ragged whitespace tokenization") from exc
+        except pd.errors.EmptyDataError:
+            continue
+
+    if not pas_parts:
+        empty = np.empty(0, dtype=np.int32)
+        return empty, empty.copy(), empty.copy()
+    if len(pas_parts) == 1:
+        return pas_parts[0], cb_parts[0], cnt_parts[0]
+    # Concatenate one column at a time and drop each part list as we go so
+    # only one column is ever duplicated.
+    out = []
+    for parts in (pas_parts, cb_parts, cnt_parts):
+        out.append(np.concatenate(parts))
+        parts.clear()
+    return out[0], out[1], out[2]
 
 
 def filter_cb(input_matrix_paths: list = None,
@@ -180,16 +238,19 @@ def filter_cb(input_matrix_paths: list = None,
     else:
         matrix_paths = [negativematrixpath, positivematrixpath]
 
-    # Vectorized fast path: each file is read ONCE via pandas' C parser and
-    # reused for both the count-summation pass and the row-collection pass
-    # (the original re-read every file once per pass). Falls back to the
-    # byte-for-byte-identical row-by-row implementation whenever a file's
-    # tokenization is ambiguous for a fixed-width vectorized parse — see
-    # _read_matrix_file_vectorized / _RaggedMatrixData. That guarantees
+    # Vectorized fast path: every file is parsed ONCE, in chunks, into three
+    # integer arrays (see _read_matrices_streaming) and both passes run on
+    # those arrays.  Falls back to the byte-for-byte-identical row-by-row
+    # implementation whenever a file's tokenization is ambiguous for a
+    # fixed-width vectorized parse or a barcode token is not canonical — see
+    # _RaggedMatrixData / _NonCanonicalBarcodeToken.  That guarantees
     # correctness on any input while making the common (well-formed,
-    # multi-million-row) case fast.
+    # multi-million-row) case fast AND small: the previous reader kept a
+    # pandas frame with a per-row object ``cb_str`` column alive for the whole
+    # call (~95 B per non-zero, an estimated 20-27 GB on the PBMC 10k
+    # matrices); the integer arrays cost 12 B per non-zero.
     try:
-        per_file = [_read_matrix_file_vectorized(p, len(_cb_lookup)) for p in matrix_paths]
+        pas, cb, count = _read_matrices_streaming(matrix_paths, len(_cb_lookup))
     except _RaggedMatrixData:
         _filter_cb_legacy(
             matrix_paths=matrix_paths,
@@ -200,42 +261,59 @@ def filter_cb(input_matrix_paths: list = None,
         )
         return
 
-    if per_file:
-        combined = pd.concat(per_file, ignore_index=True)
+    # Pass 1: total counts per barcode column index across ALL files.  The
+    # original groups by the raw token; _read_matrices_streaming guarantees
+    # every token is the canonical form of its integer, so grouping by the
+    # integer is the same partition.
+    n_rows = pas.size
+    cb_max = int(cb.max()) if n_rows else 0
+    if cb_max > _MAX_CB_INDEX or (n_rows and int(cb.min()) < 0):
+        # Absurd column index: an accumulator that size is not worth
+        # allocating — hand the file to the reference implementation.
+        _filter_cb_legacy(
+            matrix_paths=matrix_paths,
+            cb_lookup=_cb_lookup,
+            min_read=min_read,
+            sorted_corrected_sparse_path=sorted_corrected_sparse_path,
+            filter_cb_file=filter_cb_file,
+        )
+        return
+
+    if n_rows:
+        cb_i = cb.astype(np.intp, copy=False)
+        # float64 weights are exact here: a per-barcode total is a sum of
+        # read counts, far below 2**53.
+        totals = np.bincount(cb_i, weights=count, minlength=cb_max + 1)
+        occurrences = np.bincount(cb_i, minlength=cb_max + 1)
+        keep_flags = (occurrences > 0) & (totals >= min_read)
+        del cb_i, totals, occurrences
     else:
-        combined = pd.DataFrame({
-            "pas": pd.Series(dtype="int64"), "cb_str": pd.Series(dtype=object),
-            "cb": pd.Series(dtype="int64"), "count": pd.Series(dtype="int64"),
-        })
+        keep_flags = np.zeros(1, dtype=bool)
 
-    # Pass 1 (vectorized): sum counts per RAW cb token across ALL files,
-    # grouped on the STRING token — exactly like the original dict keyed by
-    # `columns[1]` (not its int value), so a pathological leading-zero token
-    # ("007" vs "7") reproduces the original's split-bucket behaviour.
-    if combined.empty:
-        keep_cb: set[int] = set()
-    else:
-        sums = combined.groupby("cb_str")["count"].sum()
-        keep_cb = {int(cb) for cb, total in sums.items() if total >= min_read}
+    matrix_cb_header = int(keep_flags.sum())
 
-    # Pass 2 (vectorized): keep rows whose (int) cb is in keep_cb.
-    kept = combined[combined["cb"].isin(keep_cb)]
+    # Pass 2: keep the rows whose barcode survived.
+    if n_rows:
+        row_mask = keep_flags[cb]
+        pas, cb, count = pas[row_mask], cb[row_mask], count[row_mask]
+        del row_mask
 
-    matrix_pas_header = int(kept["pas"].max()) if len(kept) else 0
-    matrix_cb_header = len(keep_cb)
-    matrix_nzero_header = len(kept)
+    matrix_pas_header = int(pas.max()) if pas.size else 0
+    matrix_nzero_header = int(pas.size)
 
     # Stable sort by ORIGINAL cb — ties keep the original file/row traversal
     # order, matching Python's stable `sorted(lines_to_keep, key=lambda x: x[1])`.
-    kept_sorted = kept.sort_values(by="cb", kind="stable")
-    cb_sorted = kept_sorted["cb"].to_numpy()
-
-    # Contiguous 1..K re-index: a new group starts wherever cb differs from
-    # the previous (already cb-sorted) row — identical to the original's
-    # adjacent-duplicate walk over the cb-sorted rows.
-    if len(cb_sorted):
-        first_of_group = np.concatenate(([True], cb_sorted[1:] != cb_sorted[:-1]))
-        new_cb = np.cumsum(first_of_group)
+    if pas.size:
+        order = np.argsort(cb, kind="stable")
+        pas, cb, count = pas[order], cb[order], count[order]
+        del order
+        # Contiguous 1..K re-index: a new group starts wherever cb differs
+        # from the previous (already cb-sorted) row — identical to the
+        # original's adjacent-duplicate walk over the cb-sorted rows.
+        first_of_group = np.empty(cb.size, dtype=bool)
+        first_of_group[0] = True
+        np.not_equal(cb[1:], cb[:-1], out=first_of_group[1:])
+        new_cb = np.cumsum(first_of_group, dtype=np.int64)
     else:
         first_of_group = np.empty(0, dtype=bool)
         new_cb = np.empty(0, dtype=np.int64)
@@ -243,22 +321,17 @@ def filter_cb(input_matrix_paths: list = None,
     with open(sorted_corrected_sparse_path, "w") as sorted_corrected_sparse_list:
         sorted_corrected_sparse_list.write(MATRIX_MARKET_HEADER)
         sorted_corrected_sparse_list.write(f"{matrix_pas_header} {matrix_cb_header} {matrix_nzero_header}\n")
-        if len(kept_sorted):
-            out_df = pd.DataFrame({
-                0: kept_sorted["pas"].to_numpy(),
-                1: new_cb,
-                2: kept_sorted["count"].to_numpy(),
-            })
-            out_df.to_csv(
+        for lo in range(0, int(pas.size), _CHUNK_ROWS):
+            hi = min(lo + _CHUNK_ROWS, int(pas.size))
+            pd.DataFrame({0: pas[lo:hi], 1: new_cb[lo:hi], 2: count[lo:hi]}).to_csv(
                 sorted_corrected_sparse_list, sep=" ", header=False,
                 index=False, lineterminator="\n",
             )
 
     # filtered_cb_list: cb_lookup value for each newly-encountered ORIGINAL
     # cb in ascending order == sorted-unique original cbs present in kept rows.
-    if len(cb_sorted):
-        unique_sorted_cbs = cb_sorted[first_of_group]
-        filtered_cb_list.extend(_cb_lookup[int(c) - 1] for c in unique_sorted_cbs)
+    if cb.size:
+        filtered_cb_list.extend(_cb_lookup[int(c) - 1] for c in cb[first_of_group])
 
     with open(filter_cb_file, "w") as file:
         if filtered_cb_list:

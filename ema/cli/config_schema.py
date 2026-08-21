@@ -354,6 +354,20 @@ class RunConfig:
             description="Tile overlap in bp.",
         ),
     )
+    peak_workers: Optional[int] = field(
+        default=None,
+        metadata=_spec(
+            cli_flag="--peak-workers", yaml_key="peak_workers",
+            legacy_args_attr="peak_workers",
+            description=(
+                "Worker processes for per-chromosome peak calling (one job "
+                "per contig and strand, merged deterministically). Default: "
+                "auto, from the thread ceiling and free RAM. 1 selects the "
+                "legacy single-process two-pass caller (identical output, "
+                "no parallelism)."
+            ),
+        ),
+    )
 
     # ─── peak calling ────────────────────────────────────────────────────
     peak_strategy: str = field(

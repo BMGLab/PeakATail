@@ -962,8 +962,32 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
 
     else:
         # -----------------------------------------------------------------
-        # SEQUENTIAL MODE: one dataset at a time (non-tile, existing path).
+        # PER-BAM MODE (default): one dataset/BAM at a time.  Peak calling
+        # itself runs one spawned job per (contig, strand) with a
+        # deterministic merge (ema/countmatrix/chrom_parallel.py) -- the
+        # outputs are byte-identical to the legacy two-pass single-process
+        # loop, which remains the fallback when the BAM has no index or
+        # --peak-workers 1 is given.
         # -----------------------------------------------------------------
+        from ema.countmatrix.chrom_parallel import (
+            PER_WORKER_MB,
+            can_run_parallel,
+            load_index_from_cb_list,
+            run_chrom_parallel,
+        )
+
+        _rm = get_resource_manager()
+        _peak_workers_arg = getattr(args, "peak_workers", None)
+        if _peak_workers_arg is not None and int(_peak_workers_arg) >= 1:
+            _chrom_workers = int(_peak_workers_arg)
+        else:
+            _chrom_workers = _rm.get_n_jobs(
+                per_worker_mb=PER_WORKER_MB, stage="peak_chrom"
+            )
+        # BGZF decompression threads are budgeted per worker so that
+        # workers x threads never exceeds --threads (or the physical cores).
+        _thread_budget = _rm.user_max_threads or _rm.physical_cpu_count()
+
         for dataset_id, bam_path in bam_list:
             idx = dataset_bam_indices.get(dataset_id, 0)
             dataset_bam_indices[dataset_id] = idx + 1
@@ -977,36 +1001,75 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             neg_mtx = peakcalling_dir / f"{dataset_id}_{idx}.neg.mtx"
             cb_tsv = peakcalling_dir / f"{dataset_id}_{idx}.cb.tsv"
 
-            # Pass the progress client to the pos-strand call so the bar
-            # shows per-chromosome progress.  set_total() fires once the BAM
-            # is opened; advance() fires on each chromosome boundary.  Both
-            # strand passes share the same client — peak_calling() sets total
-            # to `nonempty_refs * 2` so the advances from both passes fill
-            # the bar.
             _peak_client = _client(_peak_stage)
-            peak_calling(
-                False,
-                bedfilepath=str(pos_bed),
-                matrixpath=str(pos_mtx),
-                bamfile_dir=str(bam_path),
-                progress_client=_peak_client,
-                **peak_kwargs,
-            )
-            peak_calling(
-                True,
-                bedfilepath=str(neg_bed),
-                matrixpath=str(neg_mtx),
-                bamfile_dir=str(bam_path),
-                progress_client=_peak_client,
-                **peak_kwargs,
-            )
+            _parallel_ok = _chrom_workers > 1 and can_run_parallel(str(bam_path))
+            if _chrom_workers > 1 and not _parallel_ok:
+                log.warning(
+                    "%s has no usable BAM index (.bai with mapped-read "
+                    "statistics); peak calling falls back to the single-process "
+                    "two-pass caller. Run `samtools index` to enable "
+                    "per-chromosome parallelism.", bam_path,
+                )
 
-            # Dump CB list — shared by pos+neg (both used the same _index instance)
-            mapping = get_mapping()
-            ordered_cbs = [cb for cb, _ in sorted(mapping.items(), key=lambda x: x[1])]
-            with open(cb_tsv, "w") as f:
-                for cb in ordered_cbs:
-                    f.write(cb + "\n")
+            if _parallel_ok:
+                from ema.logging_config import get_log_queue
+                _summary = run_chrom_parallel(
+                    dataset_id=dataset_id,
+                    bam_path=str(bam_path),
+                    pos_bed=str(pos_bed), neg_bed=str(neg_bed),
+                    pos_mtx=str(pos_mtx), neg_mtx=str(neg_mtx),
+                    cb_tsv=str(cb_tsv),
+                    n_workers=_chrom_workers,
+                    strategy_name=args.strategy,
+                    strategy_kwargs=_filtered_kwargs,
+                    peak_kwargs=peak_kwargs,
+                    workdir=str(peakcalling_dir / f"_jobs_{dataset_id}_{idx}"),
+                    thread_budget=_thread_budget,
+                    progress_client=_peak_client,
+                    log_queue=get_log_queue(),
+                )
+                # The CB filter reads get_mapping() when no explicit list is
+                # passed: make the singleton hold the merged column order.
+                load_index_from_cb_list(_summary.pop("cb_list"))
+                try:
+                    with open(peakcalling_dir / f"{dataset_id}_{idx}.peak_jobs.json", "w") as _pj:
+                        json.dump(_summary, _pj, indent=2)
+                except Exception as _exc:  # pragma: no cover - bookkeeping only
+                    log.warning("peak job timings not written: %s", _exc)
+            else:
+                # Pass the progress client to the pos-strand call so the bar
+                # shows per-chromosome progress.  set_total() fires once the
+                # BAM is opened; advance() fires on each chromosome boundary.
+                # Both strand passes share the same client -- peak_calling()
+                # sets total to `nonempty_refs * 2` so the advances from both
+                # passes fill the bar.
+                peak_calling(
+                    False,
+                    bedfilepath=str(pos_bed),
+                    matrixpath=str(pos_mtx),
+                    bamfile_dir=str(bam_path),
+                    default_threshold=variable_config.default_threshold,
+                    merge_len=variable_config.merge_len,
+                    progress_client=_peak_client,
+                    **peak_kwargs,
+                )
+                peak_calling(
+                    True,
+                    bedfilepath=str(neg_bed),
+                    matrixpath=str(neg_mtx),
+                    bamfile_dir=str(bam_path),
+                    default_threshold=variable_config.default_threshold,
+                    merge_len=variable_config.merge_len,
+                    progress_client=_peak_client,
+                    **peak_kwargs,
+                )
+
+                # Dump CB list -- shared by pos+neg (both used the same _index instance)
+                mapping = get_mapping()
+                ordered_cbs = [cb for cb, _ in sorted(mapping.items(), key=lambda x: x[1])]
+                with open(cb_tsv, "w") as f:
+                    for cb in ordered_cbs:
+                        f.write(cb + "\n")
 
             all_pos_beds.append(str(pos_bed))
             all_neg_beds.append(str(neg_bed))
