@@ -410,6 +410,7 @@ def writer_loop(
     polya_count_window: tuple = (-1, 25),
     read_geometry: str = "fixed",
     seq_len: int | None = None,
+    pas_features: str = "off",
 ) -> None:
     """Writer stage: consume peaks, run strategy, write BED and MTX.
 
@@ -450,8 +451,11 @@ def writer_loop(
 
     _collect = polya_enabled or polya_seeded
     _strict_clip = polya_clip_filter == "f3844"
+    # peakAtail-prime --pas-features: passed in as a plain value, never read
+    # from the legacy globals here -- this process was SPAWNED.
+    _features = str(pas_features).lower() == "on"
     with open(bedfilepath, "w") as bedfile, open(matrixpath, "w") as matrix:
-        supportfile = open_support(bedfilepath) if _collect else None
+        supportfile = open_support(bedfilepath, _features) if _collect else None
         seeder: ClipSeeder | None = (
             ClipSeeder(
                 direction,
@@ -462,6 +466,7 @@ def writer_loop(
                 clip_filter=polya_clip_filter,
                 geometry=read_geometry,
                 seq_len=seq_len,
+                features=_features,
             )
             if polya_seeded
             else None
@@ -479,7 +484,7 @@ def writer_loop(
                     chro_out, _start, _end, direction,
                     pasnumber=Peak.pasnumber, output=bedfile, score=_support,
                 )
-                support_write(supportfile, Peak.pasnumber, _row)
+                support_write(supportfile, Peak.pasnumber, _row, _features)
                 matrix_write(_cb_dict, Peak.pasnumber, matrix)
 
         while True:
@@ -532,12 +537,19 @@ def writer_loop(
                     score=_support,
                 )
                 if supportfile is not None:
-                    support_write(supportfile, Peak.pasnumber, {
+                    _row2 = {
                         "clip_reads": _reads, "clip_umis": _umis,
                         "clip_reads_f3844": _reads_f, "clip_umis_f3844": _umis_f,
                         "window_reads": sum(pas_cb_dict.values()),
                         "tier": 2,
-                    })
+                    }
+                    if _features:
+                        _row2["clip_positions"], _row2["clip_span"] = (
+                            peak.polya_site_geometry(
+                                pas_1, pas_2, peak.peak_strand, polya_window)
+                            if polya_enabled else (0, 0)
+                        )
+                    support_write(supportfile, Peak.pasnumber, _row2, _features)
                 matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
         if supportfile is not None:
@@ -585,6 +597,7 @@ def run_pipeline(
     read_geometry: str | None = None,
     read_exclude_flags: int | None = None,
     seq_len: int | None = None,
+    pas_features: str | None = None,
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
 
@@ -669,6 +682,8 @@ def run_pipeline(
         read_exclude_flags = _vc_geom.read_exclude_flags
     if seq_len is None:
         seq_len = _vc_geom.seqlen
+    if pas_features is None:
+        pas_features = getattr(_vc_geom, "pas_features", "off")
 
     ctx = mp.get_context("spawn")
 
@@ -739,6 +754,7 @@ def run_pipeline(
             polya_count_window,
             read_geometry,
             seq_len,
+            pas_features,
         ),
         daemon=True,
     )

@@ -95,6 +95,10 @@ class ChromJob:
     # runs v2 geometry while the monolithic path runs the branch default.
     read_geometry: str = "fixed"
     read_exclude_flags: int = 0
+    # peakAtail-prime --pas-features: same hazard, same fix.  It decides the
+    # sidecar's column set, so a child that fell back to the module default
+    # would write a header the merge step does not expect.
+    pas_features: str = "off"
     # --- strategy (re-instantiated in the child) ---
     strategy_name: str = "original"
     strategy_kwargs: dict = field(default_factory=dict)
@@ -141,6 +145,7 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
     vc.merge_len = job.merge_len
     vc.read_geometry = job.read_geometry
     vc.read_exclude_flags = job.read_exclude_flags
+    vc.pas_features = job.pas_features
 
     reset_index()
     Peak.reset_pasnumber()
@@ -252,6 +257,28 @@ def _remap_mtx(src: str, dst, pas_map: np.ndarray, col_map: np.ndarray) -> int:
     return n
 
 
+def _merged_support_header(results: list[dict[str, Any]], direction: bool) -> str:
+    """The sidecar header the CHILD workers wrote for *direction*.
+
+    peakAtail-prime: ``--pas-features on`` appends columns to the sidecar, so
+    the merged file's header has to come from the children (which knew the
+    setting) rather than from this module's compile-time
+    :data:`~ema.countmatrix.paswrite.SUPPORT_COLUMNS`.  Falls back to
+    ``SUPPORT_COLUMNS`` when no child wrote a header at all.
+    """
+    for r in results:
+        if r.get("direction") != direction:
+            continue
+        sp = r.get("support")
+        if not sp or not os.path.exists(sp):
+            continue
+        with open(sp) as fh:
+            first = fh.readline()
+        if first.startswith("pas_id"):
+            return first if first.endswith("\n") else first + "\n"
+    return "\t".join(SUPPORT_COLUMNS) + "\n"
+
+
 def merge_chrom_results(
     results: list[dict[str, Any]],
     contig_order: list[str],
@@ -283,7 +310,11 @@ def merge_chrom_results(
         with open(bed_out_path, "w") as bed_out, open(mtx_out_path, "w") as mtx_out:
             sup_out = open(sup_out_path, "w") if write_support else None
             if sup_out is not None:
-                sup_out.write("\t".join(SUPPORT_COLUMNS) + "\n")
+                # peakAtail-prime: --pas-features appends columns to the
+                # sidecar, so the merged header must be the CHILDREN's header,
+                # not this module's compile-time SUPPORT_COLUMNS.  Falls back
+                # to SUPPORT_COLUMNS only when no child wrote one.
+                sup_out.write(_merged_support_header(results, direction))
             try:
                 for contig in contig_order:
                     r = by_key.get((contig, direction))
@@ -420,6 +451,7 @@ def run_chrom_parallel(
                 merge_len=int(vc.merge_len),
                 read_geometry=str(vc.read_geometry),
                 read_exclude_flags=int(vc.read_exclude_flags),
+                pas_features=str(getattr(vc, "pas_features", "off")),
                 strategy_name=strategy_name,
                 strategy_kwargs=dict(strategy_kwargs or {}),
                 peak_kwargs=peak_kwargs, log_queue=log_queue,

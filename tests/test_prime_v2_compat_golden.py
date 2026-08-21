@@ -10,14 +10,15 @@ This test is the cheap, always-on half of that guarantee.  It runs the real call
 (``ema.countmatrix.peackcalling.peak_calling``, i.e. ``read.py`` -> ``polya.py`` ->
 the peak state machine -> the strategy) over the 2,072-read fixture
 ``tests/fixtures/cellranger_pbmc_tiny.bam`` on **v2 settings**, and asserts the SHA-256 of every
-output byte.  The expensive half is ``scripts/prime/identity_check.py`` on the real PBMC
+output byte -- the BED, the count matrix **and** the ``pas_support.tsv`` sidecar, which TASK C
+(``--pas-features``) appends columns to.  The expensive half is ``scripts/prime/identity_check.py`` on the real PBMC
 chr19+21 slice, which compares whole run trees and is run by hand after every behavioural change.
 
 Two arms, chosen because between them they cover every module Changes 1-5 touch:
 
 * ``clip_seeded_91`` -- the manuscript arm's geometry (``--seq-len 91``, ``--peak-strategy
   clip_seeded``): the poly(A) clip detector, the clip-cluster seeding, the (CB,UMI) molecule
-  counts in BED column 5.
+  counts in BED column 5, and the ``pas_support.tsv`` sidecar.
 * ``original_150`` -- the coverage path at the shipped ``ema run`` backstop ``--seq-len 150``:
   the read-acceptance geometry of ``read.py`` and the coverage state machine, with poly(A)
   evidence in annotate-only mode.
@@ -50,6 +51,7 @@ import pytest
 from ema.config import variable_config
 from ema.countmatrix.indexing import BarcodeIndex
 from ema.countmatrix.peak_state import PeakCallingState
+from ema.countmatrix.paswrite import support_path_for
 from ema.countmatrix.peackcalling import peak_calling
 from ema.strategies import get_strategy
 
@@ -65,12 +67,16 @@ V2_GOLDEN: dict[str, dict[str, str]] = {
         "matrix_1.txt": "ddcadbffedc66bb51c23739c385d9511ab7f31e394cc974d4238ffd0ab03306c",
         "pas_0.bed": "2518f62b96263cd3416a98410199112ba0b03f3fda2a4bff620f6659e7314825",
         "pas_1.bed": "5cd77ab689e9379642200f89a75d24a02c0a541a3d2031e909cacfc10e2e4c6a",
+        "pas_0.support.tsv": "1cb1abe1eba0a8fd25a18172a41f99fb1f2d64c81394a6305eb3329faa2d40c8",
+        "pas_1.support.tsv": "9cf8efcd9d99b03a6502e417314f148521861c1b7608a1d8329bcf4c5de9eaf8",
     },
     "original_150": {
         "matrix_0.txt": "b9b063eb881bf68232fa1bb6410f743ce475bb7dd0bd22a188bcc80dc63ebb1e",
         "matrix_1.txt": "b7d3cdc34760ec90b3322fb07ba0a8ba478e3d90f1f8aee9fa3867cd814842db",
         "pas_0.bed": "1efb9d0f9a3c44c38aa0805955cd03a32f266d74a0b4573caeabc64472d34b69",
         "pas_1.bed": "e79b2fa134e12610003e46b21b0f43f04847777138a10b8637faf47e71b26cf4",
+        "pas_0.support.tsv": "32aa26512a43a6040e4589f7724ba0f9e33078f1d2b72fd83b8ae85a17d13ef6",
+        "pas_1.support.tsv": "27eb45b7684fb183d051bab13c5685926b471cc1779bfd5a69f688b343560218",
     },
 }
 
@@ -102,6 +108,12 @@ def _v2_settings(seq_len: int) -> None:
     # coverage channel.  This is already the branch default; pinned anyway so
     # the compat surface is complete and readable in one place.
     variable_config.read_exclude_flags = 0
+    # TASK C (--pas-features): v2 writes seven sidecar columns.  The branch
+    # default is "on", which APPENDS two more at call time (clip_positions,
+    # clip_span) and more still at the internal-priming seam.  Appending
+    # columns still changes the sidecar's BYTES, which is why it is a flag
+    # and why it is pinned here.
+    variable_config.pas_features = "off"
     # Change 2 (--polya-genomic-a-gate):  variable_config.polya_genomic_a_gate = False
     # Change 3 (--pas-score):             variable_config.pas_score = "none"
     # Change 5 (--cleavage-edge-refine):  variable_config.cleavage_edge_refine = False
@@ -111,7 +123,7 @@ def _v2_settings(seq_len: int) -> None:
 def _restore_variable_config():
     """Every knob `_v2_settings` touches is process-global; put it back afterwards."""
     keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
-            "read_geometry", "read_exclude_flags")
+            "read_geometry", "read_exclude_flags", "pas_features")
     saved = {k: getattr(variable_config, k) for k in keys}
     try:
         yield
@@ -139,8 +151,10 @@ def _run_arm(strategy: str, seq_len: int, tmp_path: Path) -> dict[str, str]:
             sample_id="fixture",
             strategy=get_strategy(strategy),
         )
-        for path in (bed, matrix):
-            digests[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        support = Path(support_path_for(bed))
+        for path in (bed, matrix, support):
+            if path.exists():
+                digests[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     return digests
 
 
@@ -204,6 +218,7 @@ def test_the_compat_pin_is_load_bearing(tmp_path: Path) -> None:
     variable_config.cb_len = 16
     variable_config.barcode_tag = "CB"
     variable_config.read_geometry = non_v2[-1]
+    variable_config.pas_features = "on"
     for direction in (False, True):
         bed = branch_dir / f"pas_{int(direction)}.bed"
         matrix = branch_dir / f"matrix_{int(direction)}.txt"
@@ -212,8 +227,10 @@ def test_the_compat_pin_is_load_bearing(tmp_path: Path) -> None:
             bamfile_dir=str(FIXTURE), index=index, state=state,
             sample_id="fixture", strategy=get_strategy("clip_seeded"),
         )
-        for path in (bed, matrix):
-            digests[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+        support = Path(support_path_for(bed))
+        for path in (bed, matrix, support):
+            if path.exists():
+                digests[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     assert digests != V2_GOLDEN["clip_seeded_91"], (
         "the branch default reproduced the v2 goldens byte-for-byte, so the "
         "compat test above cannot distinguish 'flag-gated' from 'no change'"

@@ -63,7 +63,7 @@ def _slice_config():
     saved = {
         k: getattr(variable_config, k)
         for k in ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
-                  "default_threshold", "merge_len")
+                  "default_threshold", "merge_len", "pas_features")
     }
     variable_config.seqlen = SEQ_LEN
     variable_config.cb_len = 16
@@ -124,10 +124,17 @@ def _support_by_coord(bed: Path):
     """``{(chrom, start, end, strand): support row}`` — the sidecar joined
     back onto the BED through the pas_id, so path-specific renumbering does
     not matter."""
-    from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
+    from ema.config import variable_config
+    from ema.countmatrix.paswrite import support_columns, support_path_for
 
+    # peakAtail-prime: --pas-features appends columns, so the expected header
+    # is the one the CURRENT setting implies.  Comparing the full row across
+    # paths therefore also compares clip_positions / clip_span, which is what
+    # makes this file the plumbing test for TASK C's new columns as well.
+    expect = support_columns(
+        str(getattr(variable_config, "pas_features", "off")).lower() == "on")
     lines = Path(support_path_for(bed)).read_text().splitlines()
-    assert lines[0].split("\t") == list(SUPPORT_COLUMNS)
+    assert lines[0].split("\t") == list(expect)
     rows = {}
     for line in lines[1:]:
         f = line.split("\t")
@@ -198,3 +205,39 @@ def test_all_three_paths_find_the_cleavage_site_when_seeded(bam, tmp_path):
         bare = [r for r in rows
                 if r["score"] == 0 and r["start"] <= BARE_SITE <= r["end"] + 150]
         assert bare, f"{label}: coverage-only tier missing at the bare locus"
+
+
+def test_the_sidecar_column_set_survives_the_spawn(bam, tmp_path):
+    """``--pas-features off`` (the v2-compatibility value) must reach the
+    CHILDREN of every parallel path.
+
+    This is the exact hazard ``--read-geometry`` hit: the pipeline and tile
+    workers are spawned, so ``ema.config``'s legacy globals come back at their
+    MODULE defaults in the child -- and the module default of
+    ``pas_features`` is the branch value ``"on"``.  A path that forgot to
+    carry the setting would write a nine-column sidecar for a run the user
+    asked to be v2-compatible, and the only symptom would be two extra
+    columns in a file nothing in the pipeline reads.
+    """
+    from ema.config import variable_config
+    from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
+
+    variable_config.pas_features = "off"
+    beds = {
+        "monolithic": _call(bam, tmp_path, "cols_mono", "clip_seeded"),
+        "pipeline": _call(bam, tmp_path, "cols_pipe", "clip_seeded",
+                          use_pipeline=True),
+        "tiles": _call(bam, tmp_path, "cols_tile", "clip_seeded",
+                       use_tiles=True, tile_size=8_000, tile_overlap=2_000,
+                       n_workers=2),
+    }
+    for label, bed in beds.items():
+        lines = Path(support_path_for(bed)).read_text().splitlines()
+        assert lines[0].split("\t") == list(SUPPORT_COLUMNS), (
+            f"{label}: --pas-features off did not reach the writer"
+        )
+        assert len(lines) > 1, f"{label}: empty sidecar, the check is vacuous"
+        for line in lines[1:]:
+            assert len(line.split("\t")) == len(SUPPORT_COLUMNS), (
+                f"{label}: row has feature columns the header does not declare"
+            )

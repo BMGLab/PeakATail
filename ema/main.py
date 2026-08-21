@@ -339,6 +339,94 @@ def _write_run_support(bed_paths, out_path) -> None:
         log.warning("poly(A) support sidecar not written: %s", exc)
 
 
+def _pas_features_enabled() -> bool:
+    """``--pas-features on`` (peakAtail-prime).
+
+    Read from ``variable_config`` and not from ``args``: the argparse
+    namespace carries schema DEFAULTS for anything Click resolved (bug B0's
+    class of defect), while ``variable_config`` is what the caller itself
+    read when it wrote the sidecar's header.
+    """
+    from ema.config import variable_config as _vc
+
+    return str(getattr(_vc, "pas_features", "off")).lower() == "on"
+
+
+def _collect_pas_features_standalone(collector, genome_fasta) -> None:
+    """Fill *collector* when the internal-priming filter is NOT running.
+
+    With a genome FASTA this performs the SAME single pass the IP filter
+    would have performed (``mode="annotate"``, ``output_path=None``: it drops
+    nothing and writes no BED) -- so a run never makes two passes over the
+    FASTA, whichever way ``--ip-filter`` is set.  Without one, only the
+    BED-derived context columns are real and every sequence column is ``NA``.
+    """
+    import os
+
+    from ema.countmatrix.pas_features import collect_from_bed
+
+    beds = [str(directory_config.posbed), str(directory_config.negbed)]
+    beds = [b for b in beds if os.path.exists(b) and os.path.getsize(b) > 0]
+    if genome_fasta and os.path.exists(genome_fasta):
+        from ema.experimental.internal_priming import filter_internal_priming
+
+        for bed in beds:
+            filter_internal_priming(
+                bed, genome_fasta, None,
+                window_left=getattr(args, "ip_window_left", 10),
+                window_right=getattr(args, "ip_window_right", 30),
+                a_stretch=getattr(args, "ip_a_stretch", 6),
+                a_fraction=getattr(args, "ip_a_fraction", 0.7),
+                mode="annotate", features=collector,
+            )
+    else:
+        if beds:
+            log.warning(
+                "--pas-features on but no --genome-fasta: the sequence "
+                "columns of pas_support.tsv (downstream A-content, hexamer, "
+                "ip_tool_*) will be NA. Supply --genome-fasta to fill them."
+            )
+        for bed in beds:
+            collect_from_bed(bed, collector)
+
+
+def _write_pas_features(pas_filter_result) -> None:
+    """Append the seam's feature columns to the run-root sidecar.
+
+    APPEND ONLY: ``pas_support.tsv`` keeps every column it already had, in
+    place, and gains :data:`~ema.countmatrix.pas_features.SEAM_FEATURE_COLUMNS`
+    on the end.  Best-effort and non-fatal, exactly like the sidecar itself:
+    the features are an annotation and nothing in the pipeline reads them.
+
+    Multi-BAM runs re-key their PAS ids in ``merge_pas_beds``, so there is no
+    run-root ``pas_support.tsv`` to extend; those runs get a standalone
+    ``pas_features.tsv`` in the merged id space instead.
+    """
+    collector = (pas_filter_result or {}).get("pas_features")
+    if collector is None:
+        return
+    try:
+        from ema.countmatrix.pas_features import (
+            append_columns, write_features_tsv,
+        )
+
+        feats = collector.finish()
+        root = Path(directory_config.output_dir)
+        support = root / "pas_support.tsv"
+        if support.exists():
+            n = append_columns(support, feats)
+            log.info(
+                "pas_support.tsv: %d feature columns appended to %d rows (%s)",
+                len(next(iter(feats.values()), {})), n, collector.stats(),
+            )
+        else:
+            out = root / "pas_features.tsv"
+            n = write_features_tsv(out, feats)
+            log.info("pas_features.tsv: %d rows written (%s)", n, collector.stats())
+    except Exception as exc:  # pragma: no cover - annotation only
+        log.warning("pas_support.tsv feature columns not written: %s", exc)
+
+
 def _resolve_annotation_bed() -> str:
     """Return the annotation BED source for --annot-filter.
 
@@ -502,8 +590,25 @@ def _apply_pas_filters(output_mgr) -> dict | None:
 
     ip_filter = bool(getattr(args, "ip_filter", False))
     annot_filter = bool(getattr(args, "annot_filter", False))
+
+    # peakAtail-prime --pas-features: the per-site scoring covariates are
+    # collected HERE, at the internal-priming seam, because that is where the
+    # genome is already open and the full candidate set is still on disk.
+    # When --ip-filter is on they ride inside its pass; when it is off the
+    # collector's own pass is the only one.  Either way: one pass, never two.
+    collector = None
+    if _pas_features_enabled():
+        from ema.countmatrix.pas_features import FeatureCollector
+
+        collector = FeatureCollector()
+
     if not ip_filter and not annot_filter:
-        return {"polya_gate": polya_stats} if polya_stats else None
+        _out: dict = {"polya_gate": polya_stats} if polya_stats else {}
+        if collector is not None:
+            _collect_pas_features_standalone(
+                collector, getattr(args, "genome_fasta", None))
+            _out["pas_features"] = collector
+        return _out or None
 
     ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
 
@@ -559,11 +664,20 @@ def _apply_pas_filters(output_mgr) -> dict | None:
             ip_a_stretch=getattr(args, "ip_a_stretch", 6),
             ip_a_fraction=getattr(args, "ip_a_fraction", 0.7),
             ip_mode=ip_mode,
+            features=collector if ip_filter else None,
         )
         os.replace(tmp_out, bed_path)
         combined_stats[strand_label] = stats
         filtered_any = True
         ip_of.update(stats.get("internal_priming_flags") or {})
+
+    if collector is not None:
+        if not ip_filter:
+            # --annot-filter alone does not open the genome, so the feature
+            # pass still has to be made (or the BED-only fallback taken).
+            _collect_pas_features_standalone(
+                collector, getattr(args, "genome_fasta", None))
+        combined_stats["pas_features"] = collector
 
     if ip_filter:
         n_ip_flagged = sum(1 for v in ip_of.values() if v)
@@ -581,7 +695,8 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     # Redact the per-PAS flag maps from the ON-DISK stats (they can be as
     # large as the PAS count and belong in the pasbed/ledger, not a JSON
     # blob) -- the full maps are still on the RETURNED dict for the caller.
-    _disk_stats = {k: v for k, v in combined_stats.items() if k != "ip_of"}
+    _disk_stats = {k: v for k, v in combined_stats.items()
+                   if k not in ("ip_of", "pas_features")}
     for _strand_label in ("pos", "neg"):
         _sd = _disk_stats.get(_strand_label)
         if isinstance(_sd, dict):
@@ -1263,6 +1378,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         # stage does), so atlas_of stays empty here.
         _pas_filter_result = _apply_pas_filters(output_mgr)
         _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
+        # peakAtail-prime --pas-features: append the seam's columns to the
+        # run-root sidecar written above.  Additive; nothing else moves.
+        _write_pas_features(_pas_filter_result)
 
         # Find closest gene for each PAS
         _pas_gene_stage = _add_stage("PAS→gene assignment", total=1)
@@ -1609,6 +1727,10 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # write_pas_gene_artifacts / record_pas_drops in each per-dataset worker.
     _pas_filter_result = _apply_pas_filters(output_mgr)
     _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
+    # peakAtail-prime --pas-features.  The multi-BAM path has no run-root
+    # pas_support.tsv to extend (its PAS were re-keyed by merge_pas_beds), so
+    # this writes a standalone pas_features.tsv in the merged id space.
+    _write_pas_features(_pas_filter_result)
 
     genes = find_close(
         utr_lengths=utr_lengths,

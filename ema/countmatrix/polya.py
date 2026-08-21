@@ -368,6 +368,18 @@ class _SupportIndex:
         cum = self.cum_f if strict else self.cum
         return cum[hi] - cum[lo]
 
+    def sites_within(self, center: int, window: int) -> tuple[int, int]:
+        """``(n distinct clip positions, bp span)`` in the window.
+
+        peakAtail-prime ``--pas-features on``: the tier-2 counterpart of a
+        tier-1 cluster's ``len(sites)`` / member span.  Two bisects and two
+        list reads -- the same slice ``reads_within`` already computes.
+        """
+        lo, hi = self._slice(center, window)
+        if hi <= lo:
+            return 0, 0
+        return hi - lo, self.pos[hi - 1] - self.pos[lo]
+
     def molecules_within(self, center: int, window: int,
                          strict: bool = False) -> int:
         lo, hi = self._slice(center, window)
@@ -769,13 +781,14 @@ class ClipSeeder:
     __slots__ = ("direction", "seed_window", "min_umis", "window",
                  "count_up", "count_down", "stream", "coverage", "stats",
                  "strict", "clip_filter", "_cb_ids", "_cb_names",
-                 "geometry", "seq_len")
+                 "geometry", "seq_len", "features")
 
     def __init__(self, direction: bool, seed_window: int = 25,
                  min_umis: int = 1, window: int = 100,
                  count_window=(-1, 25), clip_filter: str = "none",
                  min_reads: int | None = None, *,
-                 geometry: str = "fixed", seq_len: int | None = None) -> None:
+                 geometry: str = "fixed", seq_len: int | None = None,
+                 features: bool = False) -> None:
         """
         Args:
             min_umis: Minimum DISTINCT MOLECULES for a clip cluster to be
@@ -795,6 +808,11 @@ class ClipSeeder:
             seq_len: ``--seq-len``.  Required when *geometry* is not
                 ``"fixed"``; ignored (learned from the reads, exactly as v2
                 does) when it is.
+            features: ``--pas-features on`` (peakAtail-prime).  Adds
+                ``clip_positions`` / ``clip_span`` to every support dict
+                :meth:`flush` produces.  False (v2) leaves both keys absent,
+                and :func:`ema.countmatrix.paswrite.support_write` then
+                writes exactly v2's seven columns.
         """
         if min_reads is not None:
             min_umis = min_reads
@@ -811,6 +829,7 @@ class ClipSeeder:
         self.count_up, self.count_down = parse_count_window(count_window)
         self.geometry = geometry
         self.seq_len = seq_len
+        self.features = bool(features)
         self.stream = self._new_stream()
         self.coverage: list[tuple[int, int, dict, _CandidateSlice | None]] = []
         # cell-barcode intern table for the candidate slices (the stream has
@@ -898,9 +917,11 @@ class ClipSeeder:
             support_out: Optional list; when given, one support dict per
                 emitted record is appended IN THE SAME ORDER (keys
                 ``clip_reads``, ``clip_umis``, ``clip_reads_f3844``,
-                ``clip_umis_f3844``, ``window_reads``, ``tier``).  This is
-                the sidecar (``pas_support.tsv``) source: the raw clip-read
-                count stays available without overloading BED6.
+                ``clip_umis_f3844``, ``window_reads``, ``tier``, and -- only
+                when this seeder was built with ``features=True`` --
+                ``clip_positions``, ``clip_span``).  This is the sidecar
+                (``pas_support.tsv``) source: the raw clip-read count stays
+                available without overloading BED6.
         """
         stream = self.stream
         # `count_ends` bisects; outside v2 geometry the arrival order is not
@@ -951,14 +972,22 @@ class ClipSeeder:
                 if not claim:
                     _score = support.molecules_within(three, w, strict)
                     records.append((bed_start, bed_end, _score, cb_dict))
-                    supports.append({
+                    _row2 = {
                         "clip_reads": support.reads_within(three, w),
                         "clip_umis": support.molecules_within(three, w),
                         "clip_reads_f3844": support.reads_within(three, w, True),
                         "clip_umis_f3844": support.molecules_within(three, w, True),
                         "window_reads": sum(cb_dict.values()),
                         "tier": 2,
-                    })
+                    }
+                    if self.features:
+                        # A tier-2 row has no cluster of its own, so its clip
+                        # geometry is that of the clip positions inside the
+                        # SAME +/-window its four clip counts come from.
+                        _n_pos, _span = support.sites_within(three, w)
+                        _row2["clip_positions"] = _n_pos
+                        _row2["clip_span"] = _span
+                    supports.append(_row2)
                     stats["reads_tier2"] += sum(cb_dict.values())
                     continue
                 stats["suppressed_candidates"] += 1
@@ -994,14 +1023,21 @@ class ClipSeeder:
                 else:
                     stats["empty_tier1_rows"] += 1
             records.append((c["mode"], c["mode"] + 1, c[umi_key], cb_dict))
-            supports.append({
+            _row1 = {
                 "clip_reads": c["nreads"],
                 "clip_umis": c["numis"],
                 "clip_reads_f3844": c["nreads_f3844"],
                 "clip_umis_f3844": c["numis_f3844"],
                 "window_reads": sum(cb_dict.values()),
                 "tier": 1,
-            })
+            }
+            if self.features:
+                # cluster_clip_sites() already carries the member positions,
+                # ascending; this is a len() and a subtraction, not a rescan.
+                _members = c["sites"]
+                _row1["clip_positions"] = len(_members)
+                _row1["clip_span"] = _members[-1] - _members[0]
+            supports.append(_row1)
         stats["tier1"] += n_kept
         stats["tier2"] += len(records) - n_kept
 

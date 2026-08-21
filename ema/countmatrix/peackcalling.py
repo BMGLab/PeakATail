@@ -8,7 +8,7 @@ from ema.countmatrix.peak import Peak
 from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import (
-    matrix_write, open_support, pas_write, support_write,
+    PAS_FEATURE_MODES, matrix_write, open_support, pas_write, support_write,
 )
 from ema.countmatrix.polya import (
     ClipSeeder, check_clip_rate, clip_read_ok, clip_site, read_umi,
@@ -278,6 +278,19 @@ def peak_calling(
             f"read_geometry must be one of {_READ_GEOMETRIES}, "
             f"got {_read_geometry!r}"
         )
+    # peakAtail-prime: --pas-features decides the sidecar's COLUMN SET, so it
+    # has to be resolved here, next to the geometry, and handed to both the
+    # producer (ClipSeeder / _emit_peak) and the writer (open_support /
+    # support_write).  Reading the legacy global is correct in a spawned
+    # child only because chrom_parallel / tile_runner set it there from their
+    # job spec before calling in -- see ema/config.py's note.
+    _pas_features = str(getattr(_vc_geom, "pas_features", "off")).lower()
+    if _pas_features not in PAS_FEATURE_MODES:
+        raise ValueError(
+            f"pas_features must be one of {PAS_FEATURE_MODES}, "
+            f"got {_pas_features!r}"
+        )
+    _features = _pas_features == "on"
     _seeder = (
         ClipSeeder(
             direction,
@@ -292,6 +305,7 @@ def peak_calling(
             # ValueError, not with a TypeError before the seeder exists.
             seq_len=(None if _read_geometry == "fixed"
                      else (int(_vc_geom.seqlen) if _vc_geom.seqlen else None)),
+            features=_features,
         )
         if _polya_seeded
         else None
@@ -383,7 +397,7 @@ def peak_calling(
     bedfile = open(bedfilepath, "w")
     # Per-PAS poly(A) support sidecar (raw clip reads, molecules, -F 3844
     # counts, matrix-row reads) — BED6 stays BED6.
-    supportfile = open_support(bedfilepath) if _polya_collect else None
+    supportfile = open_support(bedfilepath, _features) if _polya_collect else None
     data_array = SortedList()
     signal = False
     chro = "1"
@@ -428,12 +442,19 @@ def peak_calling(
                 pasnumber=pasnumber, output=bedfile, score=_support,
             )
             if supportfile is not None:
-                support_write(supportfile, pasnumber, {
+                _row = {
                     "clip_reads": _reads, "clip_umis": _umis,
                     "clip_reads_f3844": _reads_f, "clip_umis_f3844": _umis_f,
                     "window_reads": sum(pas_cb_dict.values()),
                     "tier": 2,
-                })
+                }
+                if _features:
+                    _row["clip_positions"], _row["clip_span"] = (
+                        peak_obj.polya_site_geometry(
+                            pas_1, pas_2, direction, polya_window)
+                        if _polya_collect else (0, 0)
+                    )
+                support_write(supportfile, pasnumber, _row, _features)
             matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
     def _flush_seeded(chro_out):
@@ -448,7 +469,7 @@ def peak_calling(
                 chro_out, _start, _end, direction,
                 pasnumber=pasnumber, output=bedfile, score=_support,
             )
-            support_write(supportfile, pasnumber, _row)
+            support_write(supportfile, pasnumber, _row, _features)
             matrix_write(_cb_dict, pasnumber, matrix, index=index)
     # --- End Stage 1 helpers -----------------------------------------------
 

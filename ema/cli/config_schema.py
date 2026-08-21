@@ -305,6 +305,27 @@ class RunConfig:
             ),
         ),
     )
+    pas_features: str = field(
+        default="on",
+        metadata=_spec(
+            cli_flag="--pas-features", yaml_key="pas_features",
+            legacy_dataclass_attr="variable_config.pas_features",
+            choice=("off", "on"),
+            description=(
+                "Emit per-site scoring features into the pas_support.tsv "
+                "sidecar (peakAtail-prime). 'on' (default on this branch) "
+                "APPENDS columns -- clip cluster shape at call time, and "
+                "downstream A-content, canonical hexamer, the tool's own "
+                "internal-priming covariates and local candidate context at "
+                "the internal-priming seam. It adds, drops and moves no PAS; "
+                "pasbed.bed stays BED6 and every pre-existing sidecar column "
+                "keeps its position. The sequence columns need "
+                "--genome-fasta and are written NA without one; they cost no "
+                "extra pass over the FASTA. 'off' is the v2-compatibility "
+                "value (v2's seven sidecar columns, byte-for-byte)."
+            ),
+        ),
+    )
     barcode_tag: Optional[str] = field(
         default=None,
         metadata=_spec(

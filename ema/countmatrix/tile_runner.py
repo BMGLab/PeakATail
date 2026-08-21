@@ -174,6 +174,9 @@ class JobSpec:
     read_geometry: str = "fixed"
     read_exclude_flags: int = 0
     seq_len: int | None = None
+    # peakAtail-prime --pas-features: same reason -- it decides the sidecar's
+    # column set, which pass 2b below merges by adopting the child's header.
+    pas_features: str = "off"
 
 
 # ---------------------------------------------------------------------------
@@ -376,11 +379,13 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
     if isinstance(args, JobSpec):
         _vc_tile.read_geometry = args.read_geometry
         _vc_tile.read_exclude_flags = args.read_exclude_flags
+        _vc_tile.pas_features = args.pas_features
         if args.read_geometry != "fixed" and args.seq_len:
             _vc_tile.seqlen = args.seq_len
     else:
         _vc_tile.read_geometry = args.get("read_geometry", "fixed")
         _vc_tile.read_exclude_flags = args.get("read_exclude_flags", 0)
+        _vc_tile.pas_features = args.get("pas_features", "off")
         if _vc_tile.read_geometry != "fixed" and args.get("seq_len"):
             _vc_tile.seqlen = args["seq_len"]
 
@@ -806,6 +811,7 @@ def build_job_specs(
                         polya_count_window=tuple(polya_count_window),
                         read_geometry=str(_vc_specs.read_geometry),
                         read_exclude_flags=int(_vc_specs.read_exclude_flags),
+                        pas_features=str(getattr(_vc_specs, "pas_features", "off")),
                         seq_len=(int(_vc_specs.seqlen)
                                  if _vc_specs.seqlen else None),
                     ))
@@ -1115,6 +1121,7 @@ def run_tiled(
     _geom_kwargs = {
         "read_geometry": str(_vc_tiles.read_geometry),
         "read_exclude_flags": int(_vc_tiles.read_exclude_flags),
+        "pas_features": str(getattr(_vc_tiles, "pas_features", "off")),
         "seq_len": int(_vc_tiles.seqlen) if _vc_tiles.seqlen else None,
     }
 

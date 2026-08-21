@@ -395,6 +395,25 @@ class variable_config:
     # multimapper contributes one coverage read PER ALIGNMENT.  3844 is
     # samtools' unmapped+secondary+qcfail+duplicate+supplementary.
     read_exclude_flags = 0
+    # --- peakAtail-prime: per-site scoring features (--pas-features) --------
+    # "on" (branch default) | "off" (= v2).  Appends columns to the
+    # pas_support.tsv sidecar and NOTHING else: no call is added, dropped or
+    # moved, pasbed.bed stays BED6, and every pre-existing sidecar column
+    # keeps its position and its bytes.  It is a flag rather than
+    # unconditional because the sidecar's BYTES change, and this branch's
+    # cardinal rule is that v2 output stays reachable byte-for-byte.
+    #
+    # THIS IS THE BRANCH DEFAULT AND IT IS DELIBERATELY THE ONLY COPY OF IT
+    # (RunConfig.pas_features must carry the same literal; asserted by
+    # tests/test_pas_features.py::test_the_branch_default_is_single_valued).
+    # See the note on read_geometry above for what happens when it is not.
+    #
+    # Two of the columns (clip_positions, clip_span) are written by the
+    # caller, so this value has to reach the peak-calling CHILD processes:
+    # chrom_parallel's ChromJob, the tile JobSpec / run_tiled dicts and the
+    # 3-stage pipeline's writer args all carry it explicitly, because a
+    # spawned child's legacy globals come back at module defaults.
+    pas_features = "on"
 
 @dataclass
 class filter_config:

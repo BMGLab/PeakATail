@@ -358,6 +358,9 @@ def build_resolved_run_config() -> dict:
             # the same class of defect bug B0 fixed for atlas/gtf).
             # variable_config is what read_check actually reads.
             "read_geometry", "read_exclude_flags",
+            # Same reasoning for --pas-features: it decides the sidecar's
+            # column set, so a run record that omits it cannot be replayed.
+            "pas_features",
         )
     }
     resolved["filters"] = {

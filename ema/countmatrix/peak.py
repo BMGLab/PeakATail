@@ -130,6 +130,34 @@ class Peak():
         return (nreads, len(umis) + n_no_umi,
                 nreads_f, len(umis_f) + n_no_umi_f)
 
+    def polya_site_geometry(self, pas_1: int, pas_2: int, strand: bool,
+                            window: int) -> tuple[int, int]:
+        '''peakAtail-prime ``--pas-features on``: the SHAPE of the clip
+        evidence backing one emitted PAS -- ``(distinct clip positions,
+        bp span)`` within +/-*window* of the same strand-aware 3' base
+        :meth:`polya_support` counts over.
+
+        The clip-seeded caller gets these from the cluster itself
+        (``cluster_clip_sites``'s member list); this is the coverage-strategy
+        counterpart, so the two tiers mean the same thing in the sidecar.
+        Only called when the feature columns are enabled.
+        '''
+        if not self.polya_sites:
+            return 0, 0
+        bed_start = min(pas_1, pas_2)
+        bed_end = max(pas_1, pas_2)
+        three = bed_start if strand else bed_end - 1
+        lo = hi = None
+        n = 0
+        for site in self.polya_sites:
+            if abs(site - three) <= window:
+                n += 1
+                if lo is None or site < lo:
+                    lo = site
+                if hi is None or site > hi:
+                    hi = site
+        return (n, hi - lo) if n else (0, 0)
+
     def pasfind(self) -> int:
         '''
         pasfind method loop on peak_list and fidn max_height
