@@ -21,7 +21,9 @@ and pinned by ``tests/test_chrom_parallel_identity.py``):
   and :class:`~ema.countmatrix.peak_state.PeakCallingState`;
 * the merge walks the jobs in the order the sequential run would have
   emitted them — ``+`` strand first, contigs in BAM header order, then
-  ``-`` strand — renumbering ``pas_id`` 1..N across both strands;
+  ``-`` strand — renumbering ``pas_id`` across both strands, continuing
+  from ``Peak.pasnumber`` (0 for the first BAM of a run, the previous
+  BAM's last id afterwards, exactly like the legacy loop);
 * the shared cell-barcode index is rebuilt in first-write order: each job's
   local ``cb.tsv`` lists its barcodes in local first-write order, so
   appending the unseen ones while walking the jobs in emission order
@@ -247,17 +249,24 @@ def merge_chrom_results(
     contig_order: list[str],
     pos_bed: str, neg_bed: str, pos_mtx: str, neg_mtx: str, cb_tsv: str,
     write_support: bool = True,
+    pas_start: int = 0,
 ) -> tuple[int, list[str]]:
     """Merge per-(contig, strand) outputs into the sequential layout.
 
-    Returns ``(n_pas, cb_list)`` where ``cb_list`` is the shared barcode
-    list in column order (what the sequential run's
-    ``BarcodeIndex.mapping`` would have held).
+    ``pas_start`` is the ``pas_id`` the previous dataset ended on: the legacy
+    loop seeds every ``peak_calling()`` from the class-level
+    ``Peak.pasnumber`` and never resets it between BAMs, so in a multi-BAM
+    run the second dataset's ids continue from the first one's last id.
+
+    Returns ``(last_pas_id, cb_list)`` — the last id written (``pas_start``
+    plus the number of PAS merged) and the shared barcode list in column
+    order (what the sequential run's ``BarcodeIndex.mapping`` would have
+    held).
     """
     by_key = {(r["contig"], r["direction"]): r for r in results}
     cb_global: dict[str, int] = {}
     cb_list: list[str] = []
-    pasnum = 0
+    pasnum = int(pas_start)
 
     for direction, bed_out_path, mtx_out_path in (
         (False, pos_bed, pos_mtx), (True, neg_bed, neg_mtx),
@@ -351,6 +360,7 @@ def run_chrom_parallel(
     timings).
     """
     from ema.config import variable_config as vc
+    from ema.countmatrix.peak import Peak
 
     peak_kwargs = dict(peak_kwargs)
     peak_kwargs.pop("strategy", None)
@@ -451,13 +461,23 @@ def run_chrom_parallel(
                     pool.terminate()
                     raise
         t_merge = time.monotonic()
-        n_pas, cb_list = merge_chrom_results(
+        # Legacy numbering: peak_calling() seeds its state from the
+        # class-level Peak.pasnumber and writes the final value back, and
+        # main.py never resets it between BAMs -- so dataset 2 continues
+        # where dataset 1 stopped.  Reproduce that here (worker processes
+        # start at 0; only the merged ids matter).
+        pas_start = int(Peak.pasnumber)
+        last_pas, cb_list = merge_chrom_results(
             results, contig_order, pos_bed, neg_bed, pos_mtx, neg_mtx, cb_tsv,
-            write_support=polya_on,
+            write_support=polya_on, pas_start=pas_start,
         )
+        Peak.pasnumber = last_pas
+        n_pas = last_pas - pas_start
         log.info(
-            "peak calling merged: %d PAS, %d cells; jobs %.0f s, merge %.0f s",
-            n_pas, len(cb_list), t_merge - t0, time.monotonic() - t_merge,
+            "peak calling merged: %d PAS (ids %d..%d), %d cells; jobs %.0f s, "
+            "merge %.0f s",
+            n_pas, pas_start + 1, last_pas, len(cb_list), t_merge - t0,
+            time.monotonic() - t_merge,
         )
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

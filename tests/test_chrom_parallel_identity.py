@@ -131,8 +131,10 @@ def _config():
             setattr(variable_config, k, v)
 
 
-def _sequential(bam: Path, out: Path, strategy_name: str) -> dict[str, Path]:
-    """What ema/main.py's legacy loop does: two full passes on one index."""
+def _sequential(bam: Path, out: Path, strategy_name: str, *, reset_pasnumber: bool = True) -> dict[str, Path]:
+    """What ema/main.py's legacy loop does: two full passes on one index.
+    ``reset_pasnumber=False`` is what the loop does for the SECOND BAM of a
+    multi-dataset run: the index is reset, ``Peak.pasnumber`` is not."""
     from ema.countmatrix.indexing import get_mapping, reset_index
     from ema.countmatrix.peackcalling import peak_calling
     from ema.countmatrix.peak import Peak
@@ -141,7 +143,8 @@ def _sequential(bam: Path, out: Path, strategy_name: str) -> dict[str, Path]:
 
     out.mkdir()
     reset_index()
-    Peak.reset_pasnumber()
+    if reset_pasnumber:
+        Peak.reset_pasnumber()
     set_default_sample_id("default")
     files = {k: out / f"default_0.{k}" for k in ("pos.bed", "neg.bed", "pos.mtx", "neg.mtx", "cb.tsv")}
     for direction, b, m in ((False, "pos.bed", "pos.mtx"), (True, "neg.bed", "neg.mtx")):
@@ -156,10 +159,18 @@ def _sequential(bam: Path, out: Path, strategy_name: str) -> dict[str, Path]:
     return files
 
 
-def _parallel(bam: Path, out: Path, strategy_name: str, n_workers: int) -> tuple[dict[str, Path], dict]:
+def _parallel(bam: Path, out: Path, strategy_name: str, n_workers: int, *, reset_pasnumber: bool = True) -> tuple[dict[str, Path], dict]:
+    """What ema/main.py's default path does for one BAM.  The dispatcher
+    seeds the merged ids from ``Peak.pasnumber`` exactly like the legacy
+    ``peak_calling()`` (0 in a fresh ``ema run`` process; ``_sequential``
+    leaves it at its last id, so reset it here unless the test wants the
+    multi-BAM continuation)."""
     from ema.countmatrix.chrom_parallel import run_chrom_parallel
+    from ema.countmatrix.peak import Peak
 
     out.mkdir()
+    if reset_pasnumber:
+        Peak.reset_pasnumber()
     files = {k: out / f"default_0.{k}" for k in ("pos.bed", "neg.bed", "pos.mtx", "neg.mtx", "cb.tsv")}
     with patch.object(sys, "argv", _ARGV):
         summary = run_chrom_parallel(
@@ -204,6 +215,36 @@ def test_parallel_is_byte_identical_to_sequential(bam, tmp_path, strategy_name):
         _assert_same_bytes(Path(support_path_for(seq[k])), Path(support_path_for(par[k])))
 
 
+def test_pas_ids_continue_across_datasets_like_the_legacy_loop(bam, tmp_path):
+    """main.py resets the barcode index per BAM but never Peak.pasnumber, so
+    the second BAM of a multi-dataset run is numbered from the first one's
+    last id.  The parallel path must seed its merge from the same counter and
+    write the final value back, or the per-dataset raw files of BAM 2+ would
+    differ from the legacy loop's."""
+    from ema.countmatrix.peak import Peak
+    from ema.countmatrix.paswrite import support_path_for
+
+    seq1 = _sequential(bam, tmp_path / "seq1", "clip_seeded")
+    n1 = Peak.pasnumber
+    assert n1 == len(seq1["pos.bed"].read_text().splitlines()) + len(seq1["neg.bed"].read_text().splitlines())
+    seq2 = _sequential(bam, tmp_path / "seq2", "clip_seeded", reset_pasnumber=False)
+    assert Peak.pasnumber == 2 * n1
+    assert seq2["pos.bed"].read_text().splitlines()[0].split("\t")[3] == str(n1 + 1)
+
+    # Parallel "dataset 1" (fresh counter) then "dataset 2" (counter carried).
+    par1, s1 = _parallel(bam, tmp_path / "par1", "clip_seeded", n_workers=2)
+    assert Peak.pasnumber == n1 and s1["n_pas"] == n1
+    par2, s2 = _parallel(bam, tmp_path / "par2", "clip_seeded", n_workers=2, reset_pasnumber=False)
+    assert Peak.pasnumber == 2 * n1 and s2["n_pas"] == n1
+
+    for seq, par in ((seq1, par1), (seq2, par2)):
+        for k in ("pos.bed", "neg.bed", "pos.mtx", "neg.mtx", "cb.tsv"):
+            _assert_same_bytes(seq[k], par[k])
+        for k in ("pos.bed", "neg.bed"):
+            _assert_same_bytes(Path(support_path_for(seq[k])), Path(support_path_for(par[k])))
+    Peak.reset_pasnumber()
+
+
 def test_strategy_kwargs_reach_the_workers(bam, tmp_path):
     """A tunable set on the CLI (e.g. --max-pas) must survive the spawn: the
     workers rebuild the strategy by name, so the kwargs travel in the job."""
@@ -229,6 +270,7 @@ def test_strategy_kwargs_reach_the_workers(bam, tmp_path):
     par = tmp_path / "par"
     par.mkdir()
     files = {k: par / f"default_0.{k}" for k in ("pos.bed", "neg.bed", "pos.mtx", "neg.mtx", "cb.tsv")}
+    Peak.reset_pasnumber()  # the dispatcher seeds ids from the counter, like peak_calling()
     with patch.object(sys, "argv", _ARGV):
         run_chrom_parallel(
             dataset_id="default", bam_path=str(bam),

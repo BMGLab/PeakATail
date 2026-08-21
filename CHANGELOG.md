@@ -66,7 +66,9 @@ at 613 s instead of 733 s and the cell-barcode filter at 25 s instead of 64 s.
   `peak_calling(region=(contig, 0, length))` in a spawned worker with its own
   `BarcodeIndex` and `PeakCallingState`; the merge then walks the jobs in the
   order the sequential run emitted them (`+` strand first, contigs in BAM
-  header order, then `-`), renumbers `pas_id` 1..N across both strands, and
+  header order, then `-`), renumbers `pas_id` across both strands (continuing
+  from the previous BAM's last id in a multi-dataset run, as the legacy loop's
+  never-reset `Peak.pasnumber` does), and
   rebuilds the shared barcode index by appending each job's local `cb.tsv` in
   local first-write order — which reproduces the sequential singleton's
   column assignment exactly. Matrices and support sidecars are re-keyed
