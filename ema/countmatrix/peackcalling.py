@@ -127,10 +127,9 @@ def peak_calling(
             :mod:`ema.countmatrix.read` is used (backward compatibility).
             Only applies to the monolithic path.
         region: Optional ``(chrom, start, end)`` 3-tuple specifying a genomic
-            region to restrict read fetching.  When set, the BAM is opened
-            with ``pysam.AlignmentFile(bam, "rb", threads=1)`` and reads are
-            iterated via ``bamfile.fetch(chrom, start, end)`` rather than
-            iterating the entire file.  The BAM **must** be indexed (a
+            region to restrict read fetching.  When set, reads are iterated
+            via ``bamfile.fetch(chrom, start, end)`` rather than iterating
+            the entire file (``bam_threads`` applies in both modes).  The BAM **must** be indexed (a
             ``.bai`` file must exist alongside it); an ``IOError`` is raised
             with an actionable message if the index is missing.  Use this
             instead of materialising a temporary region BAM to save 2/3 of
@@ -325,10 +324,11 @@ def peak_calling(
             barcode_tag=variable_config.barcode_tag or "CB",
         )
 
-    # Open BAM: use threads=1 in region mode (fetch already limits I/O);
-    # use caller-specified bam_threads in full-scan mode.
-    _open_threads = 1 if region is not None else bam_threads
-    bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=_open_threads)
+    # Open BAM with the caller's BGZF decompression thread count.  Region
+    # jobs used to be forced to threads=1; the per-chromosome dispatcher
+    # (ema/countmatrix/chrom_parallel.py) now budgets the count per worker
+    # so that workers x threads stays inside --threads.
+    bamfile = ps.AlignmentFile(bamfile_dir, 'rb', threads=max(1, int(bam_threads)))
 
     # Resolve the auto-detect sentinel for the PAS merger distance tier:
     # -1 means "infer median read length from this BAM, once, then cache".
