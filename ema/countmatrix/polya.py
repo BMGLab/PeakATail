@@ -519,30 +519,73 @@ class ClipStream:
       ``ends[i]`` is the read's ``end1`` as tracked by the peak caller and
       ``cbids[i]`` an interned cell-barcode id (via :meth:`add_read`).
 
-    ``read_check`` pads/drops reads so that ``end1 - start1 == seq_len`` for
-    every accepted read; the BAM is coordinate-sorted, so ``ends`` is
-    non-decreasing in arrival order and any ``[lo, hi]`` window is an
-    ``O(log n)`` bisect plus a ``Counter`` over the slice.  Memory is 8 bytes
-    per accepted read (plus one interned string per distinct barcode), i.e.
-    tens of MB for the deepest chromosome of a 200M-read BAM — and it is
-    released at every chromosome flush.  ``seq_len`` is learned from the
-    first read (the invariant above), so the minus-strand coordinate shift
-    below never depends on config plumbing across spawned processes.
+    Under ``--read-geometry fixed`` (v2) ``read_check`` pads/drops reads so
+    that ``end1 - start1 == seq_len`` for every accepted read; the BAM is
+    coordinate-sorted, so ``ends`` is non-decreasing in arrival order and any
+    ``[lo, hi]`` window is an ``O(log n)`` bisect plus a ``Counter`` over the
+    slice.  Memory is 8 bytes per accepted read (plus one interned string per
+    distinct barcode), i.e. tens of MB for the deepest chromosome of a
+    200M-read BAM — and it is released at every chromosome flush.
+
+    **Under the peakAtail-prime geometries that invariant is gone**, so two
+    things change and both are explicit rather than inferred:
+
+    * ``seq_len`` is no longer learned from the first read (``end1 - start1``
+      is not constant any more) — it MUST be supplied by the caller from
+      ``--seq-len``.  Constructing a non-``fixed`` stream without one raises,
+      rather than silently shifting every minus-strand count window.
+    * the key stored per read is the read's TRANSCRIPT 3'-MOST coordinate
+      expressed in the caller's ``end1`` space (:meth:`three_key`), not the
+      raw ``end1``.  On ``+`` that is ``end1`` itself (the true 3'-most
+      aligned base, which under ``true`` geometry is no longer fabricated).
+      On ``-`` the transcript 3' end is ``start1`` — exact in every geometry —
+      and it is stored as ``start1 + seq_len`` so that it keeps sitting
+      exactly on the cluster anchor ``mode + seq_len`` the rest of
+      :class:`ClipSeeder` works in.  Under ``fixed`` both reduce to ``end1``,
+      so v2 bytes are untouched.
+
+    Sortedness is therefore preserved by construction everywhere EXCEPT
+    ``true`` geometry on the ``+`` strand, where a soft-clipped read's true
+    end can fall behind its predecessor's by up to ``seq_len``.  That case is
+    detected while streaming and repaired once, at :meth:`finalize`, with a
+    stable sort — ``count_ends`` bisects and must never see an unsorted array.
 
     The object is picklable (the 3-stage pipeline hands one per chromosome
     from the finder to the writer); the intern dict is dropped on pickling
     because the receiving side only reads.
     """
 
-    __slots__ = ("accum", "ends", "cbids", "cb_names", "seq_len", "_cb_ids")
+    __slots__ = ("accum", "ends", "cbids", "cb_names", "seq_len", "_cb_ids",
+                 "geometry", "direction", "_sorted")
 
-    def __init__(self) -> None:
+    def __init__(self, seq_len: int | None = None, geometry: str = "fixed",
+                 direction: bool = False) -> None:
+        if geometry != "fixed" and not seq_len:
+            raise ValueError(
+                "ClipStream(geometry=%r) needs an explicit seq_len: outside "
+                "v2 geometry `end1 - start1` is not constant, so it cannot be "
+                "learned from the first read." % (geometry,)
+            )
         self.accum = ClipAccumulator()
         self.ends = array("i")
         self.cbids = array("i")
         self.cb_names: list = []
-        self.seq_len: int | None = None
+        self.seq_len: int | None = seq_len
+        self.geometry = geometry
+        self.direction = bool(direction)
+        self._sorted = True
         self._cb_ids: dict = {}
+
+    # -- coordinate space --------------------------------------------------
+    def three_key(self, start1: int, end1: int) -> int:
+        """The read's transcript 3'-most coordinate in ``end1`` space.
+
+        ``fixed`` -> ``end1`` (v2, and ``end1 == start1 + seq_len`` anyway).
+        ``+`` strand -> ``end1``.  ``-`` strand -> ``start1 + seq_len``.
+        """
+        if self.geometry == "fixed" or not self.direction:
+            return end1
+        return start1 + self.seq_len
 
     # -- streaming hooks ---------------------------------------------------
     def add_clip(self, site: int, cb, umi=None, end1=None,
@@ -552,13 +595,36 @@ class ClipStream:
     def add_read(self, start1: int, end1: int, cb) -> None:
         if self.seq_len is None:
             self.seq_len = end1 - start1
+        key = end1 if self.geometry == "fixed" else self.three_key(start1, end1)
         cid = self._cb_ids.get(cb)
         if cid is None:
             cid = len(self.cb_names)
             self._cb_ids[cb] = cid
             self.cb_names.append(cb)
-        self.ends.append(end1)
+        ends = self.ends
+        if self._sorted and ends and key < ends[-1]:
+            self._sorted = False
+        ends.append(key)
         self.cbids.append(cid)
+
+    def finalize(self) -> None:
+        """Restore the non-decreasing ``ends`` invariant ``count_ends`` needs.
+
+        A no-op (and a single flag test) in every geometry that keeps the
+        invariant while streaming, which includes all of v2 — so this cannot
+        move a v2 byte.  Where it does fire, the sort is STABLE so that equal
+        coordinates keep arrival order and the per-cell dict built by
+        ``count_ends`` is insertion-ordered deterministically.
+        """
+        if self._sorted or not self.ends:
+            return
+        import numpy as np
+        ends = np.frombuffer(self.ends, dtype=np.int32)
+        cbids = np.frombuffer(self.cbids, dtype=np.int32)
+        order = np.argsort(ends, kind="stable")
+        self.ends = array("i", ends[order].tolist())
+        self.cbids = array("i", cbids[order].tolist())
+        self._sorted = True
 
     @property
     def sites(self) -> dict:
@@ -585,10 +651,12 @@ class ClipStream:
 
     # -- pickling (pipeline hand-off) ---------------------------------------
     def __getstate__(self):
-        return (self.accum.sites, self.ends, self.cbids, self.cb_names, self.seq_len)
+        return (self.accum.sites, self.ends, self.cbids, self.cb_names,
+                self.seq_len, self.geometry, self.direction, self._sorted)
 
     def __setstate__(self, state):
-        sites, self.ends, self.cbids, self.cb_names, self.seq_len = state
+        (sites, self.ends, self.cbids, self.cb_names, self.seq_len,
+         self.geometry, self.direction, self._sorted) = state
         self.accum = ClipAccumulator()
         self.accum.sites = sites
         self._cb_ids = {}
@@ -689,12 +757,14 @@ class ClipSeeder:
 
     __slots__ = ("direction", "seed_window", "min_umis", "window",
                  "count_up", "count_down", "stream", "coverage", "stats",
-                 "strict", "clip_filter", "_cb_ids", "_cb_names")
+                 "strict", "clip_filter", "_cb_ids", "_cb_names",
+                 "geometry", "seq_len")
 
     def __init__(self, direction: bool, seed_window: int = 25,
                  min_umis: int = 1, window: int = 100,
                  count_window=(-1, 25), clip_filter: str = "none",
-                 min_reads: int | None = None) -> None:
+                 min_reads: int | None = None, *,
+                 geometry: str = "fixed", seq_len: int | None = None) -> None:
         """
         Args:
             min_umis: Minimum DISTINCT MOLECULES for a clip cluster to be
@@ -706,6 +776,14 @@ class ClipSeeder:
                 supplementary / duplicate / qcfail alignments.
             min_reads: Deprecated alias for *min_umis* (the flag was
                 ``--polya-min-reads`` and always gated on molecules).
+            geometry: ``--read-geometry`` (see
+                :data:`ema.countmatrix.read.READ_GEOMETRIES`).  Anything but
+                the v2 ``"fixed"`` breaks the ``end1 - start1 == seq_len``
+                invariant, so the stream is told the geometry and the
+                configured *seq_len* instead of inferring them.
+            seq_len: ``--seq-len``.  Required when *geometry* is not
+                ``"fixed"``; ignored (learned from the reads, exactly as v2
+                does) when it is.
         """
         if min_reads is not None:
             min_umis = min_reads
@@ -720,7 +798,9 @@ class ClipSeeder:
         self.strict = clip_filter == "f3844"
         self.window = window
         self.count_up, self.count_down = parse_count_window(count_window)
-        self.stream = ClipStream()
+        self.geometry = geometry
+        self.seq_len = seq_len
+        self.stream = self._new_stream()
         self.coverage: list[tuple[int, int, dict, _CandidateSlice | None]] = []
         # cell-barcode intern table for the candidate slices (the stream has
         # its own: in the pipeline the writer's stream is replaced by the
@@ -736,7 +816,18 @@ class ClipSeeder:
 
     # -- streaming hooks ---------------------------------------------------
     def add_clip(self, site: int, cb, umi=None, end1=None,
-                 primary: bool = True) -> None:
+                 primary: bool = True, start1: int | None = None) -> None:
+        """Record one clip read.
+
+        *end1* is stored so the tier-1 clip fallback can tell which cluster's
+        midpoint territory the read belongs to, and it must therefore live in
+        the SAME space as the read ends :meth:`add_read` stores.  Pass
+        *start1* as well and the seeder maps it through
+        :meth:`ClipStream.three_key`; under v2 geometry the mapping is the
+        identity, so v2 callers may keep omitting it.
+        """
+        if start1 is not None and self.geometry != "fixed" and end1 is not None:
+            end1 = self.stream.three_key(start1, end1)
         self.stream.add_clip(site, cb, umi, end1, primary)
 
     def add_read(self, start1: int, end1: int, cb) -> None:
@@ -801,6 +892,9 @@ class ClipSeeder:
                 count stays available without overloading BED6.
         """
         stream = self.stream
+        # `count_ends` bisects; outside v2 geometry the arrival order is not
+        # guaranteed sorted.  No-op (one bool test) whenever it already is.
+        stream.finalize()
         sites = stream.sites
         strict = self.strict
         umi_key = "numis_f3844" if strict else "numis"
@@ -904,11 +998,18 @@ class ClipSeeder:
         records = [records[k] for k in order]
         if support_out is not None:
             support_out.extend(supports[k] for k in order)
-        self.stream = ClipStream()
+        self.stream = self._new_stream()
         self.coverage = []
         self._cb_ids = {}
         self._cb_names = []
         return records
+
+    def _new_stream(self) -> ClipStream:
+        """A stream for this seeder's geometry (v2 keeps the bare default)."""
+        if self.geometry == "fixed":
+            return ClipStream()
+        return ClipStream(seq_len=self.seq_len, geometry=self.geometry,
+                          direction=self.direction)
 
     @staticmethod
     def _clip_to_neighbours(i: int, lo: int, hi: int, anchors: list[int],

@@ -264,6 +264,20 @@ def peak_calling(
             f"got {polya_clip_filter!r}"
         )
     _strict_clip = polya_clip_filter == "f3844"
+    # peakAtail-prime: outside v2 geometry `end1 - start1` is not constant,
+    # so the seeder is told the geometry and the configured --seq-len instead
+    # of letting its ClipStream infer them from the first read.
+    from ema.config import variable_config as _vc_geom
+    from ema.countmatrix.read import READ_GEOMETRIES as _READ_GEOMETRIES
+    _read_geometry = _vc_geom.read_geometry
+    if _read_geometry not in _READ_GEOMETRIES:
+        # Click validates --read-geometry, but a library caller setting the
+        # legacy global by hand would otherwise get "anything not fixed/keep
+        # means true", which is a silent wrong answer rather than an error.
+        raise ValueError(
+            f"read_geometry must be one of {_READ_GEOMETRIES}, "
+            f"got {_read_geometry!r}"
+        )
     _seeder = (
         ClipSeeder(
             direction,
@@ -272,6 +286,12 @@ def peak_calling(
             window=polya_window,
             count_window=polya_count_window,
             clip_filter=polya_clip_filter,
+            geometry=_read_geometry,
+            # `or None` rather than int(None): a caller that never set
+            # --seq-len must fail inside ClipStream with the explanatory
+            # ValueError, not with a TypeError before the seeder exists.
+            seq_len=(None if _read_geometry == "fixed"
+                     else (int(_vc_geom.seqlen) if _vc_geom.seqlen else None)),
         )
         if _polya_seeded
         else None
@@ -513,7 +533,10 @@ def peak_calling(
             # read ends in its cleavage window, not from its clip reads).
             _seeder.add_read(start1, end1, cb)
             if _clip is not None:
-                _seeder.add_clip(_clip, cb, _umi, end1, _clip_ok)
+                # start1 lets the seeder put the clip read's end in the
+                # same space add_read uses (identity under v2 geometry).
+                _seeder.add_clip(_clip, cb, _umi, end1, _clip_ok,
+                                 start1=start1)
 
         # Update window-based local lambda from trailing deque of read positions
         if dynamic_threshold:

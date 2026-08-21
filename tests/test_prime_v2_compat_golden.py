@@ -93,7 +93,15 @@ def _v2_settings(seq_len: int) -> None:
     variable_config.barcode_tag = "CB"
     variable_config.ignore_chro = ["MT", "mt"]
     # --- v2 values of prime options, added as each change lands -------------
-    # Change 1 (--read-span-mode):        variable_config.read_span_mode = "truncate"
+    # TASK A (--read-geometry): v2 discards a read whose REFERENCE span exceeds
+    # --seq-len and rewrites a shorter read's end to start + seq_len.  The
+    # branch default is "true"; this line is what makes these two arms a
+    # compatibility test rather than a change detector.
+    variable_config.read_geometry = "fixed"
+    # TASK A (--read-exclude-flags): v2 applies no SAM-flag filter on the
+    # coverage channel.  This is already the branch default; pinned anyway so
+    # the compat surface is complete and readable in one place.
+    variable_config.read_exclude_flags = 0
     # Change 2 (--polya-genomic-a-gate):  variable_config.polya_genomic_a_gate = False
     # Change 3 (--pas-score):             variable_config.pas_score = "none"
     # Change 5 (--cleavage-edge-refine):  variable_config.cleavage_edge_refine = False
@@ -102,7 +110,8 @@ def _v2_settings(seq_len: int) -> None:
 @pytest.fixture(autouse=True)
 def _restore_variable_config():
     """Every knob `_v2_settings` touches is process-global; put it back afterwards."""
-    keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro")
+    keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
+            "read_geometry", "read_exclude_flags")
     saved = {k: getattr(variable_config, k) for k in keys}
     try:
         yield
@@ -162,6 +171,47 @@ def test_v2_output_is_reproduced_byte_for_byte(
         "Every behavioural change on peakAtail-prime must be behind a flag whose v2 value is "
         "pinned in _v2_settings(); do NOT regenerate these goldens.\n%s"
         % (arm, ", ".join(sorted(bad)), bad)
+    )
+
+
+def test_the_compat_pin_is_load_bearing(tmp_path: Path) -> None:
+    """`_v2_settings` must be doing work, not agreeing with the defaults.
+
+    If the branch default ever produced the v2 goldens by itself, the two
+    tests above would pass while proving nothing.  The branch default
+    (``--read-geometry true``) restores 24.19 % of reads that v2 discards, so
+    it MUST move bytes on a fixture that contains spliced or soft-clipped
+    reads.  If this test starts failing, either the branch has no behavioural
+    change left or the fixture stopped covering it -- both worth knowing.
+    """
+    from ema.countmatrix.read import V2_READ_GEOMETRY
+
+    assert variable_config.read_geometry != V2_READ_GEOMETRY, (
+        "the branch default is back at v2; the compat guarantee is vacuous"
+    )
+    branch_dir = tmp_path / "branch"
+    branch_dir.mkdir()
+    index = BarcodeIndex()
+    state = PeakCallingState(pasnumber=0)
+    digests: dict[str, str] = {}
+    # NB: deliberately does NOT call _v2_settings() -- only the three
+    # BAM-shape knobs, so the geometry stays at the branch default.
+    variable_config.seqlen = 91
+    variable_config.cb_len = 16
+    variable_config.barcode_tag = "CB"
+    for direction in (False, True):
+        bed = branch_dir / f"pas_{int(direction)}.bed"
+        matrix = branch_dir / f"matrix_{int(direction)}.txt"
+        peak_calling(
+            direction=direction, bedfilepath=str(bed), matrixpath=str(matrix),
+            bamfile_dir=str(FIXTURE), index=index, state=state,
+            sample_id="fixture", strategy=get_strategy("clip_seeded"),
+        )
+        for path in (bed, matrix):
+            digests[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert digests != V2_GOLDEN["clip_seeded_91"], (
+        "the branch default reproduced the v2 goldens byte-for-byte, so the "
+        "compat test above cannot distinguish 'flag-gated' from 'no change'"
     )
 
 

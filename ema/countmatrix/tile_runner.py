@@ -168,6 +168,12 @@ class JobSpec:
     polya_min_umis: int = 1
     polya_clip_filter: str = "none"
     polya_count_window: tuple = (-1, 25)
+    # peakAtail-prime read acceptance geometry (see ema/countmatrix/read.py).
+    # Workers are spawned, so these travel with the job rather than being
+    # re-derived from the legacy globals in the child.
+    read_geometry: str = "fixed"
+    read_exclude_flags: int = 0
+    seq_len: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +366,23 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             polya_clip_filter=args.get("polya_clip_filter", "none"),
             polya_count_window=args.get("polya_count_window", (-1, 25)),
         )
+
+    # peakAtail-prime: push the read-acceptance geometry into this spawned
+    # worker's freshly-imported legacy globals.  seq_len is only overridden
+    # for the non-v2 geometries (where ClipStream cannot infer it from the
+    # reads); under "fixed" the worker keeps resolving it exactly as before,
+    # so tile-path v2 bytes are untouched.
+    from ema.config import variable_config as _vc_tile
+    if isinstance(args, JobSpec):
+        _vc_tile.read_geometry = args.read_geometry
+        _vc_tile.read_exclude_flags = args.read_exclude_flags
+        if args.read_geometry != "fixed" and args.seq_len:
+            _vc_tile.seqlen = args.seq_len
+    else:
+        _vc_tile.read_geometry = args.get("read_geometry", "fixed")
+        _vc_tile.read_exclude_flags = args.get("read_exclude_flags", 0)
+        if _vc_tile.read_geometry != "fixed" and args.get("seq_len"):
+            _vc_tile.seqlen = args["seq_len"]
 
     # Per-worker isolation: reset all process-global mutable state
     reset_index()
@@ -745,6 +768,8 @@ def build_job_specs(
             else tile_size
         )
         per_bam_spacing = min_pas_spacing
+        # Resolved in the PARENT: spawned workers re-import ema.config fresh.
+        from ema.config import variable_config as _vc_specs
         chromosomes = get_chromosomes(str(bam_path))
         for chrom, length in chromosomes:
             tiles = split_chromosome_into_tiles(chrom, length, bam_tile_size, tile_overlap)
@@ -779,6 +804,10 @@ def build_job_specs(
                         polya_min_umis=polya_min_umis,
                         polya_clip_filter=polya_clip_filter,
                         polya_count_window=tuple(polya_count_window),
+                        read_geometry=str(_vc_specs.read_geometry),
+                        read_exclude_flags=int(_vc_specs.read_exclude_flags),
+                        seq_len=(int(_vc_specs.seqlen)
+                                 if _vc_specs.seqlen else None),
                     ))
                     job_id += 1
 
@@ -1077,6 +1106,18 @@ def run_tiled(
             _resolved_spacing, bamfile_dir,
         )
 
+    # peakAtail-prime: resolve the read-acceptance geometry in the PARENT.
+    # Tile workers are spawned; without these keys the child falls back to
+    # variable_config's module default and the tile path silently runs a
+    # different geometry from the monolithic one -- which is exactly what
+    # tests/test_polya_three_path_agreement.py caught when they were missing.
+    from ema.config import variable_config as _vc_tiles
+    _geom_kwargs = {
+        "read_geometry": str(_vc_tiles.read_geometry),
+        "read_exclude_flags": int(_vc_tiles.read_exclude_flags),
+        "seq_len": int(_vc_tiles.seqlen) if _vc_tiles.seqlen else None,
+    }
+
     worker_args: list[dict[str, Any]] = []
     for tile_id, (chrom, tile_start, tile_end, fetch_start, fetch_end) in enumerate(all_tiles):
         worker_args.append({
@@ -1101,6 +1142,7 @@ def run_tiled(
             "min_pas_spacing": _resolved_spacing,
             "min_pas_prominence": min_pas_prominence,
             **_polya_kwargs,
+            **_geom_kwargs,
         })
 
     # ----------------------------------------------------------------

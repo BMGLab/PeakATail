@@ -131,13 +131,23 @@ def _config():
 
     saved = {k: getattr(variable_config, k)
              for k in ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
-                       "default_threshold", "merge_len")}
+                       "default_threshold", "merge_len", "read_geometry")}
     variable_config.seqlen = SEQ_LEN
     variable_config.cb_len = 16
     variable_config.barcode_tag = "CB"
     variable_config.ignore_chro = []
     variable_config.default_threshold = 5
     variable_config.merge_len = 100
+    # peakAtail-prime: this module's arithmetic ("30 in-window reads + 3 clip
+    # = 33") is written against v2's FABRICATED read ends -- every accepted
+    # read normalised to start + seq_len.  Under the branch default
+    # (--read-geometry true) a synthetic read's end moves upstream by its own
+    # unaligned tail, so the same [site - seq_len, site + 25] window catches a
+    # different set (18, not 33, at the + ISOLATED locus).  That is the
+    # geometry change working, not a counting bug -- so this module keeps
+    # pinning the v2 contract and the branch behaviour is asserted in
+    # tests/test_read_geometry.py.
+    variable_config.read_geometry = "fixed"
     try:
         yield
     finally:

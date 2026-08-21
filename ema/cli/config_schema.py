@@ -260,6 +260,46 @@ class RunConfig:
             description="Cell-barcode length (bp).",
         ),
     )
+    read_geometry: str = field(
+        default="true",
+        metadata=_spec(
+            cli_flag="--read-geometry", yaml_key="read_geometry",
+            legacy_dataclass_attr="variable_config.read_geometry",
+            choice=("fixed", "keep", "true"),
+            description=(
+                "How a read's genomic interval is derived (peakAtail-prime). "
+                "'fixed' is v2: DISCARD any read whose reference span exceeds "
+                "--seq-len and rewrite a shorter read's end to start+seq_len. "
+                "'keep' replaces the discard with a query-length test (a "
+                "spliced alignment is no longer thrown away for the length of "
+                "its intron) but keeps v2's fixed-length interval. 'true' "
+                "(default on this branch) additionally uses the read's real "
+                "aligned reference footprint: soft clips excluded, deletions "
+                "inside the span, introns (CIGAR N) removed. Measured on the "
+                "PBMC chr19+21 slice, 'fixed' discards 24.19% of valid-CB "
+                "reads (98.1% of them spliced) before BOTH the poly(A) clip "
+                "detector and the count matrix. --read-geometry fixed is the "
+                "v2-compatibility value."
+            ),
+        ),
+    )
+    read_exclude_flags: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--read-exclude-flags", yaml_key="read_exclude_flags",
+            legacy_dataclass_attr="variable_config.read_exclude_flags",
+            description=(
+                "SAM flag mask vetoed on the coverage/count channel, like "
+                "samtools view -F (0 = default = v2 = no filtering). v2 "
+                "applies no filter, so a read aligned to N places contributes "
+                "N reads of coverage and N matrix counts; 10.42% of valid-CB "
+                "reads on the PBMC chr19+21 slice are secondary alignments. "
+                "256 drops secondary alignments only; 3844 is samtools' "
+                "unmapped+secondary+qcfail+duplicate+supplementary. Left OFF "
+                "by default because it is a call-set change, not a bug fix."
+            ),
+        ),
+    )
     barcode_tag: Optional[str] = field(
         default=None,
         metadata=_spec(

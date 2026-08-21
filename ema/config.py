@@ -359,6 +359,24 @@ class variable_config:
     # dict (not a dataclass field) so it's accessible on the class itself,
     # matching the access pattern variable_config.dataset_read_lengths.
     dataset_read_lengths = {}
+    # --- peakAtail-prime: read acceptance geometry (--read-geometry) --------
+    # "fixed" (v2) | "keep" | "true"; see ema.countmatrix.read.READ_GEOMETRIES.
+    #
+    # THIS IS THE BRANCH DEFAULT AND IT IS DELIBERATELY THE ONLY COPY OF IT.
+    # An earlier revision left the legacy global at "fixed" and put the branch
+    # default only in RunConfig, so `ema run` used one geometry and a direct
+    # library call the other -- and `RunConfig.apply_to_legacy_globals()` then
+    # leaked "true" into the process globals halfway through a pytest session,
+    # making 15 tests order-dependent.  One default, one place.
+    # RunConfig.read_geometry must carry the same literal; that is asserted by
+    # tests/test_read_geometry.py::test_the_branch_default_is_single_valued.
+    # v2 is reached with --read-geometry fixed (equivalently `--compat v2`).
+    read_geometry = "true"
+    # SAM flag mask vetoed on the COVERAGE channel (--read-exclude-flags).
+    # 0 (default, = v2) means no filtering: read_check applies no `-F`, so a
+    # multimapper contributes one coverage read PER ALIGNMENT.  3844 is
+    # samtools' unmapped+secondary+qcfail+duplicate+supplementary.
+    read_exclude_flags = 0
 
 @dataclass
 class filter_config:

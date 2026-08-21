@@ -89,6 +89,12 @@ class ChromJob:
     ignore_chro: tuple = ("MT", "mt")
     default_threshold: int = 5
     merge_len: int = 100
+    # peakAtail-prime read acceptance geometry.  Workers are SPAWNED, so the
+    # legacy globals come back at their module defaults ("fixed", 0) in the
+    # child -- these must travel with the job or the parallel path silently
+    # runs v2 geometry while the monolithic path runs the branch default.
+    read_geometry: str = "fixed"
+    read_exclude_flags: int = 0
     # --- strategy (re-instantiated in the child) ---
     strategy_name: str = "original"
     strategy_kwargs: dict = field(default_factory=dict)
@@ -133,6 +139,8 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
     vc.ignore_chro = list(job.ignore_chro)
     vc.default_threshold = job.default_threshold
     vc.merge_len = job.merge_len
+    vc.read_geometry = job.read_geometry
+    vc.read_exclude_flags = job.read_exclude_flags
 
     reset_index()
     Peak.reset_pasnumber()
@@ -410,6 +418,8 @@ def run_chrom_parallel(
                 seq_len=int(vc.seqlen), ignore_chro=ignore_chro,
                 default_threshold=int(vc.default_threshold),
                 merge_len=int(vc.merge_len),
+                read_geometry=str(vc.read_geometry),
+                read_exclude_flags=int(vc.read_exclude_flags),
                 strategy_name=strategy_name,
                 strategy_kwargs=dict(strategy_kwargs or {}),
                 peak_kwargs=peak_kwargs, log_queue=log_queue,
