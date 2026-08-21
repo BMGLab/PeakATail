@@ -9,6 +9,24 @@ Reference implementations:
 - scAPAtrap: 6 continuous A's within -140 to +10 bp
 - scPAISO: 6-mer AAAAAA within -5/+20 bp
 
+Strand convention
+-----------------
+Internal priming is caused by a genomic A-rich stretch DOWNSTREAM of the
+cleavage site in TRANSCRIPT orientation (the oligo-dT primer anneals to the
+genome-encoded A's that the reverse transcriptase then reads as a tail). The
+window is therefore defined relative to the transcript: ``window_left`` nt
+upstream and ``window_right`` nt downstream of the cleavage site, on BOTH
+strands. In genomic (forward) coordinates that means (``pos`` is the BED
+``end`` on '+' and the BED ``start`` on '-'; see :func:`ip_window`)::
+
+    '+'  [pos - left,  pos + right)   scanned as-is      (A-run / A-fraction)
+    '-'  [pos - right, pos + left )   reverse-complemented, then the same scan
+                                      (== T-run / T-fraction on the forward strand)
+
+Up to and including the 4efeb12 line the '-' strand used the SAME forward
+window as '+', i.e. it tested 30 nt upstream / 10 nt downstream in transcript
+orientation -- mostly the wrong side. Fixed in fix/ip-filter-strand.
+
 This filter is OPTIONAL and configurable via CLI:
   --internal-priming-filter     Enable the filter
   --genome-fasta PATH           Path to genome FASTA (required if filter enabled)
@@ -19,9 +37,65 @@ This filter is OPTIONAL and configurable via CLI:
 """
 
 import logging
-from typing import List, Tuple, Optional
+from typing import Tuple
 
 logger = logging.getLogger("peakatail.filters.internal_priming")
+
+_RC_TABLE = str.maketrans("ACGTUNacgtun", "TGCAANtgcaan")
+
+
+def reverse_complement(seq: str) -> str:
+    """Reverse complement of *seq* (IUPAC letters other than ACGTUN pass through)."""
+    return seq.translate(_RC_TABLE)[::-1]
+
+
+def ip_window(pas_pos: int, strand: str,
+              window_left: int = 10, window_right: int = 30) -> Tuple[int, int]:
+    """Genomic half-open ``[start, end)`` window to fetch for one PAS.
+
+    *pas_pos* is the BED ``end`` on '+' and the BED ``start`` on '-' (the
+    convention :func:`filter_internal_priming` has always used). The window
+    covers *window_left* nt upstream and *window_right* nt downstream of the
+    cleavage site **in transcript orientation**, so on '-' it is the mirror
+    image of the '+' window in genomic coordinates. ``start`` is clamped at
+    0; the caller's slice clamps ``end`` at the contig length.
+    """
+    if strand == "+":
+        return max(0, pas_pos - window_left), pas_pos + window_right
+    return max(0, pas_pos - window_right), pas_pos + window_left
+
+
+def call_internal_priming(window_seq: str, strand: str,
+                          a_stretch: int = 6, a_fraction: float = 0.7) -> Tuple[bool, str]:
+    """Decide internal priming from the FORWARD-strand genomic sequence of
+    the :func:`ip_window` of one PAS.
+
+    Returns ``(flag, tested_seq)`` where *tested_seq* is the sequence in
+    transcript orientation (upper-cased; reverse-complemented on '-'). The
+    flag is set when *tested_seq* contains ``'A' * a_stretch`` or its
+    A-fraction is ``>= a_fraction``. Pure function -- no I/O.
+    """
+    seq = window_seq.upper()
+    tested = seq if strand == "+" else reverse_complement(seq)
+    if not tested:
+        return False, tested
+    if "A" * a_stretch in tested:
+        return True, tested
+    return tested.count("A") / len(tested) >= a_fraction, tested
+
+
+def check_internal_priming(sequence, pas_pos: int, strand: str,
+                           window_left: int = 10, window_right: int = 30,
+                           a_stretch: int = 6, a_fraction: float = 0.7) -> Tuple[bool, str]:
+    """:func:`ip_window` + :func:`call_internal_priming` on a sliceable contig.
+
+    *sequence* may be a plain ``str`` or a ``pyfaidx`` record (anything whose
+    ``[start:end]`` slice stringifies to the forward-strand bases; slices past
+    the contig end are expected to truncate, as both do).
+    """
+    seq_start, seq_end = ip_window(pas_pos, strand, window_left, window_right)
+    return call_internal_priming(str(sequence[seq_start:seq_end]), strand,
+                                 a_stretch, a_fraction)
 
 
 def filter_internal_priming(bed_path: str, genome_fasta: str,
@@ -80,7 +154,6 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
         raise ValueError(f"filter_internal_priming: mode must be 'annotate' or 'filter', got {mode!r}")
 
     genome = Fasta(genome_fasta)
-    a_pattern = "A" * a_stretch
 
     total = 0
     passed = 0
@@ -109,11 +182,13 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
             else:
                 pas_pos = start  # 3' end for negative strand
 
-            # Extract genomic sequence around PAS
+            # Extract the genomic window (transcript-oriented; mirrored on '-')
+            # and test it -- see ip_window() / call_internal_priming().
             try:
-                seq_start = max(0, pas_pos - window_left)
-                seq_end = pas_pos + window_right
-                seq = str(genome[chrom][seq_start:seq_end]).upper()
+                is_internal_priming, seq = check_internal_priming(
+                    genome[chrom], pas_pos, strand,
+                    window_left, window_right, a_stretch, a_fraction,
+                )
             except (KeyError, ValueError):
                 # Chromosome not in FASTA or out of range — keep the peak,
                 # flag unknown/not-flagged (we couldn't check it).
@@ -121,28 +196,6 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
                 passed += 1
                 flags[pas_id] = False
                 continue
-
-            # Check for consecutive A stretch
-            is_internal_priming = False
-
-            if strand == '+':
-                # For positive strand, check for A's downstream
-                if a_pattern in seq:
-                    is_internal_priming = True
-            else:
-                # For negative strand, check for T's (complementary)
-                t_pattern = "T" * a_stretch
-                if t_pattern in seq:
-                    is_internal_priming = True
-
-            # Also check A-fraction in the window
-            if not is_internal_priming and len(seq) > 0:
-                if strand == '+':
-                    a_count = seq.count('A')
-                else:
-                    a_count = seq.count('T')
-                if a_count / len(seq) >= a_fraction:
-                    is_internal_priming = True
 
             flags[pas_id] = is_internal_priming
             if is_internal_priming:
