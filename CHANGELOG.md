@@ -94,6 +94,14 @@ three.
   slice.
 - Region-mode `peak_calling` honours `bam_threads` instead of forcing
   `threads=1`.
+- `ema/main.py` passes `default_threshold` / `merge_len` from
+  `variable_config` explicitly on the single-process path. They were
+  previously left to `peak_calling`'s default arguments, which froze the
+  values `variable_config` held when `peackcalling.py` was imported — before
+  the CLI/YAML bridge ran — so `--default-threshold` / `--merge-len` were
+  silently ignored there (the `--tiles` path always read them live). At the
+  defaults (5 / 100) nothing changes; a non-default value is now honoured on
+  every path.
 
 ### Notes
 

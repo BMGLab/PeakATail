@@ -204,6 +204,44 @@ def test_parallel_is_byte_identical_to_sequential(bam, tmp_path, strategy_name):
         _assert_same_bytes(Path(support_path_for(seq[k])), Path(support_path_for(par[k])))
 
 
+def test_strategy_kwargs_reach_the_workers(bam, tmp_path):
+    """A tunable set on the CLI (e.g. --max-pas) must survive the spawn: the
+    workers rebuild the strategy by name, so the kwargs travel in the job."""
+    from ema.countmatrix.chrom_parallel import run_chrom_parallel
+    from ema.countmatrix.indexing import reset_index
+    from ema.countmatrix.peackcalling import peak_calling
+    from ema.countmatrix.peak import Peak
+    from ema.countmatrix.read import set_default_sample_id
+    from ema.strategies import get_strategy
+
+    kwargs = {"max_pas": 1, "min_prominence": 1.0}
+    seq = tmp_path / "seq"
+    seq.mkdir()
+    reset_index()
+    Peak.reset_pasnumber()
+    set_default_sample_id("default")
+    seq_bed = seq / "default_0.pos.bed"
+    peak_calling(
+        False, bedfilepath=str(seq_bed), matrixpath=str(seq / "default_0.pos.mtx"),
+        bamfile_dir=str(bam), default_threshold=5, merge_len=100,
+        strategy=get_strategy("lambda_gradient", **kwargs), **PEAK_KWARGS,
+    )
+    par = tmp_path / "par"
+    par.mkdir()
+    files = {k: par / f"default_0.{k}" for k in ("pos.bed", "neg.bed", "pos.mtx", "neg.mtx", "cb.tsv")}
+    with patch.object(sys, "argv", _ARGV):
+        run_chrom_parallel(
+            dataset_id="default", bam_path=str(bam),
+            pos_bed=str(files["pos.bed"]), neg_bed=str(files["neg.bed"]),
+            pos_mtx=str(files["pos.mtx"]), neg_mtx=str(files["neg.mtx"]),
+            cb_tsv=str(files["cb.tsv"]), n_workers=2,
+            strategy_name="lambda_gradient", strategy_kwargs=kwargs,
+            peak_kwargs=dict(PEAK_KWARGS), workdir=str(par / "_jobs"),
+            thread_budget=2,
+        )
+    _assert_same_bytes(seq_bed, files["pos.bed"])
+
+
 def test_singleton_index_matches_merged_column_order(bam, tmp_path):
     """The CB filter reads get_mapping() -- it must see the merged order."""
     from ema.countmatrix.chrom_parallel import load_index_from_cb_list
