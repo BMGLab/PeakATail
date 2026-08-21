@@ -218,6 +218,18 @@ generalisation, not dataset or species transfer.
 column is the molecule count every `$5>=2` filter in `scripts/benchmark_tools/` depends on, and
 overwriting it silently breaks the whole benchmark suite.
 
+**Step 0 of this change is LANDED: `--pas-features {off,on}`, default `on`** (TASK C). The 24
+per-site covariates the score needs are now emitted into `pas_support.tsv` — 2 written by the caller
+(`clip_positions`, `clip_span`), 15 from genomic sequence and 7 from the local candidate set. They
+ride inside the internal-priming pass, so the genome is opened exactly as many times as before
+(asserted, not argued), and they change no call: BED, matrix and every pre-existing sidecar column
+are byte-identical, which `tests/test_prime_v2_compat_golden.py` now covers for the sidecar too.
+`ip_tool_flag` / `ip_tool_afrac` / `ip_tool_arun` come from the string the veto itself tested, so
+point 2 above ("a score that does not beat one covariate the caller already computes is a rename")
+can be checked against the caller's own number rather than a re-derivation. See `CHANGELOG.md` and
+`docs/cli/run.md` for the column reference, and `results/prime/TASK_C_pas_features.md` for the
+runtime/RSS cost and the cross-check against the offline feature table.
+
 **Do NOT build** (measured, [V], roadmap §3 Step 1.5): a second BAM pass for clip-cell counts or
 end-pileup statistics (worth 0.000–0.002 held-out AUC), or a model that merely re-weights the
 existing clip counts (+1.9 % to +5.8 %, inside the noise of a threshold change).

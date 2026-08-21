@@ -1,5 +1,100 @@
 # Changelog
 
+## Unreleased (branch `peakAtail-prime`) — per-site scoring features
+
+**One new flag. It appends columns to a sidecar and changes nothing else.**
+
+The one measured-positive algorithmic change left for this caller is a
+calibrated per-site score used as a **re-ranker inside the existing tier-1 and
+internal-priming gates**, replacing only the `>= 2 clip molecules` threshold.
+Fitted on long-read termini and evaluated on a curated atlas it had never
+seen, it is worth **+6.6 % relative recall together with +7.0 precision
+points at matched call count and matched expression**, or **+14.3 % relative
+recall at matched precision**. That score has to be fitted offline, and to be
+fitted at all it needs per-site covariates written at call time. This release
+writes them; it does not score anything.
+
+### Added
+
+- **`--pas-features {off,on}`** (`pas_features`), **default `on`** —
+  append 24 columns to `pas_support.tsv`. `off` is the previous behaviour,
+  byte-for-byte.
+
+  It **adds, drops and moves no PAS**. `pasbed.bed` stays BED6, the count
+  matrix is untouched, and every pre-existing sidecar column keeps its name,
+  its position and its value — columns are only ever appended. It is a flag
+  and not unconditional because the sidecar's *bytes* change, and on this
+  branch previous output must stay reachable exactly.
+
+  | group | columns |
+  |---|---|
+  | written by the caller | `clip_positions` `clip_span` |
+  | genomic sequence | `seq_ok` `ip_tool_flag` `ip_tool_afrac` `ip_tool_arun` `a_count_d18` `a_frac_d18` `a_run_d18` `a_frac_d30` `a_run_d30` `kin_ip_flag` `hex_strong` `hex_any12` `hex_n_types` `hex_best_off` `hex_strong_off` |
+  | local candidate context | `d_prev_cand` `d_next_cand` `n_cand_100` `n_cand_500` `mol_500_sum` `is_local_mol_max` `mol_frac_local` |
+
+  Every column is documented in `docs/cli/run.md`.
+
+- `run_config.json` records `pas_features` under `variables`, so a run tree
+  states which sidecar schema produced it.
+
+- Multi-BAM runs, whose PAS ids are re-keyed at merge time and which therefore
+  have no run-root `pas_support.tsv` to extend, get a standalone
+  `<run>/pas_features.tsv` in the merged id space instead.
+
+### Cost: no extra pass over anything
+
+`clip_positions` / `clip_span` come from numbers the caller already has —
+tier 1 from the single-linkage cluster's own member list, tier 2 from the same
+`±--polya-window` slice its four clip counts already come from.
+
+The 22 sequence and context columns are computed at the internal-priming
+stage, **inside the pass that already walks the PAS BED with the genome
+open**: one extra 71 nt slice per PAS from a contig record already in hand.
+The genome is opened exactly as many times with the features on as with them
+off, and that is asserted by a test rather than argued. When `--genome-fasta`
+is supplied but `--ip-filter` is not, the feature scan *is* that single pass
+(it drops nothing and writes no BED). With no FASTA at all the sequence
+columns are `NA` — announced by a warning, never silently — and the context
+columns are still real.
+
+### Strand
+
+Every window is transcript-relative around the cleavage base (BED `end - 1` on
+`+`, BED `start` on `-`) and is reverse-complemented on `-`, the same
+convention the internal-priming window was corrected to. The first base's
+offset is derived from the bases *actually returned*, so clamping at a contig
+start and truncation at a contig end are accounted for rather than assumed
+away: a window that does not fully cover `r in [-40, +30]` reports `seq_ok 0`
+and `NA`, never a silently short denominator. `seq_ok` is `NA` rather than `0`
+when no genome was supplied, so "no genome" stays distinguishable from
+"contig edge".
+
+### `ip_tool_afrac` is the veto's own window
+
+On separating genuine long-read 3' termini from internal-priming decoys, the
+tool's own A-fraction over its internal-priming window — **inverted** — is a
+stronger discriminator (AUC 0.7790) than the entire 49-feature model that
+motivated this column set (0.7655). It is therefore taken from the very string
+the veto tests, so it tracks `--ip-window-left` / `--ip-window-right` exactly
+and cannot drift from the rule it summarises.
+
+`ip_tool_flag` is emitted **in addition to** the internal-priming veto and
+never as a replacement for it: every configuration in which a score was
+allowed to override that veto looked excellent against a curated atlas and no
+better than the plain rule against long reads. The veto stays a hard gate.
+
+### Not emitted, on purpose
+
+* A second BAM pass for per-cell clip counts, top-cell share, end counts at
+  ±5/25/100, pileup sharpness or end-position entropy: **0.000–0.002** held-out
+  AUC.
+* Any molecule-end pileup statistic: after matching on local read depth, a
+  molecule-end pileup at a true missed site is as likely as at a random
+  position of the same depth (0.95–1.01×), against 11.4× for the clip channel.
+* Anything needing a sequence window wider than `r in [-40, +30]`.
+
+---
+
 ## Unreleased (branch `peakAtail-prime`) — read acceptance geometry
 
 **Two new flags. Both default to the previous behaviour, and one of them

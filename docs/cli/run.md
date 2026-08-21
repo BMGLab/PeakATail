@@ -215,6 +215,7 @@ Options:
 | `--barcode-tag` | TEXT | CB | BAM tag carrying the cell barcode. Defaults to `CB` (Cell Ranger convention). |
 | `--read-geometry` | `fixed`/`keep`/`true` | `fixed` | How a read's genomic interval is derived. See below. |
 | `--read-exclude-flags` | INT | 0 | SAM flag mask vetoed on the coverage/count channel, like `samtools view -F`. `0` = no filtering. See below. |
+| `--pas-features` | `off`/`on` | `on` | Append per-site scoring features to `pas_support.tsv`. Adds, drops and moves no PAS. See [`--pas-features`](#pas-features--per-site-scoring-covariates). |
 
 #### `--read-geometry` — how a read becomes an interval
 
@@ -415,12 +416,106 @@ single-BAM runs, merged into `<run>/pas_support.tsv`:
 | `window_reads` | reads counted into this PAS's count-matrix row |
 | `tier` | `1` = clip-seeded cluster, `2` = coverage candidate |
 
+With `--pas-features on` (the default) another 24 columns are **appended**
+after these seven — see [`--pas-features`](#pas-features--per-site-scoring-covariates).
+Columns are only ever added at the end: the seven above keep their names,
+their order and their values, so a reader that indexes them positionally is
+unaffected.
+
 The sidecar is a superset of the run-root `pasbed.bed`, which is rewritten
 after the cell/count filters; join on `pas_id`.
 
 Comparing `clip_reads` with `clip_umis` is the honest way to see PCR
 duplication at a site, and `clip_umis_f3844` shows what the stricter
 `--polya-clip-filter f3844` gate would keep — without re-running.
+
+#### `--pas-features` — per-site scoring covariates
+
+`on` (default) appends 24 columns to `pas_support.tsv`. It **changes nothing
+else**: no PAS is added, dropped or moved, `pasbed.bed` stays BED6, the count
+matrix is untouched, and every pre-existing sidecar column keeps its position
+and its bytes. `off` restores the seven-column sidecar exactly.
+
+They exist so a per-site score can be **fitted offline** and applied as a
+re-ranker inside the caller's existing gates. Nothing in the pipeline reads
+them; they are an annotation.
+
+**Cost.** Two of the columns are computed by the caller from numbers it
+already has. The other 22 are computed at the internal-priming stage, inside
+the pass that already walks the PAS BED with the genome open — the genome is
+opened exactly as many times with the features on as with them off. The
+sequence columns need `--genome-fasta`; without one they are written `NA` and
+a warning says so. If `--genome-fasta` is supplied but `--ip-filter` is not,
+the feature scan *is* that single pass (it drops nothing and writes no BED).
+
+**Written by the caller, per emitted PAS**
+
+| column | meaning |
+|---|---|
+| `clip_positions` | distinct poly(A) clip **positions** backing this PAS. Tier 1: the members of the single-linkage cluster. Tier 2: the clip positions inside the same ±`--polya-window` its four clip counts come from. |
+| `clip_span` | bp between the first and the last of them (`0` when there is at most one). Bounded above by `--polya-seed-window × (clip_positions − 1)` for tier 1. |
+
+**Written from the genome, in transcript orientation**
+
+`r` is the offset from the cleavage base `c` (BED `end − 1` on `+`, BED
+`start` on `−`). `r > 0` is **downstream in transcript orientation**, which on
+`−` runs toward *lower* genomic coordinates; the window is
+reverse-complemented there. The fetched window is `r ∈ [−40, +30]`.
+
+| column | meaning |
+|---|---|
+| `seq_ok` | `1` if the whole `[−40, +30]` window was readable. `0` at a contig edge or a contig missing from the FASTA (every other sequence column is then `NA`). `NA` — not `0` — when no `--genome-fasta` was supplied at all, so "no genome" stays distinguishable from "edge". |
+| `ip_tool_flag` | the caller's **own** internal-priming call for this site — the same boolean `--ip-filter` vetoes on. Emitted **in addition to** the veto, never as a replacement for it. |
+| `ip_tool_afrac` | A fraction over the caller's internal-priming window (`--ip-window-left`/`--ip-window-right`, default `r ∈ [−9, +30]`), computed from the very string the veto tested. |
+| `ip_tool_arun` | longest A run over that same window. |
+| `a_count_d18` | A count in `r +1..+18`. |
+| `a_frac_d18` | `a_count_d18 / 18`. |
+| `a_run_d18` | longest A run in `r +1..+18`. |
+| `a_frac_d30` | A fraction in `r +1..+30`. |
+| `a_run_d30` | longest A run in `r +1..+30`. |
+| `kin_ip_flag` | `1` when `a_count_d18 ≥ 12` — the "≥12 of 18 downstream A" rule the long-read internal-priming decoy set uses. |
+| `hex_strong` | `AATAAA` or `ATTAAA` present in `r −40..−5`. |
+| `hex_any12` | any of the 12 canonical hexamers (`AATAAA ATTAAA TATAAA AGTAAA AATACA CATAAA GATAAA AATATA AATAGA AAAAAG ACTAAA AAGAAA`) present in `r −40..−5`. |
+| `hex_n_types` | how many distinct canonical hexamers matched. |
+| `hex_best_off` | `r` of the **last base** of the 3′-most hexamer hit (always negative; `0` = no hit). |
+| `hex_strong_off` | the same, restricted to `AATAAA`/`ATTAAA`. |
+
+`ip_tool_afrac` is the one to look at first: on separating genuine long-read
+3′ termini from internal-priming decoys, this single number — inverted — is
+a stronger discriminator than the whole 49-feature model that motivated the
+column set.
+
+**Written from the PAS BED — same contig, same strand**
+
+The neighbourhood is the candidate set present when the features are
+collected: both tiers, before the internal-priming veto drops anything.
+(`--polya-mode filter` removes the coverage-only tier *before* this point, so
+its context columns describe the smaller set; `run_config.json` records which
+you ran.)
+
+| column | meaning |
+|---|---|
+| `d_prev_cand` | bp to the previous same-strand candidate (`1000000` = none). |
+| `d_next_cand` | bp to the next same-strand candidate (`1000000` = none). |
+| `n_cand_100` | **other** same-strand candidates within ±100 bp. |
+| `n_cand_500` | **other** same-strand candidates within ±500 bp. |
+| `mol_500_sum` | sum of BED column 5 over that ±500 bp neighbourhood, this candidate included. |
+| `is_local_mol_max` | `1` when no candidate in the neighbourhood has more molecules (ties count as max). |
+| `mol_frac_local` | this candidate's share of `mol_500_sum` (`0.0` when the neighbourhood has no molecules at all). |
+
+**What is deliberately *not* emitted.** A second BAM pass for per-cell clip
+statistics, end counts or pileup sharpness, and any molecule-end pileup
+feature: both were measured and are worth nothing here (0.000–0.002 held-out
+AUC for the first; after matching on local read depth, a molecule-end pileup
+at a true missed site is as likely as at a random position of the same depth).
+Nothing that needs a wider sequence window than `r ∈ [−40, +30]` is emitted
+either.
+
+**Multi-BAM runs** re-key their PAS ids when the datasets are merged, so there
+is no run-root `pas_support.tsv` to extend; those runs get a standalone
+`<run>/pas_features.tsv` with `pas_id` plus the 22 seam columns, in the merged
+id space. The per-caller `<bed>.support.tsv` files still carry the two
+call-time columns.
 
 ### Internal-priming annotation (D9)
 

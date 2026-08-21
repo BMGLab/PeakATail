@@ -594,3 +594,232 @@ def test_end_to_end_seam_features_are_real(tmp_path):
     # ...and context is real for every row, even the ones with no sequence
     for row in feats.values():
         assert row["n_cand_100"] != pf.NA
+
+
+# ---------------------------------------------------------------------------
+# the ema.main seam, end to end -- including the "no extra FASTA pass" claim
+# ---------------------------------------------------------------------------
+_SEAM_ARG_NAMES = ("ip_filter", "ip_filter_mode", "annot_filter", "genome_fasta",
+                   "annotation_bed", "ip_a_stretch", "ip_a_fraction",
+                   "ip_window_left", "ip_window_right", "polya_evidence",
+                   "polya_mode")
+
+
+@pytest.fixture
+def seam(tmp_path, monkeypatch):
+    """A run dir with pos/neg PAS BEDs, a v2-shaped ``pas_support.tsv`` and a
+    synthetic genome -- plus a counter on every ``pyfaidx.Fasta`` construction.
+
+    The counter is the point of this fixture.  TASK C's cost claim is "no
+    extra pass over the FASTA beyond what the internal-priming filter already
+    does", and the only honest way to assert that is to count the opens.
+    """
+    pytest.importorskip("pyfaidx")
+    import pyfaidx
+
+    from ema.config import args, directory_config, set_directory_config
+    from ema.outputs import OutputManager
+
+    ns = args._get()
+    for name in _SEAM_ARG_NAMES:
+        try:
+            delattr(ns, name)
+        except AttributeError:
+            pass
+
+    run_dir = tmp_path / "run"
+    set_directory_config(output_dir=run_dir, gtf_dir=None)
+    mgr = OutputManager(base_dir=str(run_dir))
+    mgr.setup()
+
+    seq = list(("CG" * 300)[:600])
+    seq[110:118] = list("A" * 8)         # downstream of the '+' PAS at end=100
+    seq[275:283] = list("T" * 8)         # downstream of the '-' PAS at start=300
+    # AATAAA UPSTREAM of the '-' PAS at BED start 300 means genomically ABOVE
+    # it: transcript r = 300 - x, so x in [320, 326) is r -20..-25 and the
+    # hexamer's transcript-oriented LAST base sits at r = -20.
+    seq[320:326] = list("TTTATT")        # revcomp("AATAAA")
+    genome = tmp_path / "genome.fa"
+    with open(genome, "w") as fh:
+        fh.write(">chr1\n" + "".join(seq) + "\n")
+
+    Path(directory_config.posbed).write_text(
+        "chr1\t99\t100\t1\t5\t+\n"
+        "chr1\t199\t200\t2\t1\t+\n"
+    )
+    Path(directory_config.negbed).write_text("chr1\t300\t301\t3\t7\t-\n")
+    support = run_dir / "pas_support.tsv"
+    support.write_text(
+        "\t".join(SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS) + "\n"
+        "1\t9\t5\t0\t0\t120\t1\t2\t7\n"
+        "2\t1\t1\t0\t0\t44\t1\t1\t0\n"
+        "3\t14\t7\t0\t0\t260\t1\t3\t18\n"
+    )
+
+    opens: list[str] = []
+    real_fasta = pyfaidx.Fasta
+
+    def counting_fasta(*a, **kw):
+        opens.append(str(a[0]) if a else "?")
+        return real_fasta(*a, **kw)
+
+    monkeypatch.setattr(pyfaidx, "Fasta", counting_fasta)
+
+    variable_config.pas_features = "on"
+    yield {"mgr": mgr, "run_dir": run_dir, "genome": genome,
+           "support": support, "opens": opens}
+
+    for name in _SEAM_ARG_NAMES:
+        try:
+            delattr(ns, name)
+        except AttributeError:
+            pass
+
+
+def _seam_support_rows(support: Path) -> tuple[list[str], dict[str, dict]]:
+    lines = support.read_text().splitlines()
+    cols = lines[0].split("\t")
+    return cols, {ln.split("\t")[0]: dict(zip(cols, ln.split("\t")))
+                  for ln in lines[1:]}
+
+
+def test_seam_appends_every_feature_column_inside_the_ip_pass(seam):
+    from ema.config import args
+    from ema.main import _apply_pas_filters, _write_pas_features
+
+    args.ip_filter = True
+    args.ip_filter_mode = "annotate"
+    args.genome_fasta = str(seam["genome"])
+    args.annot_filter = False
+
+    res = _apply_pas_filters(seam["mgr"])
+    _write_pas_features(res)
+
+    # The genome is opened once per strand BED -- exactly what the shipped
+    # internal-priming filter already does.  The features add none of their
+    # own; test_features_add_no_fasta_open below pins that as a difference.
+    assert len(seam["opens"]) == 2, seam["opens"]
+
+    cols, rows = _seam_support_rows(seam["support"])
+    assert cols[:len(SUPPORT_COLUMNS)] == list(SUPPORT_COLUMNS)
+    assert cols[len(SUPPORT_COLUMNS):len(SUPPORT_COLUMNS) + 2] == list(CALL_FEATURE_COLUMNS)
+    assert cols[len(SUPPORT_COLUMNS) + 2:] == list(pf.SEAM_FEATURE_COLUMNS)
+    assert set(rows) == {"1", "2", "3"}
+    # the v2 values are untouched
+    assert rows["1"]["clip_reads"] == "9" and rows["3"]["window_reads"] == "260"
+    # '+' PAS 1: 8-A run implanted downstream
+    assert rows["1"]["seq_ok"] == "1"
+    assert rows["1"]["a_run_d18"] == "8"
+    assert rows["1"]["ip_tool_flag"] == "1"
+    assert float(rows["1"]["ip_tool_afrac"]) > 0.15
+    # '-' PAS 3: the T-run is downstream in transcript orientation
+    assert rows["3"]["a_run_d30"] == "8"
+    assert rows["3"]["hex_strong"] == "1"      # revcomp(TTTATT) == AATAAA
+    assert rows["3"]["hex_strong_off"] == "-20"
+    # context: PAS 1 and 2 are 100 bp apart on '+', PAS 3 is alone on '-'
+    assert rows["1"]["d_next_cand"] == "100"
+    assert rows["1"]["n_cand_100"] == "1"
+    assert rows["1"]["is_local_mol_max"] == "1"
+    assert rows["3"]["d_prev_cand"] == str(pf.NO_NEIGHBOUR)
+    assert rows["3"]["mol_500_sum"] == "7"
+
+
+def test_seam_without_ip_filter_still_makes_only_one_fasta_pass(seam):
+    from ema.config import args
+    from ema.main import _apply_pas_filters, _write_pas_features
+
+    args.ip_filter = False
+    args.annot_filter = False
+    args.genome_fasta = str(seam["genome"])
+
+    res = _apply_pas_filters(seam["mgr"])
+    _write_pas_features(res)
+
+    from ema.config import directory_config
+
+    # One open per strand BED, i.e. the same count the IP filter would have
+    # made -- the features-only scan replaces that pass, it does not add one.
+    assert len(seam["opens"]) == 2, seam["opens"]
+    _cols, rows = _seam_support_rows(seam["support"])
+    assert rows["1"]["seq_ok"] == "1" and rows["1"]["a_run_d18"] == "8"
+    # nothing was dropped: the scan is annotate-only and writes no BED
+    assert len(Path(directory_config.posbed).read_text().splitlines()) == 2
+    assert len(Path(directory_config.negbed).read_text().splitlines()) == 1
+
+
+def test_seam_without_a_genome_leaves_sequence_columns_NA(seam):
+    from ema.config import args
+    from ema.main import _apply_pas_filters, _write_pas_features
+
+    args.ip_filter = False
+    args.annot_filter = False
+    args.genome_fasta = None
+
+    res = _apply_pas_filters(seam["mgr"])
+    _write_pas_features(res)
+
+    assert seam["opens"] == [], "no FASTA was supplied; none may be opened"
+    _cols, rows = _seam_support_rows(seam["support"])
+    for c in pf.SEQ_FEATURE_COLUMNS:
+        assert rows["1"][c] == "NA"
+    # ...but the context columns are real
+    assert rows["1"]["d_next_cand"] == "100"
+    assert rows["2"]["d_prev_cand"] == "100"
+
+
+def test_seam_off_leaves_the_sidecar_byte_identical(seam):
+    from ema.config import args
+    from ema.main import _apply_pas_filters, _write_pas_features
+
+    variable_config.pas_features = "off"
+    args.ip_filter = True
+    args.ip_filter_mode = "annotate"
+    args.genome_fasta = str(seam["genome"])
+    args.annot_filter = False
+
+    before = seam["support"].read_bytes()
+    res = _apply_pas_filters(seam["mgr"])
+    _write_pas_features(res)
+    assert seam["support"].read_bytes() == before
+    assert res.get("pas_features") is None
+
+
+def test_seam_writes_a_standalone_table_when_there_is_no_sidecar(seam):
+    """The multi-BAM path: PAS ids were re-keyed, so there is no run-root
+    ``pas_support.tsv`` to join to and the features go in their own file."""
+    from ema.config import args
+    from ema.main import _apply_pas_filters, _write_pas_features
+
+    seam["support"].unlink()
+    args.ip_filter = False
+    args.annot_filter = False
+    args.genome_fasta = str(seam["genome"])
+
+    _write_pas_features(_apply_pas_filters(seam["mgr"]))
+    out = seam["run_dir"] / "pas_features.tsv"
+    lines = out.read_text().splitlines()
+    assert lines[0].split("\t") == ["pas_id"] + list(pf.SEAM_FEATURE_COLUMNS)
+    assert [ln.split("\t")[0] for ln in lines[1:]] == ["1", "2", "3"]
+
+
+def test_features_add_no_fasta_open(seam):
+    """The cost claim, asserted rather than argued: with --ip-filter on, the
+    number of times the genome is opened is the SAME whether the features are
+    collected or not."""
+    from ema.config import args
+    from ema.main import _apply_pas_filters, _write_pas_features
+
+    args.ip_filter = True
+    args.ip_filter_mode = "annotate"
+    args.genome_fasta = str(seam["genome"])
+    args.annot_filter = False
+
+    pristine = seam["support"].read_bytes()
+    counts = {}
+    for mode in ("off", "on"):
+        seam["support"].write_bytes(pristine)
+        seam["opens"].clear()
+        variable_config.pas_features = mode
+        _write_pas_features(_apply_pas_filters(seam["mgr"]))
+        counts[mode] = len(seam["opens"])
+    assert counts["on"] == counts["off"] > 0, counts
