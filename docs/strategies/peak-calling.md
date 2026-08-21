@@ -285,7 +285,8 @@ at n=2,361.
   destroys the evidence. The caller warns at startup when the observed clip
   rate falls below 0.3% of CB reads; treat its output as unsupported when it
   does.
-- **Internal priming** — a genomic A-run downstream of a cluster — is this
+- **Internal priming** — a genomic A-run downstream of a cluster (in
+  transcript orientation; a T-run genomically upstream on `-`) — is this
   evidence type's one systematic false positive, and is not covered by the
   wrong-end control. Pair with `--ip-filter --genome-fasta`.
 - Higher memory than the coverage-only strategies: clip sites and buffered
