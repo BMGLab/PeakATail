@@ -522,10 +522,16 @@ def _build_diff_isoform_groups(
         )
 
     if isoform_agg == "within_utr":
+        # Gene -> every PAS of that gene, used as the background for the
+        # UTR-agnostic fallback bucket below.  Built from the same rank-free
+        # map this function already uses above (_build_gene_id_map yields
+        # {pas_id: gene_id}); the previous code referenced a
+        # `gene_fallback_map` local that only exists in run_length, so this
+        # branch raised NameError for every within_utr / between_utr call.
         gene_to_all_pas: dict[str, list] = {}
-        for pas_id, entries in gene_fallback_map.items():
+        for pas_id, gene_id in _build_gene_id_map(adata).items():
             if pas_id in diff_cols:
-                gene_to_all_pas.setdefault(entries[0][0], []).append(pas_id)
+                gene_to_all_pas.setdefault(gene_id, []).append(pas_id)
 
         groups: list[dict] = []
         for utr_id, members in utr_pas_members.items():
