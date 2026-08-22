@@ -41,6 +41,47 @@ writes them; it does not score anything.
   have no run-root `pas_support.tsv` to extend, get a standalone
   `<run>/pas_features.tsv` in the merged id space instead.
 
+### Measured on two development slices
+
+Full transcript and reproduction commands: `results/prime/TASK_C_pas_features.md`.
+
+**The call set does not move.** `pas.bed` has the same md5 in every arm — v2, prime with the
+features on, and prime with them off — on PBMC chr19+21 (`bb65b0e0…`, n 15,925 | tier1 8,524 |
+tier2 7,401 | tier1≥2mol 2,883) and on GSE104556 mouse1 chr18+19 (`57b86628…`, n 4,141), with
+and without `--ip-filter`.
+
+**Previous output stays reachable.** `--pas-features off` against a run of the pre-branch code:
+**51 / 51 data files byte-identical** on both slices, `pas_support.tsv` included. The only
+differences in either tree are the keys `read_geometry`, `read_exclude_flags` and `pas_features`
+now recorded under `variables` in `run_config.json` / `run_manifest.json`.
+
+**Cost.** Whole-run peak RSS **+0.28 %** (PBMC) and **+0.55 %** (mouse1). The whole-run wall
+delta is not usable — the `off` arm, which does strictly less work, was the slowest PBMC run in
+the set, so the box's run-to-run spread (30 s on a 6-minute run) exceeds the effect. Measured
+directly instead, one arm per process over the real caller BEDs and the real genome:
+
+| slice | candidates | internal-priming pass alone | + all 22 seam columns, appended |
+|---|---:|---:|---:|
+| PBMC chr19+21 | 32,752 | 0.286 s / 17.0 MB | **1.319 s / 39.6 MB** |
+| mouse1 chr18+19 | 11,444 | 0.109 s / 16.1 MB | **0.485 s / 24.2 MB** |
+
+**+1.03 s and +22.6 MB** (PBMC), **+0.38 s and +8.1 MB** (mouse1) — 32 µs and ~0.49 kB per
+candidate. Projected onto a genome-wide PBMC run's 651,957 PAS: ≈ 21 s and ≈ 320 MB held while
+the seam runs.
+
+**The values are the offline analysis's, verified twice.** Joined on
+`(contig, cleavage, strand)`: every sequence column agrees **exactly** with the stored offline
+feature table on all **15,925** coordinates the two runs share, and with a fresh run of that
+analysis's own script over `bedtools getfasta -s` windows on **3,000** sampled sites. The
+context columns agree on 95.4–99.9 %, and every disagreement is the expected consequence of the
+two runs having different candidate sets (32,752 here against 19,242 in the genome-wide table on
+the same two contigs) — anyone fitting a model must recompute the context block from the tool's
+own output rather than reusing the offline one.
+
+**Internal consistency.** `ip_tool_flag == 1` on exactly the 5,015 sites the internal-priming
+veto dropped on the PBMC slice — the covariate and the gate agree on every site, which is the
+point of taking it from the string the veto tested.
+
 ### Cost: no extra pass over anything
 
 `clip_positions` / `clip_span` come from numbers the caller already has —
