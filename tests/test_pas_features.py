@@ -441,14 +441,29 @@ def test_write_features_tsv_is_sorted_by_numeric_pas_id(tmp_path):
 def test_collector_without_a_genome_says_NA_not_zero():
     coll = FeatureCollector()
     coll.add("1", "1", "+", 100, 5, None)
-    feats = coll.finish()["1"]
+    coll.finish()
+    feats = coll.parsed("1")
     # every SEQUENCE column is NA, including seq_ok: "no genome was supplied"
     # is a different fact from "this site is at a contig edge" (seq_ok == 0)
     for c in pf.SEQ_FEATURE_COLUMNS:
         assert feats[c] == pf.NA
     # ...while the context columns are real -- they only need the BED
-    assert feats["n_cand_100"] == 0
-    assert feats["mol_500_sum"] == 5
+    assert feats["n_cand_100"] == "0"
+    assert feats["mol_500_sum"] == "5"
+
+
+def test_the_collector_stores_text_not_a_dict_per_candidate():
+    """A genome-wide run has ~650 k candidates.  Holding a 24-key dict for
+    each costs ~1.5 kB apiece; the tab-joined text those values are about to
+    become costs ~0.15 kB.  `parsed()` is the by-name view."""
+    coll = FeatureCollector()
+    coll.add("7", "1", "+", 100, 5, {"seq_ok": 1, "a_run_d18": 4})
+    assert isinstance(coll.features["7"], str)
+    assert coll.parsed("7")["a_run_d18"] == "4"
+    coll.finish()
+    assert len(coll.features["7"].split("\t")) == len(pf.SEAM_FEATURE_COLUMNS)
+    assert coll.finish() is coll.features          # idempotent
+    assert coll.rows == []                          # coordinates released
 
 
 def test_collect_from_bed_reads_the_cleavage_base_per_strand(tmp_path):
@@ -539,9 +554,9 @@ def test_collecting_features_does_not_change_the_veto(tmp_path):
     # every scanned row got a feature dict, flagged or not
     assert set(coll.features) == set(plain["flags"])
     for pas_id, flagged in plain["flags"].items():
-        emitted = coll.features[pas_id]["ip_tool_flag"]
+        emitted = coll.parsed(pas_id)["ip_tool_flag"]
         if emitted != pf.NA:
-            assert emitted == int(flagged)
+            assert emitted == str(int(flagged))
 
 
 def test_a_features_only_scan_writes_no_bed(tmp_path):
@@ -567,29 +582,30 @@ def test_end_to_end_seam_features_are_real(tmp_path):
     coll = FeatureCollector()
     filter_internal_priming(str(bed), str(genome), None, mode="annotate",
                             features=coll)
-    feats = coll.finish()
+    coll.finish()
+    feats = {k: coll.parsed(k) for k in coll.features}
     # P1: cleavage 399 on '+', an 8-A run implanted at 410 => r +11..+18
     p1 = feats["P1"]
-    assert p1["seq_ok"] == 1
-    assert p1["a_run_d18"] == 8 and p1["a_count_d18"] == 8
-    assert p1["ip_tool_flag"] == 1          # 8 >= --ip-a-stretch 6
-    assert p1["ip_tool_arun"] == 8
+    assert p1["seq_ok"] == "1"
+    assert p1["a_run_d18"] == "8" and p1["a_count_d18"] == "8"
+    assert p1["ip_tool_flag"] == "1"        # 8 >= --ip-a-stretch 6
+    assert p1["ip_tool_arun"] == "8"
     # M1: cleavage 299 on '-', an 8-T run at genomic [275, 283) => transcript
     # r = 299 - x, i.e. r +17..+24 -- straddling the +1..+18 boundary, which
     # is exactly the kind of off-by-one an untested strand convention hides.
     m1 = feats["M1"]
-    assert m1["a_run_d30"] == 8
-    assert m1["a_run_d18"] == 2 and m1["a_count_d18"] == 2
+    assert m1["a_run_d30"] == "8"
+    assert m1["a_run_d18"] == "2" and m1["a_count_d18"] == "2"
     # P2: AATAAA implanted at 555, cleavage 549 => last base at r +11, NOT in
     # the -40..-5 hexamer window, so it must NOT be counted
-    assert feats["P2"]["hex_strong"] == 0
+    assert feats["P2"]["hex_strong"] == "0"
     # P3: cleavage 594, the same AATAAA at 555..560 => last base r -34
-    assert feats["P3"]["hex_strong"] == 1
-    assert feats["P3"]["hex_strong_off"] == -34
-    assert feats["P3"]["hex_best_off"] == -34
+    assert feats["P3"]["hex_strong"] == "1"
+    assert feats["P3"]["hex_strong_off"] == "-34"
+    assert feats["P3"]["hex_best_off"] == "-34"
     # a contig edge and a missing contig degrade rather than crash
-    assert feats["EDGE"]["seq_ok"] == 0
-    assert feats["GONE"]["seq_ok"] == 0
+    assert feats["EDGE"]["seq_ok"] == "0"
+    assert feats["GONE"]["seq_ok"] == "0"
     assert feats["GONE"]["ip_tool_afrac"] == pf.NA
     # ...and context is real for every row, even the ones with no sequence
     for row in feats.values():

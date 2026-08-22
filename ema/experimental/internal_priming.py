@@ -246,11 +246,11 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
                 passed += 1
                 flags[pas_id] = False
                 if features is not None:
-                    _f = na_features()
-                    features.features[str(pas_id)] = _f
-                    features.rows.append((chrom, strand,
-                                          bed_cleavage(start, end, strand),
-                                          _bed_score(parts), str(pas_id)))
+                    # seq_ok 0, every sequence column NA -- go through add()
+                    # so the collector owns its own storage format.
+                    features.add(pas_id, chrom, strand,
+                                 bed_cleavage(start, end, strand),
+                                 _bed_score(parts), na_features())
                 continue
 
             flags[pas_id] = is_internal_priming

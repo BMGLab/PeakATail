@@ -306,9 +306,11 @@ def _na_sequence_features() -> dict:
 
 
 def na_features() -> dict:
-    """Every seam column at :data:`NA` -- the row for a PAS the seam could not
-    reach at all (contig absent from the FASTA, malformed BED row)."""
-    out = {c: NA for c in SEAM_FEATURE_COLUMNS}
+    """Every SEQUENCE column at :data:`NA` with ``seq_ok`` 0 -- the row for a
+    PAS whose sequence could not be read at all (contig absent from the
+    FASTA).  Distinct from :func:`no_genome_features`, where ``seq_ok`` is
+    itself ``NA`` because no FASTA was supplied."""
+    out = {c: NA for c in SEQ_FEATURE_COLUMNS}
     out["seq_ok"] = 0
     return out
 
@@ -329,7 +331,18 @@ def no_genome_features() -> dict:
 # ---------------------------------------------------------------------------
 def local_context(rows: list[tuple[str, str, int, int, object]],
                   windows: tuple[int, int] = (100, 500)) -> dict:
-    """Neighbourhood features for a whole candidate set.
+    """:func:`context_iter` as a ``{pas_id: {column: value}}`` dict.
+
+    Materialises one small dict per candidate, so it is the readable form for
+    tests and library callers and NOT what :class:`FeatureCollector` uses --
+    see :meth:`FeatureCollector.finish`.
+    """
+    return dict(context_iter(rows, windows))
+
+
+def context_iter(rows: list[tuple[str, str, int, int, object]],
+                 windows: tuple[int, int] = (100, 500)):
+    """Neighbourhood features for a whole candidate set, one at a time.
 
     Args:
         rows: ``(chrom, strand, cleavage, molecules, pas_id)`` for **every**
@@ -338,8 +351,12 @@ def local_context(rows: list[tuple[str, str, int, int, object]],
             ``'-'``); ``molecules`` is BED column 5.
         windows: the two radii, in bp.
 
-    Returns:
-        ``{pas_id: {column: value}}`` over :data:`CONTEXT_FEATURE_COLUMNS`.
+    Yields:
+        ``(pas_id, {column: value})`` over :data:`CONTEXT_FEATURE_COLUMNS`,
+        in no particular order.  Yielding rather than returning a dict of
+        dicts is what keeps the collector's memory flat: a genome-wide run
+        has ~650 k candidates and a 7-key dict each would cost ~0.5 GB for
+        values that are about to be turned into text anyway.
 
     The neighbourhood is **same contig, same strand** and is defined over the
     candidate set present at the seam -- which is the caller's full candidate
@@ -354,7 +371,6 @@ def local_context(rows: list[tuple[str, str, int, int, object]],
     for chrom, strand, pos, mols, pas_id in rows:
         by_key.setdefault((chrom, strand), []).append((pos, mols, pas_id))
 
-    out: dict = {}
     for group in by_key.values():
         group.sort(key=lambda t: t[0])
         pos = [t[0] for t in group]
@@ -372,7 +388,7 @@ def local_context(rows: list[tuple[str, str, int, int, object]],
             hi_b = bisect_right(pos, p + w_big)
             mol_sum = csum[hi_b] - csum[lo_b]
             local_max = max(mols[lo_b:hi_b]) if hi_b > lo_b else m
-            out[pas_id] = {
+            yield pas_id, {
                 "d_prev_cand": (p - pos[i - 1]) if i > 0 else NO_NEIGHBOUR,
                 "d_next_cand": (pos[i + 1] - p) if i + 1 < n else NO_NEIGHBOUR,
                 # "OTHER candidates": self is inside the slice, so subtract it.
@@ -382,14 +398,20 @@ def local_context(rows: list[tuple[str, str, int, int, object]],
                 "is_local_mol_max": int(m >= local_max),
                 "mol_frac_local": round(m / mol_sum, 4) if mol_sum else 0.0,
             }
-    return out
 
 
 # ---------------------------------------------------------------------------
 # writing
 # ---------------------------------------------------------------------------
-def format_row(features: dict, columns: tuple[str, ...]) -> str:
-    """Tab-joined values for *columns*, :data:`NA` for anything missing."""
+def format_row(features, columns: tuple[str, ...]) -> str:
+    """Tab-joined values for *columns*, :data:`NA` for anything missing.
+
+    *features* may already BE the tab-joined string (what
+    :class:`FeatureCollector` stores, so a genome-wide run does not hold a
+    24-key dict per candidate); it is then returned unchanged.
+    """
+    if isinstance(features, str):
+        return features
     return "\t".join(str(features.get(c, NA)) for c in columns)
 
 
@@ -414,12 +436,16 @@ def append_columns(support_path, features: dict,
         if not header:
             return 0
         dst.write(header + "\t" + "\t".join(columns) + "\n")
+        missing = "\t".join([NA] * len(columns))
         for line in src:
             line = line.rstrip("\n")
             if not line:
                 continue
             pas_id = line.split("\t", 1)[0]
-            dst.write(line + "\t" + format_row(features.get(pas_id, {}), columns) + "\n")
+            row = features.get(pas_id)
+            dst.write(line + "\t"
+                      + (missing if row is None else format_row(row, columns))
+                      + "\n")
             n += 1
     tmp.replace(path)
     return n
@@ -466,31 +492,64 @@ class FeatureCollector:
     again later, so nothing re-reads the BED either.
     """
 
-    __slots__ = ("features", "rows", "n_seq", "n_seq_ok")
+    __slots__ = ("features", "rows", "n_seq", "n_seq_ok", "_finished")
+
+    #: The sequence block for a candidate with no genome, preformatted once.
+    _NO_GENOME_ROW = "\t".join([NA] * len(SEQ_FEATURE_COLUMNS))
 
     def __init__(self) -> None:
+        # {pas_id: tab-joined SEQ_FEATURE_COLUMNS, then SEAM_FEATURE_COLUMNS
+        # once finish() has folded the context in}.  A STRING and not a dict:
+        # a genome-wide run has ~650 k candidates, and a 24-key dict each
+        # costs ~1.5 kB against ~0.15 kB for the text those values are about
+        # to become anyway.  Use `parsed()` when you want them by name.
         self.features: dict = {}
         self.rows: list[tuple[str, str, int, int, object]] = []
         self.n_seq = 0        # rows for which sequence features were attempted
         self.n_seq_ok = 0     # ...of which the whole window was readable
+        self._finished = False
 
     def add(self, pas_id, chrom: str, strand: str, cleavage: int,
             molecules: int, feats: dict | None = None) -> None:
         """Record one candidate.  *feats* is the sequence block (or ``None``
         when no genome FASTA was available)."""
-        row = dict(feats) if feats else no_genome_features()
         if feats:
             self.n_seq += 1
-            if row.get("seq_ok") == 1:
+            if feats.get("seq_ok") == 1:
                 self.n_seq_ok += 1
-        self.features[str(pas_id)] = row
-        self.rows.append((chrom, strand, cleavage, molecules, str(pas_id)))
+            row = format_row(feats, SEQ_FEATURE_COLUMNS)
+        else:
+            row = self._NO_GENOME_ROW
+        pas_id = str(pas_id)
+        self.features[pas_id] = row
+        self.rows.append((chrom, strand, cleavage, molecules, pas_id))
 
     def finish(self) -> dict:
-        """Fold the local-context columns in and return ``{pas_id: {col: v}}``."""
-        for pas_id, ctx in local_context(self.rows).items():
-            self.features[pas_id].update(ctx)
+        """Fold the local-context columns in and return
+        ``{pas_id: tab-joined SEAM_FEATURE_COLUMNS}``.
+
+        The context is folded in one candidate at a time (:func:`context_iter`)
+        and the coordinate list is released, so the collector never holds two
+        representations of the same run.  Idempotent.
+        """
+        if self._finished:
+            return self.features
+        for pas_id, ctx in context_iter(self.rows):
+            self.features[pas_id] += "\t" + format_row(
+                ctx, CONTEXT_FEATURE_COLUMNS)
+        self.rows = []
+        self._finished = True
         return self.features
+
+    def parsed(self, pas_id) -> dict:
+        """One candidate's features as ``{column: value}`` (strings).
+
+        The stored form is text; this is the by-name view for tests, logging
+        and library callers.  Values are exactly the characters that reach
+        ``pas_support.tsv``.
+        """
+        cols = SEAM_FEATURE_COLUMNS if self._finished else SEQ_FEATURE_COLUMNS
+        return dict(zip(cols, self.features[str(pas_id)].split("\t")))
 
     def stats(self) -> dict:
         return {
