@@ -411,7 +411,50 @@ The evidence for it is [A2]-only and its gain is entangled with Change 1's. **v2
 
 ---
 
-## Change 5 — cleavage resolution: an `inferred_cleavage` COLUMN, and nothing else
+## Change 5 — cleavage resolution, the clip-rate QC, the IP default, the gene seam  *(LANDED; TASK E)*
+
+**STATUS: all four items implemented and measured on both dev slices. One
+became a default because the measurement supported it (`--ip-filter`), one
+replaced an estimator with an exact count (`--clip-rate-sampling pass`), one
+ships a COLUMN and leaves the coordinate alone (`--cleavage-offset none`), and
+one is a defect that ships DEFAULTED OFF because rescuing it costs precision
+(`--pas-gene-rescue`).** Evidence: `results/prime/taskE/TASK_E.md`,
+`results/prime/taskE/clip_rate_estimators.tsv`,
+`results/prime/taskE/offset_sweep_*.tsv`, `results/prime/taskE/seam_*.txt`,
+`results/prime/taskE/arms_*.tsv`,
+`results/prime/taskE/identity_taskE_compat_vs_v2*`.
+
+1. **`--ip-filter-default auto` (new default) + `--no-ip-filter`.** The veto is
+   the largest measured lift in the caller (+7.7 %–12.8 % relative recall at
+   matched atlas precision) and it was opt-in. A prime run with **no**
+   `--ip-filter` flag now reproduces the v2 `--ip-filter` arm exactly on both
+   slices (PBMC `pas 15,925 | tier1 8,524 | tier1>=2mol 2,883`,
+   P@100 0.7392 / R_det 0.2080; mouse 1 `pas 4,141 | ... | 1,549`). Without a
+   FASTA it disables itself with a loud warning naming the cost.
+2. **`--clip-rate-sampling {head,strided,pass}`, default `pass`.** v2's head
+   scan returns 2.2565 % where the truth on the same denominator is 0.5364 %
+   (reproduced here from the tool's own code path). The "sample across the BAM"
+   design was built, measured and found UNRELIABLE — 1.5258 %/1.8068 % on the
+   full PBMC BAM — because clips are rare and clustered at 3' ends. `pass`
+   instead COUNTS during the peak-calling pass: exact, per (contig, strand),
+   zero extra I/O, one run-level alarm. The docstring's 1.152 % constant is
+   corrected to 0.5730 %.
+3. **`--cleavage-offset {none,auto,<int>}` default `none`, and
+   `--emit-inferred-cleavage on`.** The clip-anchored estimate is **−0.334 bp**
+   (PBMC) / **+0.214 bp** (mouse) — both round to zero, so the caller cannot
+   see from its own evidence the offset the external truths prefer (−1 bp
+   atlas, −2 bp Kinnex, and NOTHING at W ≥ 25). `--auto-cleavage-offset` is now
+   REFUSED under `clip_seeded`.
+4. **`--pas-gene-rescue {off,inside}` default `off`.** 20.4 % of tier-1 clusters
+   are dropped by the gene-assignment tier gate, and **52.8 % of those sit
+   INSIDE a gene body** whose gene has no annotated 3'UTR — 469 of the 514
+   hosts are lncRNA. Rescuing them costs 7.5 precision points for +0.005 recall
+   on PBMC and 2.2 points for +0.0015 on mouse, so the seam is documented and
+   the default does not move.
+
+---
+
+## Change 5 (original plan) — cleavage resolution: an `inferred_cleavage` COLUMN, and nothing else
 
 **Where.** `ema/countmatrix/paswrite.py` (the column), `ema/cli/config_schema.py:503` (a docstring
 that must be retracted), `ema/countmatrix/cleavage_offset.py` (a guard).
@@ -493,7 +536,7 @@ If a future agent implements any of these anyway, it ships **defaulted OFF** and
 | 2 | calibrated per-site score (re-ranker inside tier-1 ∩ IP) | `--pas-score`, `--pas-score-min`, `--pas-score-model` | OFF until the transfer test passes, then `calibrated` | **transfer test first** (mouse 1 → PBMC, mouse 2); beats inverted `ip_tool_afrac` AUC 0.7790; numpy-only at runtime; threshold under Rule T; [24] §3.1 on all three datasets |
 | 3 | read acceptance geometry | `--read-span-mode` | `exact` if it clears §3.1 | full three-dataset re-run (it changes the matrix too); compute guard rail checked here |
 | 4 | genomic-A gate on the clip detector | `--polya-genomic-a-gate` | **OFF** | measured *on top of* Change 1, not against v2 |
-| 5 | `inferred_cleavage` column, offset retraction | `--emit-inferred-cleavage`, `--auto-cleavage-offset` guard | column ON, offset 0 | no existing byte of `pasbed.bed` moves |
+| 5 | `inferred_cleavage` column + offset retraction, clip-rate QC, `--ip-filter` default, gene-seam rescue (TASK E) | `--cleavage-offset`, `--emit-inferred-cleavage`, `--clip-rate-sampling`, `--ip-filter-default` / `--no-ip-filter`, `--pas-gene-rescue{,-min-mol}` | column ON, offset `none`, QC `pass`, IP `auto`, rescue OFF | **DONE**: no byte of `pasbed.bed` moves at the defaults; compat run byte-identical on 50/50 data files |
 
 After each step, without exception: `identity_check.py` on the slice in compat mode, the full test
 suite, and a slice score through `scripts/prime/score_pas.sh`. **Nothing lands with a red suite or a

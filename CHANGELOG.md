@@ -1,5 +1,200 @@
 # Changelog
 
+## Unreleased (branch `peakAtail-prime`) — the cleavage-offset column, the QC that stopped lying, and the seam that drops lncRNAs
+
+Four small, separately-measured changes (TASK E). **One of them is a genuine
+accuracy default (`--ip-filter` turns itself on), one replaces an estimator
+that was 4.2x wrong with an exact count, one ships a column and leaves the
+coordinate alone, and one is a defect I found, measured, and then shipped
+DEFAULTED OFF because the measurement said it costs precision.**
+
+### 1. `--ip-filter` runs by default when a genome FASTA is available
+
+The internal-priming veto is the largest measured accuracy lift in this caller
+— **+7.7 % to +12.8 % relative recall at matched atlas precision, +17.7 % to
++22.9 % at matched long-read precision** (`results/algo_headroom/VERIFY/tables/
+v8_ipveto_value.tsv`) — bigger than every detector change tested put together,
+because it is the only stage that reads genomic sequence. It was an opt-in
+flag, so every benchmark arm in the manuscript ran with it and every user who
+did not read the flag list did not.
+
+`--ip-filter-default auto` (the new default) turns it on whenever a readable
+`--genome-fasta` is present, and **warns loudly, naming the cost, when there is
+none**. `--no-ip-filter` forces it off; `--ip-filter-default off` restores v2.
+
+Measured, default-vs-default on two dev slices: a prime run with **no
+`--ip-filter` flag** reproduces the v2 `--ip-filter` run *exactly* —
+PBMC chr19+21 `pas 15,925 | tier1 8,524 | tier2 7,401 | tier1>=2mol 2,883` and
+P@100 0.7392 / R_det@100 0.2080 / Kinnex t5 P@25 0.7839 on both; GSE104556
+mouse 1 chr18+19 `pas 4,141 | tier1 3,006 | tier2 1,135 | tier1>=2mol 1,549` on
+both. It changes nothing for anyone who already passed the flag, which is the
+point: it changes what a user gets who does not.
+
+### 2. The poly(A) clip-rate QC: an exact count instead of a 4.2x estimate
+
+`check_clip_rate` read the **first 200,000 CB reads** of the file. On a
+coordinate-sorted BAM that is the head of the first contig, and on PBMC 10k v3
+it returns **2.2565 %** where the whole-file rate on the same denominator is
+**0.5364 %** — a 4.2x over-estimate, reproduced here from the tool's own code
+path. Over-estimating is the dangerous direction: this estimator exists to
+shout when the poly(A) evidence channel has been destroyed, and 4.2x high would
+MASK exactly that.
+
+`--clip-rate-sampling {head,strided,pass}`, **default `pass`**:
+
+* **`pass`** — do not estimate. **Count**, during the peak-calling pass the run
+  performs anyway, every read the caller accepts and every qualifying clip
+  among them, and report the EXACT rate per (contig, strand). Zero extra I/O:
+  `clip_site` is already called on each of those reads.
+* `strided` — the "sample across the BAM" design: coordinate-uniform windows,
+  every read whose start falls in one. **Shipped, and measured to be
+  unreliable**: on the full PBMC BAM against the 0.5364 % truth it returns
+  1.5258 % (200k reads) and 1.8068 % (1M) — more reads did not help, because
+  clips are rare AND concentrated at the 3' ends of expressed genes, so the
+  estimate is dominated by which windows happen to hit one. Kept because it is
+  the obvious design and its failure is worth being able to reproduce.
+* `head` — v2, **byte-for-byte including its log line**.
+
+A first `strided` implementation gave each stratum an equal READ quota; it was
+biased, and the bias moved with the stratum count (0.9111 % at 25 strata,
+0.1853 % at 2,500, against a 0.6169 % slice truth). A second took 100 % of MT
+and of every scaffold — 36.2 M reads for a 200,000-read budget. Both are
+recorded in `results/prime/taskE/clip_rate_estimators.tsv`; the shipped window
+sampler is unbiased in construction and still not good enough, which is why the
+default is the exact count.
+
+**The docstring constant is corrected.** `ema/countmatrix/polya.py` stated that
+**1.152 %** of CB reads carry a poly(A) clip. The genome-wide truth is
+**0.5730 %** on the caller's accepted-read denominator (3,195,067 / 557,564,408)
+and **0.5364 %** on `check_clip_rate`'s, 0.3669 % (chr21) to 0.8179 % (chr19)
+per chromosome.
+
+### 3. `inferred_cleavage`: report the offset, do not move the coordinate
+
+Long-read termini sit a few bp UPSTREAM of the clip-seeded caller's reported
+cleavage base. TASK E asked whether that offset can be estimated per library
+from the clip-anchored subset. **It cannot, and that is the result.**
+
+* **The caller's own clip evidence says the offset is zero.** With
+  `--pas-features on` every tier-1 PAS now carries `clip_offset_mean`: the
+  read-weighted mean of (clip position − reported base) over its own cluster,
+  in transcript orientation. Aggregated per library that is **−0.334 bp** over
+  267,520 clip reads in 16,338 clusters (PBMC chr19+21; **76.10 %** of clip
+  reads sit *exactly* on the reported base) and **+0.214 bp** over 124,308
+  reads in 8,722 clusters (mouse 1 chr18+19). Both round to **zero**, so
+  `--cleavage-offset auto` is a measured no-op on both libraries.
+* **The external truths say −1 bp, and only at base-pair resolution.** On the
+  PBMC default arm the exact-match optimum is **−1 bp against the atlas**
+  (P@1 0.3926 → 0.4346) and **−2 bp against Kinnex long reads** (t5 P@1
+  0.2844 → 0.3698); on mouse 1, −1 bp against the atlas (0.3919 → 0.4274).
+  **Nothing at W >= 25 responds**: P@100 moves by 0.0028 over the whole
+  −8…+8 sweep, and the two truths disagree about the optimum at every
+  intermediate window (atlas P@10 wants +5, Kinnex t5 P@10 wants −4). The
+  optimum is otherwise stable — −1 on both strands, both chromosomes and every
+  support bin except the 1-molecule tier. Full sweeps in
+  `results/prime/taskE/offset_sweep_*.tsv`.
+
+So: **`--cleavage-offset {none,auto,<int>}`, default `none`.** The estimate is
+computed and reported regardless (`01_peak_calling/cleavage_offset_stats.json`,
+`run_manifest.json`), and `--emit-inferred-cleavage on` (default) appends
+`inferred_cleavage` to `pas_support.tsv` — the coordinate the offset implies —
+**without moving a byte of `pasbed.bed`**.
+
+A signed offset now works: v2 accepted only positive values and silently
+ignored negative ones. **The sign decides which tier moves**, and that is
+measured, not stylistic: a POSITIVE offset is the coverage correction
+(issue #72, ~+95 bp) and under `clip_seeded` must not touch the clip-anchored
+tier — v2's `skip_supported` rule, and applying +95 there costs 46 points of
+P@10 — while a NEGATIVE offset is the base-pair correction and belongs to that
+tier, tier 2's own P@1 being 0.0016 and flat.
+
+**`--auto-cleavage-offset` is now refused under `--peak-strategy clip_seeded`**
+rather than warned about. It searches a 60–120 bp band for a genomic A-fraction
+crest, so it *cannot* return anything but a large positive number, and the +95
+it estimates is destructive here. The `"A sane data-driven constant is ~90-100
+(try 95)"` advice is removed from `--cleavage-offset`'s help and from
+`docs/cli/run.md`.
+
+**Applying an offset is not free, and the measurement says so.** The shift lands
+before the internal-priming veto and gene assignment, so `--cleavage-offset -1`
+also changes the call set: PBMC slice 15,925 → 15,823 PAS, ΔP@100 +0.0038,
+ΔR_det −0.0009, ΔF1 −0.0007, ΔKinnex t5 P@25 +0.0096, with atlas P@1
+0.3926 → 0.4379. A base-pair-resolution gain, a call-set change, and no
+movement at the windows the manuscript reports — one more reason `none` is the
+default.
+
+**Also measured, and reported rather than fixed:** `cluster_clip_sites` breaks
+read-count ties toward the LOWEST COORDINATE on both strands, which is not
+transcript-oriented. **27.6 %** of multi-position clusters on chr21 have a tied
+top read count, and flipping the tie-break flips the sign of the within-cluster
+asymmetry on both strands (+1.504 → −2.400 on `+`, −1.159 → +1.510 on `−`).
+Changing it would move every tier-1 coordinate, so it is documented here and
+left alone.
+
+### 4. The gene-assignment seam drops PAS in lncRNAs, and no rescue is free
+
+**31–33 % of tier-1 clip clusters never reach `pasbed.bed`.** Decomposed on the
+PBMC chr19+21 slice (16,338 tier-1 clusters): 23.3 % dropped by the
+internal-priming veto, **20.4 % by the gene-assignment tier gate**, 4.1 % for
+having no counts left after the `--min-read` cell filter, 52.2 % kept.
+
+The gene gate is the interesting one, and the mechanism is an **annotation gap,
+not a distance judgement**. `assign_tier` can only award TIER_1/TIER_2 when the
+assigned gene has an annotated 3'UTR **length**, so a PAS at distance 0 — INSIDE
+its gene body — falls through to TIER_3 and is dropped whenever that gene has no
+UTR record. **1,762 of the 3,338 tier-1 clusters the gate drops (52.8 %) are
+inside a gene body**, hosted by 514 genes of which **469 are lncRNA**, 20 miRNA,
+7 snRNA and 18 protein-coding. PeakATail cannot report a PAS in a non-coding
+gene, however much clip evidence backs it. On mouse 1 chr18+19 the same gate
+drops 29.8 % of tier-1 clusters, 25.7 % of them inside a gene body.
+
+`--pas-gene-rescue {off,inside}` (+ `--pas-gene-rescue-min-mol N`) grades those
+TIER_2. **It ships `off`, because it is measured to cost precision:**
+
+| slice | arm | n | P@100 | R_det@100 | F1 | Kinnex t5 P@25 |
+|---|---:|---:|---:|---:|---:|---:|
+| PBMC chr19+21 | default (v2) | 2,883 | **0.7392** | 0.2080 | 0.3246 | **0.7839** |
+| | `inside` | 3,590 | 0.6646 | 0.2132 | 0.3228 | 0.7253 |
+| | `inside`, >=10 molecules | 3,080 | 0.7166 | 0.2102 | 0.3250 | 0.7662 |
+| mouse 1 chr18+19 | default (v2) | 1,549 | **0.7650** | 0.1979 | 0.3144 | — |
+| | `inside` | 1,882 | 0.7428 | 0.1994 | 0.3143 | — |
+| | `inside`, >=10 molecules | 1,805 | 0.7607 | 0.1984 | 0.3147 | — |
+
+The dropped set is genuinely worse (P@100 0.3607 and Kinnex t5 P@25 0.4866 for
+the inside-gene drops, against 0.7392 / 0.7839 for what is kept), and **no
+support floor makes the rescue free**: even the >=10-molecule casualties reach
+only P@100 0.4138 / Kinnex t5 0.5655. `manuscript/24` §3.1 fails on (i) and
+(ii) for every setting on both slices. The recall column also cannot reward it
+— these PAS are, by construction, in genes the detected-gene denominator does
+not contain — so the seam is documented, the flag exists, and the default does
+not move.
+
+### Flags
+
+| flag | values | default | v2 |
+|---|---|---|---|
+| `--ip-filter-default` | `off`, `auto` | **`auto`** | `off` |
+| `--no-ip-filter` | flag | off | (n/a; `--ip-filter` absent) |
+| `--clip-rate-sampling` | `head`, `strided`, `pass` | **`pass`** | `head` |
+| `--cleavage-offset` | `none`, `auto`, signed int | `none` | `0` / `none` |
+| `--emit-inferred-cleavage` | `off`, `on` | **`on`** | `off` |
+| `--pas-gene-rescue` | `off`, `inside` | `off` | `off` |
+| `--pas-gene-rescue-min-mol` | int | `0` | `0` |
+
+`--pas-features on` gains a **25th** column, `clip_offset_mean` (TASK C shipped
+24); `--emit-inferred-cleavage on` appends `inferred_cleavage` after it. Both
+groups stay header-addressed, and `--pas-features off` is still v2 exactly.
+
+### Compatibility
+
+All 50 data files of a PBMC chr19+21 slice run with the v2 pins
+(`--read-geometry fixed --read-exclude-flags 0 --pas-features off --pas-score
+none --cleavage-offset none --emit-inferred-cleavage off --clip-rate-sampling
+head --ip-filter-default off`) are **byte-identical to the v2 reference run**,
+including its clip-rate log line; only `run_config.json` / `run_manifest.json`
+differ, by the keys that record the new options.
+`tests/test_prime_v2_compat_golden.py::_v2_settings()` pins all five new knobs.
+
 ## Unreleased (branch `peakAtail-prime`) — the calibrated per-site score
 
 **One new capability, three flags, and it is OFF by default because the
