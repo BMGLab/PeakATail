@@ -30,6 +30,25 @@ mouse 1 chr18+19 `pas 4,141 | tier1 3,006 | tier2 1,135 | tier1>=2mol 1,549` on
 both. It changes nothing for anyone who already passed the flag, which is the
 point: it changes what a user gets who does not.
 
+> **CORRECTION (adversarial verification pass, 2026-08-22).** The paragraph
+> above is measured with `--ip-filter-mode filter` supplied on BOTH sides. It
+> is **not** what the branch default alone does. `--ip-filter-mode` defaults to
+> `annotate` (the D9 decision: an internally-primed peak is more likely real
+> alternative-PAS signal than noise, so every peak is kept and merely flagged),
+> and `--ip-filter-default auto` decides only whether the veto **runs**, not
+> whether it **drops**. Re-measured on the PBMC chr19+21 slice with the branch
+> defaults, a genome FASTA and no other flag:
+> `peak_filters_stats.json` reports mode `annotate`, **flagged 5,015,
+> filtered 0**, and the run writes `pas 18,865 | tier1 10,886 | tier2 7,979 |
+> tier1>=2mol 3,643` — v2's call set to the row, not 15,925.
+> **So the advertised +7.7 %–12.8 % is NOT delivered by the default**; it is
+> the lift of `--ip-filter-mode filter`, which a user still has to ask for.
+> The run now says so (`_resolve_ip_filter` logs a WARNING naming the mode when
+> the policy turns the veto on in a mode that drops nothing), and
+> `tests/test_prime_ip_default_mode.py` pins it. Moving `--ip-filter-mode`'s
+> default is an adoption decision — it changes the call set of every run — and
+> belongs to whoever owns the pre-registration, not to a quiet fix.
+
 ### 2. The poly(A) clip-rate QC: an exact count instead of a 4.2x estimate
 
 `check_clip_rate` read the **first 200,000 CB reads** of the file. On a

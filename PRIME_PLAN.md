@@ -431,6 +431,16 @@ one is a defect that ships DEFAULTED OFF because rescuing it costs precision
    slices (PBMC `pas 15,925 | tier1 8,524 | tier1>=2mol 2,883`,
    P@100 0.7392 / R_det 0.2080; mouse 1 `pas 4,141 | ... | 1,549`). Without a
    FASTA it disables itself with a loud warning naming the cost.
+
+   > **CORRECTED by the adversarial verification pass (2026-08-22).** Those
+   > numbers are from runs that ALSO passed `--ip-filter-mode filter`. The
+   > branch default runs the veto in `annotate` mode, which flags and drops
+   > nothing: measured on the PBMC chr19+21 slice at the defaults with a FASTA
+   > and no other flag, `flagged 5,015 / filtered 0` and `pas 18,865` — v2's
+   > call set, not 15,925. `--ip-filter-default auto` decides whether the veto
+   > RUNS; `--ip-filter-mode` decides whether it DROPS, and this plan's claim
+   > that its "v2 default" is `filter` is wrong (it is `annotate`). The lift is
+   > real but is not on by default. See `tests/test_prime_ip_default_mode.py`.
 2. **`--clip-rate-sampling {head,strided,pass}`, default `pass`.** v2's head
    scan returns 2.2565 % where the truth on the same denominator is 0.5364 %
    (reproduced here from the tool's own code path). The "sample across the BAM"
