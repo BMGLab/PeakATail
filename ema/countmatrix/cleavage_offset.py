@@ -907,3 +907,54 @@ def append_inferred_cleavage(bed_path, support_path,
             written += 1
     _os.replace(tmp, support_path)
     return written
+
+
+def resolve_offset_for_run(spec, *, strategy: str, auto_legacy: bool,
+                           clip_estimate=None, legacy_estimate=None
+                           ) -> tuple[str, int, str]:
+    """Decide the effective cleavage offset and which rows it moves.
+
+    The single decision point ``ema/main.py`` calls, factored out because the
+    matrix of cases is exactly where a regression hides: the first cut of this
+    block dropped the legacy ``--auto-cleavage-offset`` path entirely, so
+    ``--auto-cleavage-offset`` with a COVERAGE strategy silently did nothing.
+    The whole suite stayed green, because the legacy estimator has unit tests
+    and the glue above it had none.
+
+    Args:
+        spec: ``--cleavage-offset`` as given (``"none"`` / ``"auto"`` / int).
+        strategy: ``--peak-strategy``; only ``"clip_seeded"`` is special.
+        auto_legacy: ``--auto-cleavage-offset`` (the issue-#72 A-content
+            estimator).  Refused under ``clip_seeded`` by the caller.
+        clip_estimate: this run's clip-anchored estimate (float), or ``None``
+            when it could not be computed.
+        legacy_estimate: what :func:`resolve_cleavage_offset` returned, or
+            ``None`` when the legacy estimator was not run.
+
+    Returns:
+        ``(mode, offset_bp, rows)`` where ``mode`` is one of
+        ``"none" | "auto" | "const" | "auto_legacy"`` and ``rows`` is
+        :func:`rows_for_offset`'s answer for that offset.
+
+    Raises:
+        ValueError: for ``--cleavage-offset auto`` with no clip estimate --
+            silently falling back to 0 would put a number in the run record
+            that no measurement stands behind.
+    """
+    mode, const = parse_cleavage_offset(spec)
+    if mode == "auto":
+        if clip_estimate is None:
+            raise ValueError(
+                "--cleavage-offset auto needs the caller's per-site "
+                "clip_offset_mean column, which is written by --pas-features "
+                "on. Pass --pas-features on, or give --cleavage-offset an "
+                "explicit integer."
+            )
+        offset = int(round(float(clip_estimate)))
+    elif auto_legacy and legacy_estimate is not None:
+        # The issue-#72 coverage estimator wins over an explicit constant,
+        # exactly as v2 had it (v2 passed the constant in as the fallback).
+        mode, offset = "auto_legacy", int(legacy_estimate)
+    else:
+        offset = int(const)
+    return mode, offset, rows_for_offset(offset, strategy)

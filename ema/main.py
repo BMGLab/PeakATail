@@ -1549,7 +1549,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # peak-calling workers.  ``none`` (default) is a no-op (v2).
     from ema.countmatrix.cleavage_offset import (
         append_inferred_cleavage, estimate_clip_anchored_offset,
-        parse_cleavage_offset, rewrite_bed_cleavage_offset, rows_for_offset,
+        parse_cleavage_offset, resolve_offset_for_run,
+        rewrite_bed_cleavage_offset,
     )
     from ema.countmatrix.paswrite import support_path_for
 
@@ -1605,20 +1606,25 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
                 "inferred_cleavage will report the offset in force."
             )
 
-    if _offset_mode == "auto":
-        if not _clip_diag.get("available"):
-            raise ValueError(
-                "--cleavage-offset auto needs the caller's per-site "
-                "clip_offset_mean column, which is written by --pas-features "
-                "on (this run has --pas-features "
-                f"{getattr(variable_config, 'pas_features', 'off')}). Pass "
-                "--pas-features on, or give --cleavage-offset an explicit "
-                "integer."
-            )
-        _cleavage_offset = int(round(_clip_est))
-    else:
-        _cleavage_offset = int(_offset_const)
-    _rows = rows_for_offset(_cleavage_offset, _strategy)
+    # The legacy issue-#72 estimator still runs for the COVERAGE strategies it
+    # was built for; only clip_seeded refuses it (above).
+    _legacy_est = _legacy_diag = None
+    if _auto_offset:
+        from ema.countmatrix.cleavage_offset import resolve_cleavage_offset
+
+        _legacy_est, _legacy_diag = resolve_cleavage_offset(
+            _offset_const, auto=True,
+            bed_paths=list(all_pos_beds) + list(all_neg_beds),
+            genome_fasta=getattr(args, "genome_fasta", None),
+        )
+
+    _offset_mode, _cleavage_offset, _rows = resolve_offset_for_run(
+        getattr(variable_config, "cleavage_offset", "none"),
+        strategy=_strategy,
+        auto_legacy=_auto_offset,
+        clip_estimate=_clip_est if _clip_diag.get("available") else None,
+        legacy_estimate=_legacy_est,
+    )
 
     # inferred_cleavage is computed from the PRE-SHIFT coordinates, so it and
     # a shifted pasbed.bed agree instead of double-counting the offset.
@@ -1665,6 +1671,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             round(_clip_est, 4) if _clip_est is not None else None),
         "clip_anchored_diagnostics": _clip_diag,
         "emit_inferred_cleavage": _emit_inferred,
+        "auto_cleavage_offset": _auto_offset,
+        "legacy_estimator_diagnostics": _legacy_diag,
     }
     # There is no dedicated "cleavage_offset" stage dir, so
     # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in

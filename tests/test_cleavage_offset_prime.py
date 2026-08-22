@@ -293,3 +293,64 @@ def test_a_sidecar_row_with_no_bed_row_gets_NA(tmp_path):
     got = {l.split("\t")[0]: l.split("\t")[-1]
            for l in sup.read_text().splitlines()[1:]}
     assert got["ghost"] == "NA"
+
+
+# --------------------------------------------------------------------------
+# 6. the decision point — where a regression actually hid
+# --------------------------------------------------------------------------
+from ema.countmatrix.cleavage_offset import resolve_offset_for_run  # noqa: E402
+
+
+def test_the_default_moves_nothing():
+    assert resolve_offset_for_run("none", strategy="clip_seeded",
+                                  auto_legacy=False) == ("none", 0, "all")
+    assert resolve_offset_for_run(0, strategy="lambda_gradient",
+                                  auto_legacy=False) == ("none", 0, "all")
+
+
+def test_an_explicit_constant_wins_and_picks_its_tier():
+    assert resolve_offset_for_run(95, strategy="clip_seeded",
+                                  auto_legacy=False) == ("const", 95, "tier2")
+    assert resolve_offset_for_run(-2, strategy="clip_seeded",
+                                  auto_legacy=False) == ("const", -2, "tier1")
+    assert resolve_offset_for_run(95, strategy="lambda_gradient",
+                                  auto_legacy=False) == ("const", 95, "all")
+
+
+def test_auto_uses_this_runs_clip_anchored_estimate():
+    assert resolve_offset_for_run("auto", strategy="clip_seeded",
+                                  auto_legacy=False,
+                                  clip_estimate=-0.3339) == ("auto", 0, "all")
+    assert resolve_offset_for_run("auto", strategy="clip_seeded",
+                                  auto_legacy=False,
+                                  clip_estimate=-2.7) == ("auto", -3, "tier1")
+
+
+def test_auto_without_an_estimate_raises_rather_than_silently_using_zero():
+    with pytest.raises(ValueError, match="clip_offset_mean"):
+        resolve_offset_for_run("auto", strategy="clip_seeded",
+                               auto_legacy=False, clip_estimate=None)
+
+
+def test_the_legacy_coverage_estimator_is_still_wired_up():
+    """The regression this function exists to prevent: a first cut of main.py's
+    block dropped the issue-#72 path entirely, so --auto-cleavage-offset with a
+    COVERAGE strategy silently did nothing -- and the whole suite stayed green,
+    because the estimator has unit tests and the glue above it had none."""
+    assert resolve_offset_for_run(
+        "none", strategy="lambda_gradient", auto_legacy=True,
+        legacy_estimate=95) == ("auto_legacy", 95, "all")
+    # ...and it beats an explicit constant, exactly as v2 had it
+    assert resolve_offset_for_run(
+        50, strategy="lambda_gradient", auto_legacy=True,
+        legacy_estimate=95) == ("auto_legacy", 95, "all")
+    # ...but not --cleavage-offset auto, which is the clip-anchored estimator
+    assert resolve_offset_for_run(
+        "auto", strategy="lambda_gradient", auto_legacy=True,
+        legacy_estimate=95, clip_estimate=-0.3) == ("auto", 0, "all")
+
+
+def test_the_legacy_estimator_falling_over_leaves_the_explicit_constant():
+    assert resolve_offset_for_run(
+        7, strategy="lambda_gradient", auto_legacy=True,
+        legacy_estimate=None) == ("const", 7, "all")
