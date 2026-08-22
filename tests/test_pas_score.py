@@ -493,3 +493,59 @@ def test_the_default_threshold_comes_from_the_model(seam):
     res, _beds, _ = _run_seam(seam, "calibrated")
     assert res["pas_score_stats"]["threshold"] == pytest.approx(
         ps.load_model("prime1").threshold)
+
+
+def test_select_refuses_to_run_without_the_caller_columns(seam):
+    """A gate that silently does not apply is worse than one that fails.
+
+    Multi-BAM runs re-key their PAS ids at merge time and have no run-root
+    ``pas_support.tsv``; `calibrated` then skips with a warning, but `select`
+    must refuse rather than emit a call set the run record says was filtered.
+    """
+    from ema.config import args
+    from ema.main import _apply_pas_filters
+
+    seam["support"].unlink()
+    ns = args._get()
+    ns.genome_fasta = str(seam["genome"])
+    ns.ip_filter = False
+    variable_config.pas_score = "select"
+    with pytest.raises(ValueError, match="never selected"):
+        _apply_pas_filters(seam["mgr"])
+    variable_config.pas_score = "calibrated"
+    res = _apply_pas_filters(seam["mgr"])          # warns, does not raise
+    assert "pas_score" not in (res or {})
+
+
+def test_a_within_run_transform_is_computed_over_the_whole_run(seam):
+    """`rankpct` must see every candidate, not only the scoreable ones.
+
+    The offline fitter computes the percentile over the run's whole
+    ``pas_support.tsv``; if the seam computed it over the subset it can score,
+    the two would be different numbers with one name.  PAS 5 is on a contig the
+    FASTA does not have, so it is unscoreable -- and it must still count towards
+    everyone else's percentile.
+    """
+    from ema.config import args
+    from ema.main import _apply_pas_filters
+
+    spec = {"family": "linear", "name": "rank", "features": ["clip_reads"],
+            "transform": ["rankpct"], "coef": [8.0], "intercept": -4.0,
+            "threshold": 0.5}
+    (Path(ps.MODEL_DIR) / "pas_score_model_ranktest.json").write_text(
+        json.dumps(spec) + "\n")
+    try:
+        ns = args._get()
+        ns.genome_fasta = str(seam["genome"])
+        ns.ip_filter = False
+        variable_config.pas_score = "calibrated"
+        variable_config.pas_score_model = "ranktest"
+        res = _apply_pas_filters(seam["mgr"])
+        got = res["pas_score"]
+        # sidecar clip_reads: 9, 1, 14, 0, 6, 18 over SIX rows.  PAS 1's value 9
+        # is the 4th smallest of six -> midrank percentile 3.5/6, which is only
+        # true if PAS 5 (unscoreable, clip_reads 6) was counted.
+        assert got["1"] == pytest.approx(1 / (1 + np.exp(-(8 * 3.5 / 6 - 4))))
+        assert np.isnan(got["5"])
+    finally:
+        (Path(ps.MODEL_DIR) / "pas_score_model_ranktest.json").unlink()

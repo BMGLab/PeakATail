@@ -565,7 +565,8 @@ as "we scored it and it lost".
 
 **Cost.** The score rides the pass the internal-priming filter already makes —
 no extra pass over the FASTA, over the BAM or over the BED. Evaluating the
-shipped 161-tree ensemble is a few seconds per 100 k candidates, in the parent
+shipped 161-tree ensemble took **24.4 s for the 652,665 candidates of a
+genome-wide PBMC run** (about 1 % of that run's wall time), in the parent
 process, once per run.
 
 **No scikit-learn at run time.** Models are fitted offline by

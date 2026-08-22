@@ -84,7 +84,9 @@ ships as a column regardless.
   not be read is exempt from `select` rather than silently dropped.
 - **Cost.** PBMC chr19+21 slice at 8 threads with `--pas-score calibrated`:
   6 m 26.5 s / 1.169 GB against the reference 6 m 35.4 s / 1.164 GB — 1.00x wall,
-  1.004x peak RSS.
+  1.004x peak RSS. Genome-wide the score step is **24.4 s for PBMC's 652,665
+  candidates** (18.9 s of that is the 161-tree traversal), about 1 % of that
+  run's wall time, with no extra pass over the BAM, the FASTA or the BED.
 
 ### Measured on all three full BAMs
 

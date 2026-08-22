@@ -464,6 +464,17 @@ def _apply_pas_score(collector, stats: dict, output_mgr) -> None:
 
     support = Path(directory_config.output_dir) / "pas_support.tsv"
     if not support.exists():
+        # Multi-BAM runs re-key their PAS ids in merge_pas_beds, so there is no
+        # run-root sidecar to read the caller columns from.  Annotating is then
+        # simply skipped -- but SELECTING must not be, because a gate that
+        # silently does not apply produces a call set the run record claims was
+        # filtered.  Fail instead.
+        if mode == "select":
+            raise ValueError(
+                "--pas-score select needs the run-root pas_support.tsv for the "
+                "caller's feature columns, and this run has none (multi-BAM "
+                "runs re-key their PAS ids at merge time). Refusing to report a "
+                "score-selected call set that was never selected.")
         log.warning(
             "--pas-score: no run-root pas_support.tsv (multi-BAM runs re-key "
             "their PAS ids in merge_pas_beds); no score computed.")
@@ -507,10 +518,14 @@ def _apply_pas_score(collector, stats: dict, output_mgr) -> None:
     for c in caller_cols:
         cols[c] = pd.to_numeric(sup[c], errors="coerce").values.astype(float)
 
+    # Transforms are applied over the WHOLE candidate population and only then
+    # subset to the scoreable rows.  It matters for any within-run statistic
+    # (the `rankpct` transform): a percentile computed over a subset is a
+    # different number from the one the offline fitter computed over the run.
+    X = model.build_matrix(cols)
     prob = np.full(n, np.nan)
     if ok.any():
-        sub = {k: v[ok] for k, v in cols.items()}
-        prob[ok] = model.predict_proba(sub)
+        prob[ok] = model.predict_proba_matrix(X[ok])
     scores = {str(pid): prob[i] for i, pid in enumerate(ids)}
 
     thr = getattr(_vc, "pas_score_min", -1.0)
