@@ -180,9 +180,16 @@ def read_check(
         # shape of a poly(A) clip read, the evidence this branch exists to
         # keep.  tests/test_read_geometry.py pins the property that matters:
         # every read v2 accepts, "keep" and "true" accept too.  The footprint
-        # test has that property by construction (footprint <= span), and on
-        # the PBMC slice the two rules accept identical sets anyway (every
-        # read there has query length exactly 91 == --seq-len).
+        # test has that property by construction (footprint <= span).
+        #
+        # The two rules are NOT interchangeable on the PBMC slice either, and
+        # in the direction that matters for a *quantification* claim: the
+        # census (results/prime/read_geometry_census_pbmc_slice.tsv) shows
+        # qlen_max 91 and qlen_gt_seqlen 0, so a query-length rule would accept
+        # ALL 11,768,752 reads v2 discards, while the footprint rule accepts
+        # 11,526,534 of them and still rejects 242,218 whose real ALIGNED
+        # footprint exceeds --seq-len (long deletions and the like).  The
+        # footprint rule is the conservative one, and that is deliberate.
         #
         # Soft clips are excluded at BOTH ends: they are not aligned to the
         # reference, and the terminal poly(A) clip in particular is the clip
