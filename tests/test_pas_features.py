@@ -823,3 +823,41 @@ def test_features_add_no_fasta_open(seam):
         _write_pas_features(_apply_pas_filters(seam["mgr"]))
         counts[mode] = len(seam["opens"])
     assert counts["on"] == counts["off"] > 0, counts
+
+
+def test_the_run_root_sidecar_keeps_the_callers_header(tmp_path):
+    """``_write_run_support`` concatenates the per-BED sidecars into the
+    run-root ``pas_support.tsv``.
+
+    FOUND ON THE REAL SLICE, NOT HERE: it wrote a hardcoded seven-column
+    header over the caller's nine-column rows, so every field after ``tier``
+    was silently mislabelled -- ``ip_tool_afrac`` read the value of
+    ``clip_span``, and a model trained on that file would have been trained on
+    shifted columns without anything failing.  The merge had no test at all.
+    """
+    from ema.main import _write_run_support
+
+    header = "\t".join(SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS)
+    for strand, rows in (("pos", ["1\t9\t5\t0\t0\t120\t1\t2\t7"]),
+                         ("neg", ["2\t3\t2\t0\t0\t44\t1\t1\t0"])):
+        bed = tmp_path / f"{strand}.bed"
+        bed.write_text("")
+        Path(support_path_for(bed)).write_text(header + "\n" + "\n".join(rows) + "\n")
+
+    out = tmp_path / "pas_support.tsv"
+    _write_run_support([tmp_path / "pos.bed", tmp_path / "neg.bed"], out)
+    lines = out.read_text().splitlines()
+    assert lines[0].split("\t") == list(SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS)
+    for line in lines[1:]:
+        assert len(line.split("\t")) == len(lines[0].split("\t")), (
+            "a row has a different number of fields from the header"
+        )
+    assert [ln.split("\t")[0] for ln in lines[1:]] == ["1", "2"]
+
+    # ...and a v2 (seven-column) caller sidecar still produces a v2 header
+    for strand in ("pos", "neg"):
+        bed = tmp_path / f"{strand}.bed"
+        Path(support_path_for(bed)).write_text(
+            "\t".join(SUPPORT_COLUMNS) + "\n1\t9\t5\t0\t0\t120\t1\n")
+    _write_run_support([tmp_path / "pos.bed", tmp_path / "neg.bed"], out)
+    assert out.read_text().splitlines()[0].split("\t") == list(SUPPORT_COLUMNS)

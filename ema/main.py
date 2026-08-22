@@ -312,7 +312,9 @@ def run(
 def _write_run_support(bed_paths, out_path) -> None:
     """Concatenate the caller BEDs' poly(A) support sidecars into one
     run-root ``pas_support.tsv`` (pas_id, clip_reads, clip_umis,
-    clip_reads_f3844, clip_umis_f3844, window_reads, tier).
+    clip_reads_f3844, clip_umis_f3844, window_reads, tier -- plus the
+    ``--pas-features on`` call-time columns, whose presence is read off the
+    first source file's own header rather than assumed).
 
     Best-effort and non-fatal: the sidecar is an annotation, never an input
     to the pipeline.  Only written when the pas_ids are still the caller's
@@ -325,8 +327,20 @@ def _write_run_support(bed_paths, out_path) -> None:
         srcs = [s for s in srcs if s.exists()]
         if not srcs:
             return
+        # The header must come from the CALLER's own sidecars, not from this
+        # module's compile-time SUPPORT_COLUMNS: --pas-features on appends
+        # columns to every row, and a hardcoded seven-column header over
+        # nine-column rows silently mislabels every field after `tier`.
+        # (Found on the real chr19+21 slice, not by a unit test -- the merge
+        # had no coverage at all.  It now does: see
+        # tests/test_pas_features.py::test_the_run_root_sidecar_keeps_the_callers_header.)
+        header = "\t".join(SUPPORT_COLUMNS) + "\n"
+        with open(srcs[0]) as fh:
+            first = fh.readline()
+        if first.startswith("pas_id"):
+            header = first if first.endswith("\n") else first + "\n"
         with open(out_path, "w") as out:
-            out.write("\t".join(SUPPORT_COLUMNS) + "\n")
+            out.write(header)
             for s in srcs:
                 with open(s) as fh:
                     first = fh.readline()
