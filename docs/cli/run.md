@@ -386,10 +386,24 @@ not it is applied.
 reads in 16,338 clusters (PBMC chr19+21; 76.10 % of clip reads sit *exactly* on
 the reported base) and +0.214 bp over 124,308 reads in 8,722 clusters
 (GSE104556 mouse 1 chr18+19). **Both round to zero**, so `auto` is a measured
-no-op on both libraries. Each is also the average of two opposite per-strand
-values (+0.808/−0.748 and +0.999/−1.102) because `cluster_clip_sites` breaks
-ties toward the lowest *coordinate* on both strands, which is not
-strand-symmetric.
+no-op on both libraries.
+
+> **CORRECTED (adversarial verification pass, 2026-08-22).** This paragraph used
+> to add "each is the average of two opposite per-strand values (+0.808/−0.748
+> and +0.999/−1.102)". Recomputed from the shipped `clip_offset_mean` column of
+> a real branch-default run, the PBMC split is **−0.1783** on `+` (165,900 clip
+> reads, 9,020 sites) and **−0.5879** on `−` (101,620 reads, 7,318 sites) —
+> both negative, not opposite — and the run total **−0.3339** reproduces the
+> quoted −0.334 exactly. The old pair is also internally inconsistent with that
+> total: weighted by this run's own per-strand read counts it would give
+> **+0.217**, not −0.334. `cluster_clip_sites` does break ties toward the lowest
+> *coordinate* on both strands and is therefore not strand-symmetric — that part
+> stands, and it still bears on any base-pair-resolution work — but the two
+> per-strand signs must not be read off this page.
+> (The separate "76.10 % of clip reads sit exactly on the reported base" figure
+> is a per-read statistic no run output records — the sidecar stores a
+> read-weighted mean, not the position histogram — so it was not checkable here
+> and is neither confirmed nor contradicted.)
 
 #### What the external truths say, and why it is still not a default
 

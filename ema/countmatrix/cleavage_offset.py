@@ -571,7 +571,9 @@ def rewrite_bed_3prime_offset(path, offset: int, *, skip_supported: bool = False
 #
 # NOTE (adversarial verification pass, 2026-08-22): the per-strand split
 # "+0.808 / -0.748 (PBMC)" this comment used to quote comes from an offline
-# script, NOT from the column the tool ships.  Recomputed from the run's own
+# script, NOT from the column the tool ships -- and it is inconsistent with the
+# -0.334 total quoted just above: weighted by this run's own per-strand read
+# counts it would give +0.217.  Recomputed from the run's own
 # ``clip_offset_mean`` on the PBMC chr19+21 slice at the branch defaults the
 # split is ``+`` -0.1783 bp (165,900 reads, 9,020 sites) and ``-`` -0.5879 bp
 # (101,620 reads, 7,318 sites) -- both NEGATIVE, not opposite -- and the run
