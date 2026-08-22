@@ -140,13 +140,13 @@ def _config():
     variable_config.merge_len = 100
     # peakAtail-prime: this module's arithmetic ("30 in-window reads + 3 clip
     # = 33") is written against v2's FABRICATED read ends -- every accepted
-    # read normalised to start + seq_len.  Under the branch default
-    # (--read-geometry true) a synthetic read's end moves upstream by its own
+    # read normalised to start + seq_len.  Under
+    # --read-geometry true a synthetic read's end moves upstream by its own
     # unaligned tail, so the same [site - seq_len, site + 25] window catches a
     # different set (18, not 33, at the + ISOLATED locus).  That is the
     # geometry change working, not a counting bug -- so this module keeps
-    # pinning the v2 contract and the branch behaviour is asserted in
-    # tests/test_read_geometry.py.
+    # pinning the v2 contract (which is also the shipped default) and the
+    # other geometries are asserted in tests/test_read_geometry.py.
     variable_config.read_geometry = "fixed"
     try:
         yield

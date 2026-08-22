@@ -9,8 +9,9 @@ and underscore-bearing RGs.
 
 peakAtail-prime: ``_reference_read_check`` is v2's body, so every call here
 passes ``geometry="fixed"`` explicitly.  These tests keep doing exactly what
-they were written to do -- pin the v2 semantics -- and the branch default
-(``--read-geometry true``) is covered by ``tests/test_read_geometry.py``
+they were written to do -- pin the v2 semantics -- and the NON-v2 geometries
+(``--read-geometry keep`` / ``true``; the shipped default is ``fixed``, which
+the measurement did not move) are covered by ``tests/test_read_geometry.py``
 instead.  Do NOT "fix" a failure here by relaxing the reference body: this
 module is one of the places the v2-compatibility guarantee is enforced.
 """
