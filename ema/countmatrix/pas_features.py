@@ -136,8 +136,15 @@ SEQ_FEATURE_COLUMNS: tuple[str, ...] = (
 
 #: Written at the same seam, from the PAS BED alone (no genome needed).
 CONTEXT_FEATURE_COLUMNS: tuple[str, ...] = (
-    "d_prev_cand",      # bp to the previous same-strand candidate
-    "d_next_cand",      # bp to the next same-strand candidate
+    # NB "prev"/"next" are GENOMIC order, not transcript order -- on '-' the
+    # "next" candidate is the transcript-UPSTREAM one.  Unlike every other
+    # column in this module the pair is NOT transcript-oriented.  That is the
+    # offline feature table's convention and the tool matches it deliberately
+    # (a model fitted on one and applied to the other would be silently wrong),
+    # but it means the two columns swap meaning between strands and a
+    # coefficient on either is not strand-symmetric.
+    "d_prev_cand",      # bp to the genomically PRECEDING same-strand candidate
+    "d_next_cand",      # bp to the genomically FOLLOWING same-strand candidate
     "n_cand_100",       # OTHER same-strand candidates within +/-100 bp
     "n_cand_500",       # OTHER same-strand candidates within +/-500 bp
     "mol_500_sum",      # sum of BED score over the +/-500 bp neighbourhood
@@ -359,6 +366,12 @@ def context_iter(rows: list[tuple[str, str, int, int, object]],
         dicts is what keeps the collector's memory flat: a genome-wide run
         has ~650 k candidates and a 7-key dict each would cost ~0.5 GB for
         values that are about to be turned into text anyway.
+
+    ``d_prev_cand`` / ``d_next_cand`` are in **genomic** order, not transcript
+    order: on ``'-'`` the "next" candidate is the transcript-*upstream* one.
+    Every other column this module writes is transcript-oriented, so this is
+    the one place where the two conventions differ; it matches the offline
+    feature table, which is what makes a model fitted there safe to apply here.
 
     The neighbourhood is **same contig, same strand** and is defined over the
     candidate set present at the seam -- which is the caller's full candidate

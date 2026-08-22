@@ -585,8 +585,8 @@ you ran.)
 
 | column | meaning |
 |---|---|
-| `d_prev_cand` | bp to the previous same-strand candidate (`1000000` = none). |
-| `d_next_cand` | bp to the next same-strand candidate (`1000000` = none). |
+| `d_prev_cand` | bp to the genomically PRECEDING same-strand candidate (`1000000` = none). **Genomic order, not transcript order** — on `-` this is the transcript-*downstream* neighbour. |
+| `d_next_cand` | bp to the genomically FOLLOWING same-strand candidate (`1000000` = none). On `-` this is the transcript-*upstream* neighbour. |
 | `n_cand_100` | **other** same-strand candidates within ±100 bp. |
 | `n_cand_500` | **other** same-strand candidates within ±500 bp. |
 | `mol_500_sum` | sum of BED column 5 over that ±500 bp neighbourhood, this candidate included. |

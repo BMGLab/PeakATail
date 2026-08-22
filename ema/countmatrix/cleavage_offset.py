@@ -567,11 +567,18 @@ def rewrite_bed_3prime_offset(path, offset: int, *, skip_supported: bool = False
 # read-weighted estimate is -0.334 bp over 267,520 clip reads in 16,338
 # clusters (76.10 % of clip reads sit EXACTLY on the reported base); on the
 # GSE104556 mouse 1 chr18+19 slice it is +0.214 bp over 124,308 reads in
-# 8,722 clusters (56.90 % exactly on it).  Both round to ZERO, and both are
-# an average of two opposite per-strand values (+0.808/-0.748 PBMC,
-# +0.999/-1.102 mouse) produced by ``cluster_clip_sites``'s tie-break, which
-# resolves ties toward the LOWEST COORDINATE on both strands and is therefore
-# not strand-symmetric.
+# 8,722 clusters (56.90 % exactly on it).  Both round to ZERO.
+#
+# NOTE (adversarial verification pass, 2026-08-22): the per-strand split
+# "+0.808 / -0.748 (PBMC)" this comment used to quote comes from an offline
+# script, NOT from the column the tool ships.  Recomputed from the run's own
+# ``clip_offset_mean`` on the PBMC chr19+21 slice at the branch defaults the
+# split is ``+`` -0.1783 bp (165,900 reads, 9,020 sites) and ``-`` -0.5879 bp
+# (101,620 reads, 7,318 sites) -- both NEGATIVE, not opposite -- and the run
+# total -0.3339 bp reproduces exactly.  ``cluster_clip_sites`` does resolve
+# ties toward the LOWEST COORDINATE on both strands and is therefore not
+# strand-symmetric; that stands.  What does not stand is reading the two
+# per-strand signs off this comment.
 #
 # The offset external truths prefer is NOT this number: on the same slice the
 # base-pair-exact optimum is -1 bp against the atlas and -2 bp against Kinnex

@@ -333,3 +333,33 @@ def test_the_shift_moves_the_cleavage_base_in_transcript_orientation(
     # And the reported base really landed where transcript arithmetic says.
     moved_c = cleavage_point(got[0], got[1], strand)
     assert moved_c == (1000 + offset if strand == "+" else 1000 - offset)
+
+
+# ---------------------------------------------------------------------------
+# 5. the one column pair that is NOT transcript-oriented, pinned as such
+# ---------------------------------------------------------------------------
+def test_d_prev_and_d_next_are_genomic_order_on_both_strands():
+    """Every other feature in the module is transcript-oriented; these two are
+    not, and a reader of a fitted coefficient needs to know which.
+
+    Pinned rather than "fixed": the offline fitter uses the same genomic
+    convention, and changing one without the other would silently apply a
+    model to a mirrored feature.  If this ever becomes transcript-oriented,
+    the offline table has to move in the same commit.
+    """
+    from ema.countmatrix.pas_features import local_context
+
+    # three '-' candidates at ascending genomic coordinates
+    rows = [("1", "-", 1000, 5, "a"), ("1", "-", 1100, 5, "b"),
+            ("1", "-", 1400, 5, "c")]
+    ctx = local_context(rows)
+    # 'b' sits between them.  Genomic order: prev = a (100 bp below),
+    # next = c (300 bp above).  Transcript order on '-' would be the reverse.
+    assert ctx["b"]["d_prev_cand"] == 100
+    assert ctx["b"]["d_next_cand"] == 300
+    # the mirrored '+' set gives the identical pair, which is exactly the
+    # point: the columns do not know about the strand.
+    plus = local_context([("1", "+", 1000, 5, "a"), ("1", "+", 1100, 5, "b"),
+                          ("1", "+", 1400, 5, "c")])
+    assert plus["b"]["d_prev_cand"] == ctx["b"]["d_prev_cand"]
+    assert plus["b"]["d_next_cand"] == ctx["b"]["d_next_cand"]
