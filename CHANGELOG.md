@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased (branch `peakAtail-prime`) — the default that was a no-op
+
+**`--ip-filter-mode`'s default was v2's `annotate`, so the branch's one
+behavioural default dropped nothing.** `--ip-filter-default auto` turned the
+internal-priming veto ON; `--ip-filter-mode annotate` kept every flagged site.
+Two flags, two questions, and nothing checked the pair — so a prime run at its
+defaults flagged 5,015 of 32,752 candidates on the PBMC chr19+21 slice, dropped
+**0**, and emitted v2's exact call set (`pas 18,865`) while this file
+advertised "+7.7 %–12.8 % relative recall at matched atlas precision". Every
+number published for that change was measured on a run that also passed
+`--ip-filter-mode filter` explicitly.
+
+### The literal
+
+`ema/cli/config_schema.py`, field `ip_filter_mode`:
+`default="annotate"` → `default="auto"`, with
+`choice=("auto", "annotate", "filter")`. `"auto"` is a **sentinel meaning "the
+user did not name a mode"**, not a mode:
+`ema.cli.config_schema.resolve_ip_filter_mode()` turns it into `"filter"`, and
+`ema.experimental.internal_priming.filter_internal_priming` still refuses any
+value outside `{annotate, filter}`, so an unresolved sentinel raises rather
+than being guessed at. An explicit `--ip-filter-mode annotate` is honoured
+verbatim — the D9 behaviour (an internally-primed peak is candidate
+alternative-PAS signal, not noise) is one flag away, not gone.
+
+**PRIME_PLAN.md said v2's default here was `filter`. It is `annotate`** — read
+off the frozen worktree `tools/pa-polya-run-9dfdefb3`. That one wrong word is
+the whole defect; the plan is corrected in place.
+
+### v2 compatibility
+
+`V2_COMPAT_FLAGS` gains **`--ip-filter-mode annotate`** (13 flag/value pairs).
+It was previously complete only by accident: the list pins
+`--ip-filter-default off`, which stops the veto running at all, so the mode
+never mattered. It matters the moment anyone types `--ip-filter`, so it is
+stated. The compat runs are re-verified byte-for-byte against the frozen v2
+worktree on both dev slices.
+
+### So this class of defect cannot hide again
+
+* **The resolved mode is in the run log.** `_resolve_ip_filter()` logs
+  `internal-priming veto: ON (<why>), mode=<mode> [<how the mode was decided>]`
+  and still says `NOTHING IS DROPPED` when the mode is `annotate`.
+* **The resolved mode is in the run record.** `run_config.json` and
+  `run_manifest.json` gain an `internal_priming` block:
+  `ip_filter`, `ip_filter_why`, `ip_filter_mode_requested` (the raw value,
+  sentinel and all), `ip_filter_mode_resolved` (`null` when the veto does not
+  run), `ip_filter_mode_why`, `genome_fasta`. The `args` block cannot show
+  this — it carries the unresolved sentinel, which is the surface the defect
+  hid on for a whole verification pass.
+* **`tests/test_prime_ip_default_mode.py`** drives the real seam
+  (`ema.main._apply_pas_filters`) with `args` seeded from the schema exactly as
+  a no-flag `ema run` seeds it, plus a genome FASTA and nothing else, and
+  asserts a flagged site is GONE from the BED on disk. Restoring
+  `default="annotate"` makes it fail with `filtered == 0` and the flagged row
+  still present.
+* **`tests/test_prime_compat_flags.py::test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line`**
+  diffs RunConfig **defaults** against the frozen v2 worktree, not just field
+  names. The old completeness check only asked "which fields are NEW?", which
+  is precisely why a moved default on an existing v2 field went unnoticed.
+* `_v2_settings()` now pins `args.ip_filter_mode`, and
+  `test_prime_compat_flags.py` reads pins from `args` as well as
+  `variable_config`, closing the structural gap that file already declared.
+
+### Measured, default vs default
+
+See `results/prime_bench/` for the re-validation: the v2 compatibility pin is
+still byte-for-byte v2 on both slices, and the branch default now differs from
+v2 in exactly the expected way (fewer, more precise calls).
+
 ## Unreleased (branch `peakAtail-prime`) — the cleavage-offset column, the QC that stopped lying, and the seam that drops lncRNAs
 
 Four small, separately-measured changes (TASK E). **One of them is a genuine
@@ -30,24 +100,20 @@ mouse 1 chr18+19 `pas 4,141 | tier1 3,006 | tier2 1,135 | tier1>=2mol 1,549` on
 both. It changes nothing for anyone who already passed the flag, which is the
 point: it changes what a user gets who does not.
 
-> **CORRECTION (adversarial verification pass, 2026-08-22).** The paragraph
-> above is measured with `--ip-filter-mode filter` supplied on BOTH sides. It
-> is **not** what the branch default alone does. `--ip-filter-mode` defaults to
-> `annotate` (the D9 decision: an internally-primed peak is more likely real
-> alternative-PAS signal than noise, so every peak is kept and merely flagged),
-> and `--ip-filter-default auto` decides only whether the veto **runs**, not
-> whether it **drops**. Re-measured on the PBMC chr19+21 slice with the branch
-> defaults, a genome FASTA and no other flag:
-> `peak_filters_stats.json` reports mode `annotate`, **flagged 5,015,
-> filtered 0**, and the run writes `pas 18,865 | tier1 10,886 | tier2 7,979 |
-> tier1>=2mol 3,643` — v2's call set to the row, not 15,925.
-> **So the advertised +7.7 %–12.8 % is NOT delivered by the default**; it is
-> the lift of `--ip-filter-mode filter`, which a user still has to ask for.
-> The run now says so (`_resolve_ip_filter` logs a WARNING naming the mode when
-> the policy turns the veto on in a mode that drops nothing), and
-> `tests/test_prime_ip_default_mode.py` pins it. Moving `--ip-filter-mode`'s
-> default is an adoption decision — it changes the call set of every run — and
-> belongs to whoever owns the pre-registration, not to a quiet fix.
+> **CORRECTION (adversarial verification pass, 2026-08-22), then FIXED the
+> same day — see "the default that was a no-op" at the top of this file.** The
+> paragraph above was measured with `--ip-filter-mode filter` supplied on BOTH
+> sides. At the time it was **not** what the branch default alone did:
+> `--ip-filter-mode` defaulted to `annotate` and `--ip-filter-default auto`
+> decides only whether the veto **runs**, not whether it **drops**.
+> Re-measured on the PBMC chr19+21 slice with those branch defaults, a genome
+> FASTA and no other flag: `peak_filters_stats.json` reported mode `annotate`,
+> **flagged 5,015, filtered 0**, and the run wrote
+> `pas 18,865 | tier1 10,886 | tier2 7,979 | tier1>=2mol 3,643` — v2's call
+> set to the row, not 15,925. `--ip-filter-mode`'s default is now the sentinel
+> `auto`, which resolves to `filter`, so the paragraph above IS the branch
+> default; v2's `annotate` is one explicit flag away and is pinned in
+> `V2_COMPAT_FLAGS`.
 
 ### 2. The poly(A) clip-rate QC: an exact count instead of a 4.2x estimate
 
@@ -210,7 +276,7 @@ All 50 data files of a PBMC chr19+21 slice run with the v2 pins
 (`--read-geometry fixed --read-exclude-flags 0 --pas-features off --pas-score
 none --pas-score-model prime1 --pas-score-min -1 --cleavage-offset none
 --emit-inferred-cleavage off --clip-rate-sampling head --ip-filter-default off
---pas-gene-rescue off --pas-gene-rescue-min-mol 0` — the canonical copy of this list is
+--ip-filter-mode annotate --pas-gene-rescue off --pas-gene-rescue-min-mol 0` — the canonical copy of this list is
 `ema.cli.config_schema.V2_COMPAT_FLAGS`, and `tests/test_prime_compat_flags.py`
 checks this paragraph against it) are **byte-identical to the v2 reference run**,
 including its clip-rate log line; only `run_config.json` / `run_manifest.json`

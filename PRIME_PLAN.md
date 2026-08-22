@@ -134,7 +134,18 @@ sequence. It is bigger than every detector change tested, combined, and it is al
 
 **Flags.** `--ip-filter` becomes **default-on when `--genome-fasta` is supplied**; without a FASTA it
 must **disable itself with a loud warning**, never silently. `--no-ip-filter` restores opt-out.
-`--ip-filter-mode` keeps its v2 values `{annotate,filter}` and its v2 default `filter`.
+
+> **CORRECTED (2026-08-22).** This line used to read "`--ip-filter-mode` keeps its v2 values
+> `{annotate,filter}` and its v2 default `filter`". **v2's default is `annotate`, not `filter`** —
+> read straight off the frozen worktree
+> (`tools/pa-polya-run-9dfdefb3/ema/cli/config_schema.py`: `ip_filter_mode: str = field(default="annotate", ...)`),
+> and the same literal was carried onto this branch. That single wrong word is what made TASK E
+> item 3 ship as a **no-op**: `--ip-filter-default auto` turned the veto ON, `annotate` kept every
+> flagged site, and a default run emitted v2's exact call set. `--ip-filter-mode` now takes
+> `{auto,annotate,filter}` and defaults to the sentinel **`auto`**, which resolves to **`filter`**;
+> an explicit `--ip-filter-mode annotate` is honoured verbatim and is pinned in `V2_COMPAT_FLAGS`.
+> Pinned by `tests/test_prime_ip_default_mode.py` and by
+> `tests/test_prime_compat_flags.py::test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line`.
 
 **Default on prime.** ON with a FASTA. **v2 reachable via** `--no-ip-filter` (and `--compat v2`).
 This does *not* change the manuscript's pre-registered arm, which already runs with `--ip-filter`
@@ -432,15 +443,19 @@ one is a defect that ships DEFAULTED OFF because rescuing it costs precision
    P@100 0.7392 / R_det 0.2080; mouse 1 `pas 4,141 | ... | 1,549`). Without a
    FASTA it disables itself with a loud warning naming the cost.
 
-   > **CORRECTED by the adversarial verification pass (2026-08-22).** Those
-   > numbers are from runs that ALSO passed `--ip-filter-mode filter`. The
-   > branch default runs the veto in `annotate` mode, which flags and drops
-   > nothing: measured on the PBMC chr19+21 slice at the defaults with a FASTA
-   > and no other flag, `flagged 5,015 / filtered 0` and `pas 18,865` — v2's
-   > call set, not 15,925. `--ip-filter-default auto` decides whether the veto
-   > RUNS; `--ip-filter-mode` decides whether it DROPS, and this plan's claim
-   > that its "v2 default" is `filter` is wrong (it is `annotate`). The lift is
-   > real but is not on by default. See `tests/test_prime_ip_default_mode.py`.
+   > **CORRECTED by the adversarial verification pass (2026-08-22), then
+   > FIXED the same day.** Those numbers were from runs that ALSO passed
+   > `--ip-filter-mode filter`. The branch default ran the veto in `annotate`
+   > mode, which flags and drops nothing: measured on the PBMC chr19+21 slice
+   > at the defaults with a FASTA and no other flag, `flagged 5,015 /
+   > filtered 0` and `pas 18,865` — v2's call set, not 15,925.
+   > `--ip-filter-default auto` decides whether the veto RUNS;
+   > `--ip-filter-mode` decides whether it DROPS, and this plan's claim that
+   > its "v2 default" is `filter` was wrong (it is `annotate`).
+   > **`--ip-filter-mode` now defaults to the sentinel `auto`, which resolves
+   > to `filter`**, so the numbers above ARE the branch default; v2 stays
+   > reachable via `--ip-filter-mode annotate`, now pinned in
+   > `V2_COMPAT_FLAGS`. See `tests/test_prime_ip_default_mode.py`.
 2. **`--clip-rate-sampling {head,strided,pass}`, default `pass`.** v2's head
    scan returns 2.2565 % where the truth on the same denominator is 0.5364 %
    (reproduced here from the tool's own code path). The "sample across the BAM"

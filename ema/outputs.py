@@ -378,6 +378,30 @@ def build_resolved_run_config() -> dict:
         for k in ("min_read", "min_cells", "min_genes", "min_pas_per_cell")
     }
 
+    # --- the internal-priming policy, RESOLVED -----------------------------
+    # Two flags decide two different things -- whether the veto RUNS
+    # (--ip-filter / --no-ip-filter / --ip-filter-default) and whether it
+    # DROPS (--ip-filter-mode) -- and the branch shipped a combination where
+    # the first said yes and the second said "keep everything", so the run
+    # emitted v2's call set while claiming a recall lift.  Neither the "args"
+    # grab-bag below nor "variables" above can show that: args carries the
+    # unresolved sentinel "auto" and variable_config only knows the policy.
+    # Record what ACTUALLY happened, in the file the hub reads.
+    try:
+        from ema.main import _ip_filter_decision
+
+        _ip = _ip_filter_decision()
+        resolved["internal_priming"] = {
+            "ip_filter": _ip["ip_filter"],
+            "ip_filter_why": _ip["why"],
+            "ip_filter_mode_requested": _ip["mode_requested"],
+            "ip_filter_mode_resolved": _ip["mode"],
+            "ip_filter_mode_why": _ip["mode_why"],
+            "genome_fasta": _ip["genome_fasta"],
+        }
+    except Exception as exc:  # pragma: no cover -- never fail a run record
+        resolved["internal_priming"] = {"error": repr(exc)}
+
     # --- remaining argparse fields (strategy, thresholds, tiles, …) ---
     # Kept for completeness, but under a namespaced key so the resolved
     # directory/variable/filter values above are unambiguous. Filter out

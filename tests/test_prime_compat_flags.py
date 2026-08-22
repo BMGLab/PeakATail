@@ -27,7 +27,9 @@ from pathlib import Path
 import pytest
 
 from ema.cli.config_schema import RunConfig, V2_COMPAT_FLAGS, field_specs
-from ema.config import variable_config
+from ema.config import args, variable_config
+
+_MISSING = object()
 
 import importlib.util as _ilu
 
@@ -42,10 +44,31 @@ CHANGELOG = Path(__file__).resolve().parents[1] / "CHANGELOG.md"
 _FIXTURE_SHAPE = {"seq_len", "cb_len", "barcode_tag", "ignore_chro"}
 
 #: peakAtail-prime options bridged to the legacy ``args`` namespace instead of
-#: ``variable_config``.  ``_v2_settings()`` cannot pin them, so the fixture
-#: golden is blind to them; the test below requires their branch default to BE
-#: their v2 value, which is the only thing that makes that blindness safe.
+#: ``variable_config``, and which ``_v2_settings()`` does NOT pin.  The fixture
+#: golden is blind to those, so the test below requires their branch default to
+#: BE their v2 value -- the only thing that makes the blindness safe.
+#:
+#: ``--ip-filter-mode`` is deliberately NOT in here.  It is args-bridged AND
+#: its branch default is not v2's, which is exactly the combination that let
+#: the no-op default ship: the veto turned itself on while the mode literal
+#: stayed at v2's ``annotate``, so nothing was dropped.  ``_v2_settings()``
+#: now pins it on ``args`` and :func:`_pinned_value` reads pins from both
+#: holders, so the command line and the library pin are checked against each
+#: other for args-bridged options too.
 _ARGS_BRIDGED = {"--pas-gene-rescue", "--pas-gene-rescue-min-mol"}
+
+
+def _pinned_value(name, spec):
+    """The value ``_v2_settings()`` pins for a field -- wherever it lives.
+
+    Returns ``_MISSING`` when the pin does not touch the field at all.
+    """
+    lda = spec.legacy_dataclass_attr or ""
+    if lda.startswith("variable_config."):
+        return getattr(variable_config, lda.split(".", 1)[1], _MISSING)
+    if not lda:
+        return getattr(args._get(), spec.legacy_args_attr or name, _MISSING)
+    return _MISSING
 
 
 def _load_v2_settings():
@@ -91,11 +114,24 @@ def _restore():
              for k in keys]
     saved = {a: getattr(variable_config, a) for a in attrs
              if hasattr(variable_config, a)}
+    # ...and the args-bridged pins (`_v2_settings()` sets ip_filter_mode).
+    ns = args._get()
+    args_attrs = [s_.legacy_args_attr or n for n, s_ in field_specs(RunConfig).items()
+                  if not (s_.legacy_dataclass_attr or "")]
+    saved_args = {a: getattr(ns, a, _MISSING) for a in args_attrs}
     try:
         yield
     finally:
         for a, v in saved.items():
             setattr(variable_config, a, v)
+        for a, v in saved_args.items():
+            if v is _MISSING:
+                try:
+                    delattr(ns, a)
+                except AttributeError:
+                    pass
+            else:
+                setattr(ns, a, v)
 
 
 def test_every_compat_flag_is_a_real_option():
@@ -116,11 +152,17 @@ def test_every_knob_the_pin_moves_is_on_the_command_line():
     """
     specs = field_specs(RunConfig)
     defaults = {f.name: f.default for f in RunConfig.__dataclass_fields__.values()}
-    # branch defaults into the legacy globals, then the v2 pin over the top
+    # branch defaults into the legacy globals, then the v2 pin over the top.
+    # BOTH holders: --ip-filter-mode is bridged to `args`, and it is the knob
+    # whose v2/branch difference (annotate vs the "auto" sentinel that drops)
+    # a variable_config-only sweep could not see.
+    ns = args._get()
     for name, spec in specs.items():
         lda = spec.legacy_dataclass_attr or ""
         if lda.startswith("variable_config."):
             setattr(variable_config, lda.split(".", 1)[1], defaults[name])
+        elif not lda:
+            setattr(ns, spec.legacy_args_attr or name, defaults[name])
     _v2_settings(91)
 
     flags = _flag_pairs()
@@ -129,10 +171,11 @@ def test_every_knob_the_pin_moves_is_on_the_command_line():
     missed = []
     for name, spec in specs.items():
         lda = spec.legacy_dataclass_attr or ""
-        if not lda.startswith("variable_config."):
+        if lda and not lda.startswith("variable_config."):
+            continue          # directory_config / filter_config: not compat knobs
+        pinned = _pinned_value(name, spec)
+        if pinned is _MISSING:
             continue
-        attr = lda.split(".", 1)[1]
-        pinned = getattr(variable_config, attr, None)
         branch = defaults[name]
         if pinned == branch:
             continue                      # branch default is already v2's
@@ -175,6 +218,18 @@ def test_every_flag_on_the_command_line_is_pinned_by_the_library():
     for flag, text in _flag_pairs().items():
         name, spec = by_flag[flag]
         lda = spec.legacy_dataclass_attr or ""
+        if not lda.startswith("variable_config.") and \
+                _pinned_value(name, spec) is not _MISSING and \
+                _pinned_value(name, spec) != defaults[name]:
+            # args-bridged AND actually pinned by _v2_settings() to something
+            # other than the branch default -- check the command line against
+            # the pin exactly as for a variable_config knob.  This is the
+            # branch of --ip-filter-mode.
+            assert _coerce(spec, text, defaults[name]) == _pinned_value(name, spec), (
+                f"{flag} {text!r} on the command line vs "
+                f"{_pinned_value(name, spec)!r} in _v2_settings"
+            )
+            continue
         if not lda.startswith("variable_config."):
             # STRUCTURAL GAP, declared rather than hidden: `_v2_settings()`
             # only touches variable_config, so an option bridged to the legacy
@@ -225,6 +280,87 @@ def test_the_changelog_prose_matches_the_tuple():
 # completeness, checked against the frozen v2 worktree rather than a list
 # ---------------------------------------------------------------------------
 V2_WORKTREE = Path("/mnt/ssd1/Projects/PeakATail_wd/tools/pa-polya-run-9dfdefb3")
+
+
+def _v2_field_defaults() -> dict:
+    """``{field_name: default}`` for RunConfig as it stands in the frozen v2 tree."""
+    import json
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c",
+         f"import sys; sys.path.insert(0, {str(V2_WORKTREE)!r}); "
+         "import dataclasses, json; from ema.cli.config_schema import RunConfig; "
+         "print(json.dumps({f.name: f.default for f in dataclasses.fields(RunConfig)}, "
+         "default=str))"],
+        capture_output=True, text=True,
+        env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/usr/bin:/bin",
+             "HOME": str(Path.home())},
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+@pytest.mark.skipif(not (V2_WORKTREE / "ema" / "cli" / "config_schema.py").exists(),
+                    reason="the frozen v2 worktree is not on this machine")
+def test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line():
+    """The check that would have caught the no-op default.
+
+    The completeness test below asks "which fields are NEW on this branch?"
+    and requires each to state its v2 value.  A field that already existed in
+    v2 and whose DEFAULT this branch quietly moved is invisible to it -- and
+    that is exactly what happened in reverse with ``--ip-filter-mode``: the
+    branch added ``--ip-filter-default auto`` (a new field, duly listed) which
+    turns the internal-priming veto ON, while ``--ip-filter-mode`` -- an
+    *existing* v2 field -- kept v2's ``annotate``, so the veto dropped nothing
+    and the branch's one behavioural default emitted v2's exact call set.
+    Nothing checked the pair.
+
+    So: diff the DEFAULTS, not just the field names.  Any v2 field whose
+    branch default differs must appear on the documented compat command line
+    with its v2 value, or a reviewer typing that command does not get v2.
+    """
+    import json
+
+    v2_defaults = _v2_field_defaults()
+    specs = field_specs(RunConfig)
+    branch = {f.name: f.default for f in RunConfig.__dataclass_fields__.values()}
+    flags = _flag_pairs()
+
+    moved, unstated = [], []
+    for name, spec in specs.items():
+        if name not in v2_defaults or not spec.cli_flag:
+            continue
+        if str(branch[name]) == str(v2_defaults[name]):
+            continue
+        moved.append((name, v2_defaults[name], branch[name]))
+        text = flags.get(spec.cli_flag)
+        if text is None:
+            unstated.append((name, spec.cli_flag, v2_defaults[name], branch[name]))
+            continue
+        if name == "cleavage_offset":
+            from ema.countmatrix.cleavage_offset import parse_cleavage_offset
+            assert parse_cleavage_offset(text) == parse_cleavage_offset(
+                v2_defaults[name])
+            continue
+        assert str(_coerce(spec, text, branch[name])) == str(v2_defaults[name]), (
+            f"{spec.cli_flag} is documented as {text!r} but v2's default is "
+            f"{v2_defaults[name]!r}"
+        )
+
+    assert not unstated, (
+        "these options exist in v2 and this branch MOVED their default, but "
+        "the documented compat command line does not restore them -- a "
+        "published compat run would not be v2, and (as with --ip-filter-mode) "
+        "nothing else would notice: %r" % (unstated,)
+    )
+    # A guard on the guard: this test is only meaningful while it has
+    # something to check.  --ip-filter-mode is that something today.
+    assert any(n == "ip_filter_mode" for n, _v2, _b in moved), (
+        "--ip-filter-mode's branch default is v2's again; if that is "
+        "deliberate, the branch has no behavioural default left"
+    )
 
 
 @pytest.mark.skipif(not (V2_WORKTREE / "ema" / "cli" / "config_schema.py").exists(),

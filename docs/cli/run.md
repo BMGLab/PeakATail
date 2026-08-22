@@ -127,15 +127,18 @@ Options:
                                   sierra_iterative) use this value as the
                                   valley-depth threshold.  Negative disables
                                   Tier 2.  [default: 5.0]
-  --ip-filter                     Enable internal-priming filter. Defaults to
-                                  --ip-filter-mode annotate (keeps every PAS,
-                                  flags A-stretch ones); requires
-                                  --genome-fasta.
-  --ip-filter-mode [annotate|filter]
-                                  annotate KEEPS every PAS and stamps the
-                                  internal_priming flag (on annotatedpas.bed);
-                                  filter DROPS flagged PAS.  [default:
-                                  annotate]
+  --ip-filter                     Force the internal-priming filter ON: drops
+                                  PAS near genomic A-rich stretches (requires
+                                  --genome-fasta). On peakAtail-prime this is
+                                  already the default whenever --genome-fasta
+                                  is available (see --ip-filter-default).
+  --ip-filter-mode [auto|annotate|filter]
+                                  What the veto DOES with a flagged PAS.
+                                  'auto' (default) means "not named" and
+                                  resolves to 'filter', which DROPS them.
+                                  'annotate' KEEPS every PAS and stamps the
+                                  internal_priming flag; it is v2's literal
+                                  default.  [default: auto]
   --genome-fasta PATH             Genome FASTA (.fai indexed) for --ip-filter.
   --annot-filter                  Enable annotation-region filter (drops PAS
                                   not overlapping a gene region; needs --gtf or
@@ -699,12 +702,24 @@ So a run with `--ip-filter --ip-filter-mode annotate` produces a `pasbed.bed`
 two-way contrast — keep-all (`annotate` ≡ off) vs `filter` — not three-way; an
 explicit "off" arm alongside an `annotate` arm is a duplicate (see issue #69).
 
+**Two flags, two questions, and they used to disagree.**
+`--ip-filter` / `--no-ip-filter` / `--ip-filter-default` decide whether the
+veto **runs**; `--ip-filter-mode` decides whether it **drops**. peakAtail-prime
+first shipped with the first set to "run" and the second still at v2's
+`annotate`, so a default run flagged ~15 % of candidates, dropped none, and
+emitted v2's exact call set while the docs promised a recall lift. The mode
+default is now the sentinel `auto`, which resolves to `filter`. The mode a run
+actually used is in the run log (`internal-priming veto: ON (...), mode=...`)
+and in `run_config.json` / `run_manifest.json` under `internal_priming`
+(`ip_filter_mode_requested` vs `ip_filter_mode_resolved`) — check there, not
+in the `args` block, which carries the unresolved sentinel.
+
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--ip-filter` | FLAG | off | Enable the internal-priming check explicitly: forces it ON and makes a missing `--genome-fasta` an error. On this branch it is **already the default whenever a genome FASTA is available** — see `--ip-filter-default`. |
-| `--ip-filter-default` | `off`/`auto` | **`auto`** | What `--ip-filter` does when it is not passed. `auto` runs the veto whenever a readable `--genome-fasta` is available and **warns loudly, naming the cost, when there is none**. `off` is v2. The veto is the **largest measured accuracy lift in this caller**: +7.7% to +12.8% relative recall at matched atlas precision, +17.7% to +22.9% at matched long-read precision, because it is the only stage that reads genomic sequence. It changes nothing for a run that already passed `--ip-filter`. **It decides only whether the veto RUNS, not whether it DROPS:** `--ip-filter-mode` defaults to `annotate`, which keeps every flagged PAS, so a run with the branch defaults and a FASTA but no `--ip-filter-mode filter` flags ~15 % of candidates and drops none — its call set is v2's, and the recall lift quoted above is **not** delivered. Pass `--ip-filter-mode filter` to get it. |
+| `--ip-filter-default` | `off`/`auto` | **`auto`** | What `--ip-filter` does when it is not passed. `auto` runs the veto whenever a readable `--genome-fasta` is available and **warns loudly, naming the cost, when there is none**. `off` is v2. The veto is the **largest measured accuracy lift in this caller**: +7.7% to +12.8% relative recall at matched atlas precision, +17.7% to +22.9% at matched long-read precision, because it is the only stage that reads genomic sequence. It changes nothing for a run that already passed `--ip-filter`. **It decides only whether the veto RUNS, not whether it DROPS** — `--ip-filter-mode` decides that, and its default (`auto`) resolves to `filter`, so a run with the branch defaults and a readable FASTA does deliver the lift. Between those two facts the branch once shipped a default that ran the veto in `annotate` mode and dropped nothing; the resolved mode is now logged and recorded in `run_config.json`. |
 | `--no-ip-filter` | FLAG | off | Force the veto off whatever `--ip-filter-default` says. |
-| `--ip-filter-mode` | TEXT | `annotate` | `annotate` flags A-stretch PAS but keeps them; `filter` drops them. |
+| `--ip-filter-mode` | `auto`/`annotate`/`filter` | **`auto`** | What the veto does with a flagged PAS. `auto` means "the mode was not named" and resolves to **`filter`** (drop) — this is the +7.7%–12.8% relative recall at matched atlas precision. `annotate` flags A-stretch PAS but keeps them; it is **v2's literal default** and is what the `--compat v2` flag list pins. The resolved value appears in the run log and under `internal_priming` in `run_config.json` / `run_manifest.json`. |
 | `--genome-fasta` | PATH | — | Genome FASTA (`.fai` indexed) — required with `--ip-filter`; used to read the sequence downstream of each PAS. |
 | `--ip-a-stretch` | INT | 6 | Minimum consecutive genomic A's downstream of a PAS (in transcript orientation) to flag it as internal priming. |
 | `--ip-a-fraction` | FLOAT | 0.7 | Alternative trigger: flag when the A-fraction of the window reaches this value. |

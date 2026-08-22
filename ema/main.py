@@ -690,38 +690,44 @@ def _validate_pas_score_config() -> None:
                 f"--pas-score-min resolved to {thr!r}.")
 
 
-#: Memo for _resolve_ip_filter's one-time log line, keyed by the inputs that
-#: decide it, so a repeat call inside the same run stays quiet.
+#: Memo for the one-time internal-priming notice, keyed by every input that
+#: decides it (the resolved MODE included), so a repeat call inside one run
+#: stays quiet but a genuine change of decision is never swallowed.
 _ip_filter_resolved: dict = {}
 
 
-def _resolve_ip_filter() -> bool:
-    """Whether the internal-priming veto runs for this run.
+def _ip_filter_decision() -> dict:
+    """Resolve the whole internal-priming policy for this run.  No logging.
 
-    peakAtail-prime TASK E item 3.  The veto is the single largest measured
-    accuracy lift in the caller -- +7.7 % to +12.8 % relative recall at matched
-    atlas precision and +17.7 % to +22.9 % at matched long-read precision
-    (results/algo_headroom/VERIFY/tables/v8_ipveto_value.tsv), more than every
-    detector change tested put together -- because it brings in information
-    the molecule thresholds do not have: genomic sequence.  In v2 it was an
-    opt-in flag, so every benchmark arm in the manuscript ran with it and
-    every user who did not read the flag list did not.
+    Pure with respect to everything except the module-level ``args`` /
+    ``variable_config`` singletons it reads, so the same dict can be logged,
+    written into ``run_config.json`` / ``run_manifest.json`` and asserted in a
+    unit test.  There is no second copy of the rule anywhere.
 
-    Resolution order, most explicit first:
+    Two independent questions, decided by two different flags -- which is the
+    trap this function exists to make visible:
 
-    1. ``--no-ip-filter``      -> OFF, whatever else is set.
-    2. ``--ip-filter``         -> ON (and ``_validate_pas_filter_config``
-                                  raises if there is no usable FASTA).
-    3. ``ip_filter_default``   -> ``"auto"`` (the branch default) turns it ON
-                                  whenever a readable ``--genome-fasta`` is
-                                  available, and says LOUDLY when there is
-                                  none; ``"off"`` is v2.
+    * **Does the veto RUN?**  ``--no-ip-filter`` (off) > ``--ip-filter`` (on) >
+      ``ip_filter_default`` (``"auto"`` = on whenever a readable
+      ``--genome-fasta`` exists; ``"off"`` = v2, on only when asked).
+    * **Does it DROP?**  ``--ip-filter-mode``.  ``"filter"`` drops the flagged
+      sites; ``"annotate"`` keeps every one and only records the flag.  The
+      branch default is the sentinel ``"auto"``, which resolves to
+      ``"filter"``; v2's literal was ``"annotate"``.
 
-    Never fails a run: without a FASTA the veto cannot run at all, so the
-    branch default degrades to v2 behaviour with a warning that names what it
-    costs.
+    Returns:
+        ``{"ip_filter": bool, "why": str, "genome_fasta": str|None,
+        "mode_requested": str, "mode": str|None, "mode_why": str}``.
+        ``mode`` is ``None`` when the veto does not run -- there is no mode to
+        report, and naming one would be the same class of untruth this
+        function exists to end.
     """
     import os
+
+    from ema.cli.config_schema import (
+        IP_FILTER_MODE_UNSET,
+        resolve_ip_filter_mode,
+    )
 
     forced_off = bool(getattr(args, "no_ip_filter", False))
     forced_on = bool(getattr(args, "ip_filter", False))
@@ -740,51 +746,96 @@ def _resolve_ip_filter() -> bool:
     else:
         decision, why = False, "ip_filter_default=auto but no genome FASTA"
 
-    # WHICH MODE the veto runs in decides whether it does anything at all, and
-    # the two are set by different flags.  `--ip-filter-mode` defaults to
-    # `annotate`, which KEEPS every flagged PAS (the D9 decision: an
-    # internally-primed peak is more likely real alternative-PAS signal than
-    # noise).  The measured lift this policy exists to deliver -- +7.7 % to
-    # +12.8 % relative recall at matched atlas precision -- is the lift of
-    # DROPPING them, i.e. of `--ip-filter-mode filter`.  Verified on the PBMC
-    # chr19+21 slice: the branch default with a FASTA and no --ip-filter-mode
-    # flags 5,015 of 32,752 candidates and drops 0, so the call set is v2's to
-    # the row (18,865 PAS), not the 15,925 of the filter arm.  Say that here
-    # rather than promising a recall gain the run is not going to get.
-    ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
-    key = (forced_off, forced_on, policy, str(fasta), have_fasta, ip_mode)
+    requested = str(getattr(args, "ip_filter_mode", IP_FILTER_MODE_UNSET)
+                    or IP_FILTER_MODE_UNSET)
+    mode, mode_why = resolve_ip_filter_mode(requested)
+    return {
+        "ip_filter": decision,
+        "why": why,
+        "genome_fasta": str(fasta) if fasta else None,
+        "mode_requested": requested,
+        "mode": mode if decision else None,
+        "mode_why": mode_why,
+    }
+
+
+def _resolve_ip_filter_mode() -> str:
+    """The mode the internal-priming veto runs in: ``"filter"`` or ``"annotate"``.
+
+    ``"filter"`` (drop the flagged sites) unless the user explicitly asked for
+    ``annotate``.  Never returns the ``"auto"`` sentinel -- an unresolved
+    sentinel reaching
+    :func:`ema.experimental.internal_priming.filter_internal_priming` would
+    raise there, which is the right outcome but a worse error message.
+    """
+    from ema.cli.config_schema import resolve_ip_filter_mode
+
+    return resolve_ip_filter_mode(getattr(args, "ip_filter_mode", None))[0]
+
+
+def _resolve_ip_filter() -> bool:
+    """Whether the internal-priming veto runs for this run, said out loud once.
+
+    peakAtail-prime TASK E item 3.  The veto is the single largest measured
+    accuracy lift in the caller -- +7.7 % to +12.8 % relative recall at matched
+    atlas precision and +17.7 % to +22.9 % at matched long-read precision
+    (results/algo_headroom/VERIFY/tables/v8_ipveto_value.tsv), more than every
+    detector change tested put together -- because it brings in information
+    the molecule thresholds do not have: genomic sequence.  In v2 it was an
+    opt-in flag, so every benchmark arm in the manuscript ran with it and
+    every user who did not read the flag list did not.
+
+    THE DEFECT THIS LINE EXISTS TO MAKE IMPOSSIBLE.  Turning the veto ON is
+    not the same as making it DROP, and the two are different flags.  The
+    branch first shipped ``--ip-filter-default auto`` (veto ON) while
+    ``--ip-filter-mode`` still carried v2's literal ``annotate`` (drop
+    NOTHING), so the branch's only behavioural default was a no-op: on the
+    PBMC chr19+21 slice it flagged 5,015 of 32,752 candidates, dropped 0, and
+    emitted v2's exact call set (18,865 PAS) while the docs advertised a
+    recall lift.  The mode is now resolved by :func:`_ip_filter_decision`,
+    named in this log line, and written into ``run_config.json`` /
+    ``run_manifest.json`` under ``internal_priming``.
+
+    Never fails a run: without a FASTA the veto cannot run at all, so the
+    branch default degrades to v2 behaviour with a warning that names what it
+    costs.
+    """
+    d = _ip_filter_decision()
+    key = (d["ip_filter"], d["why"], d["genome_fasta"],
+           d["mode_requested"], d["mode"])
     if _ip_filter_resolved.get("key") != key:
         _ip_filter_resolved["key"] = key
-        if decision and not forced_on:
-            if ip_mode == "filter":
-                log.info(
-                    "internal-priming filter ON by default (%s), mode=filter: "
-                    "flagged PAS are DROPPED. This is the largest measured "
-                    "accuracy lift in the caller (+7.7%%-12.8%% relative recall "
-                    "at matched atlas precision). Pass --no-ip-filter for the "
-                    "pre-peakAtail-prime behaviour.", why,
-                )
-            else:
-                log.warning(
-                    "internal-priming filter ON by default (%s) but "
-                    "mode=%s, so NOTHING IS DROPPED: every flagged PAS is kept "
-                    "and only annotated, and this run's call set is the same "
-                    "one it would have had with --no-ip-filter. The measured "
-                    "+7.7%%-12.8%% relative recall at matched atlas precision "
-                    "is the lift of DROPPING them -- pass --ip-filter-mode "
-                    "filter to get it.", why, ip_mode,
-                )
-        elif not decision and policy == "auto" and not forced_off:
-            log.warning(
-                "INTERNAL-PRIMING FILTER CANNOT RUN: no readable --genome-fasta "
-                "(got %r), so the veto is OFF for this run. It is worth "
-                "+7.7%%-12.8%% relative recall at matched atlas precision and "
-                "+17.7%%-22.9%% at matched long-read precision, and nothing "
-                "else in the caller replaces it -- it is the only stage that "
-                "reads genomic sequence. Supply --genome-fasta (indexed for "
-                "pyfaidx) to get it.", fasta,
+        if d["ip_filter"] and d["mode"] == "filter":
+            log.info(
+                "internal-priming veto: ON (%s), mode=filter [%s] -- flagged "
+                "PAS are DROPPED. This is the largest measured accuracy lift "
+                "in the caller (+7.7%%-12.8%% relative recall at matched "
+                "atlas precision). Pass --no-ip-filter for the "
+                "pre-peakAtail-prime behaviour, or --ip-filter-mode annotate "
+                "to keep and flag them instead.",
+                d["why"], d["mode_why"],
             )
-    return decision
+        elif d["ip_filter"]:
+            log.warning(
+                "internal-priming veto: ON (%s), mode=annotate [%s] -- "
+                "NOTHING IS DROPPED: every flagged PAS is kept and only "
+                "annotated, so this run's call set is the one it would have "
+                "had with --no-ip-filter. The measured +7.7%%-12.8%% relative "
+                "recall at matched atlas precision is the lift of DROPPING "
+                "them -- drop --ip-filter-mode annotate to get it.",
+                d["why"], d["mode_why"],
+            )
+        elif d["why"] == "ip_filter_default=auto but no genome FASTA":
+            log.warning(
+                "INTERNAL-PRIMING FILTER CANNOT RUN: no readable "
+                "--genome-fasta (got %r), so the veto is OFF for this run. It "
+                "is worth +7.7%%-12.8%% relative recall at matched atlas "
+                "precision and +17.7%%-22.9%% at matched long-read precision, "
+                "and nothing else in the caller replaces it -- it is the only "
+                "stage that reads genomic sequence. Supply --genome-fasta "
+                "(indexed for pyfaidx) to get it.", d["genome_fasta"],
+            )
+    return d["ip_filter"]
 
 
 def _validate_pas_filter_config() -> None:
@@ -916,12 +967,17 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     --ip-filter and --annot-filter are off, so default-off runs take
     exactly the pre-D6 code path. Returns ``None`` in that case.
 
-    D9: --ip-filter defaults to ``ip_filter_mode="annotate"`` (keep every
-    PAS, flag it) rather than dropping it -- an internally-primed peak is
-    candidate alternative-PAS signal, not noise, for a scientist hunting
-    APA. ``--ip-filter-mode filter`` restores the pre-D9 drop behaviour.
-    (``--annot-filter``, the gene-region membership filter, is a distinct
-    concept and is unaffected -- it always drops non-overlapping peaks.)
+    The mode comes from :func:`_resolve_ip_filter_mode`, never straight off
+    ``args``: ``--ip-filter-mode``'s default is the sentinel ``"auto"``, and
+    reading it raw is how the veto came to run in v2's ``annotate`` mode --
+    flagging ~15 % of candidates and dropping none -- under a branch whose one
+    behavioural default is that the veto runs.  D9 chose ``annotate`` when the
+    veto was opt-in (an internally-primed peak is candidate alternative-PAS
+    signal, not noise, for a scientist hunting APA); that choice is still one
+    flag away, ``--ip-filter-mode annotate``, and it is what ``--compat v2``
+    pins.  (``--annot-filter``, the gene-region membership filter, is a
+    distinct concept and is unaffected -- it always drops non-overlapping
+    peaks.)
 
     When run, the returned dict includes ``"ip_of"`` -- the merged
     ``{pas_id: internal_priming_bool}`` map across the pos+neg BEDs, for
@@ -958,7 +1014,7 @@ def _apply_pas_filters(output_mgr) -> dict | None:
             _apply_pas_score(collector, _out, output_mgr)
         return _out or None
 
-    ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
+    ip_mode = _resolve_ip_filter_mode()
 
     from ema.experimental.peak_filters import apply_filters
 
@@ -982,6 +1038,8 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     combined_stats: dict = {
         "ip_filter": ip_filter,
         "ip_filter_mode": ip_mode if ip_filter else None,
+        "ip_filter_mode_requested": str(
+            getattr(args, "ip_filter_mode", None) or "auto"),
         "annot_filter": annot_filter,
         "genome_fasta": genome_fasta if ip_filter else None,
         "annotation_bed": annotation_bed if annot_filter else None,
@@ -1076,9 +1134,11 @@ def _apply_pas_filters(output_mgr) -> dict | None:
         except Exception as e:  # pragma: no cover -- bookkeeping only
             log.warning("peak_filters: register_artifact failed: %s", e)
     log.info(
-        "peak_filters: ip_filter=%s(mode=%s) annot_filter=%s pos(total=%s filtered=%s) "
+        "peak_filters: ip_filter=%s(mode=%s, requested=%s) annot_filter=%s "
+        "pos(total=%s filtered=%s) "
         "neg(total=%s filtered=%s) n_ip_flagged=%s",
-        ip_filter, ip_mode, annot_filter,
+        ip_filter, ip_mode, combined_stats["ip_filter_mode_requested"],
+        annot_filter,
         combined_stats["pos"].get("total"), combined_stats["pos"].get("filtered"),
         combined_stats["neg"].get("total"), combined_stats["neg"].get("filtered"),
         combined_stats.get("n_ip_flagged"),

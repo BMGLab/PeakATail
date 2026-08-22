@@ -116,6 +116,62 @@ def _spec(**kwargs: Any) -> dict[str, FieldSpec]:
 # RunConfig: the schema.  ORDER MATTERS for the auto-generated --help
 # layout (Click renders flags top-to-bottom in declaration order).
 # ---------------------------------------------------------------------------
+#: ``--ip-filter-mode``'s three values, kept as named constants because the
+#: literal is what went wrong: the branch shipped one behavioural default
+#: (``--ip-filter-default auto``, which turns the internal-priming veto ON)
+#: while the mode literal stayed at v2's ``"annotate"``, which KEEPS every
+#: flagged site.  The veto therefore ran, flagged, and dropped nothing -- a
+#: default that emitted v2's exact call set while the docs claimed a recall
+#: lift.  ``IP_FILTER_MODE_UNSET`` is the sentinel meaning "the user did not
+#: name a mode"; :func:`resolve_ip_filter_mode` turns it into
+#: ``IP_FILTER_MODE_WHEN_UNSET``.
+IP_FILTER_MODE_UNSET = "auto"
+#: What an unnamed mode resolves to on peakAtail-prime: the veto DROPS.
+IP_FILTER_MODE_WHEN_UNSET = "filter"
+#: v2 (commit 9dfdefb) literal default for ``--ip-filter-mode``.  Pinned in
+#: :data:`V2_COMPAT_FLAGS` because the branch default is no longer this value.
+IP_FILTER_MODE_V2 = "annotate"
+#: The modes :func:`ema.experimental.internal_priming.filter_internal_priming`
+#: accepts.  ``IP_FILTER_MODE_UNSET`` is deliberately NOT one of them: an
+#: unresolved sentinel reaching the filter must raise, never be guessed at.
+IP_FILTER_MODES_EFFECTIVE = ("annotate", "filter")
+
+
+def resolve_ip_filter_mode(raw: str | None) -> tuple[str, str]:
+    """Turn the ``--ip-filter-mode`` value into the mode the veto will run in.
+
+    Pure: no globals, no logging, so the same answer can be logged, written
+    into the run manifest and asserted in a unit test without three copies of
+    the rule.
+
+    Args:
+        raw: the value of ``args.ip_filter_mode`` -- ``"auto"`` (the branch
+            default, meaning the user did not name a mode), ``"annotate"`` or
+            ``"filter"``.  ``None`` / empty is treated as ``"auto"``.
+
+    Returns:
+        ``(mode, why)`` where *mode* is one of
+        :data:`IP_FILTER_MODES_EFFECTIVE` and *why* is a short human string
+        naming what decided it (for the run log and run_config.json).
+
+    Raises:
+        ValueError: on any other value.  A typo must stop the run, not fall
+            back to a mode nobody chose.
+    """
+    text = str(raw or IP_FILTER_MODE_UNSET)
+    if text in IP_FILTER_MODES_EFFECTIVE:
+        return text, "--ip-filter-mode %s (explicit)" % text
+    if text == IP_FILTER_MODE_UNSET:
+        return (IP_FILTER_MODE_WHEN_UNSET,
+                "--ip-filter-mode not given -> %s (peakAtail-prime default; "
+                "v2's literal was %s)" % (IP_FILTER_MODE_WHEN_UNSET,
+                                          IP_FILTER_MODE_V2))
+    raise ValueError(
+        "--ip-filter-mode must be one of %r, got %r"
+        % ((IP_FILTER_MODE_UNSET,) + IP_FILTER_MODES_EFFECTIVE, raw)
+    )
+
+
 #: The exact CLI incantation that pins every ``peakAtail-prime`` option to its
 #: v2 (commit ``9dfdefb``) value, so a run of this branch reproduces the code
 #: that produced the manuscript's numbers **byte-for-byte**.
@@ -151,6 +207,7 @@ V2_COMPAT_FLAGS: tuple[str, ...] = (
     "--emit-inferred-cleavage", "off",
     "--clip-rate-sampling", "head",
     "--ip-filter-default", "off",
+    "--ip-filter-mode", IP_FILTER_MODE_V2,
     "--pas-gene-rescue", "off",
     "--pas-gene-rescue-min-mol", "0",
 )
@@ -785,17 +842,35 @@ class RunConfig:
         ),
     )
     ip_filter_mode: str = field(
-        default="annotate",
+        # peakAtail-prime: the default is the SENTINEL "auto", not a mode.
+        # v2's literal here is "annotate" -- see IP_FILTER_MODE_V2 -- and on
+        # v2 that was harmless because the veto only ran when the user asked
+        # for it with --ip-filter, i.e. a user who wanted the drop asked for
+        # it twice.  This branch turns the veto on by itself
+        # (--ip-filter-default auto), so leaving "annotate" as the literal
+        # made the branch's one behavioural default a NO-OP: the veto ran,
+        # flagged ~15 % of candidates and dropped none, and the run emitted
+        # v2's exact call set while the log advertised a recall lift it was
+        # not delivering.  "auto" resolves to "filter" (see
+        # ema.main._resolve_ip_filter_mode); an explicit --ip-filter-mode
+        # annotate is still honoured verbatim.
+        default="auto",
         metadata=_spec(
             cli_flag="--ip-filter-mode", yaml_key="ip_filter_mode",
-            choice=("annotate", "filter"),
+            choice=("auto", "annotate", "filter"),
             legacy_args_attr="ip_filter_mode",
             description=(
-                "How the internal-priming filter handles a flagged PAS "
-                "(only relevant when --ip-filter is set). 'annotate' "
-                "(default) KEEPS every PAS and records the internal_priming "
-                "flag on the PAS ledger + pasbed. 'filter' restores the "
-                "pre-D9 behaviour of dropping flagged PAS."
+                "What the internal-priming veto DOES with a flagged PAS "
+                "(only relevant when the veto runs -- see --ip-filter / "
+                "--ip-filter-default). 'auto' (default on peakAtail-prime) "
+                "means 'the mode was not named' and resolves to 'filter'. "
+                "'filter' DROPS flagged PAS -- this is the +7.7%-12.8% "
+                "relative recall at matched atlas precision. 'annotate' "
+                "KEEPS every PAS and only records the internal_priming flag "
+                "on the PAS ledger + pasbed; it is v2's literal default and "
+                "is what --compat v2 pins. The mode that was actually used "
+                "is logged and written to run_config.json / "
+                "run_manifest.json under 'internal_priming'."
             ),
         ),
     )

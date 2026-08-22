@@ -744,10 +744,21 @@ def test_seam_appends_every_feature_column_inside_the_ip_pass(seam):
 
 
 def test_seam_without_ip_filter_still_makes_only_one_fasta_pass(seam):
+    """--no-ip-filter, not ``ip_filter = False``.
+
+    On peakAtail-prime ``args.ip_filter = False`` does NOT turn the veto off:
+    ``--ip-filter-default auto`` runs it whenever a genome FASTA is present,
+    which is exactly what this file's ``seam`` fixture supplies.  Before the
+    ``--ip-filter-mode`` default was fixed this test still passed, because the
+    veto ran in ``annotate`` mode and dropped nothing -- so it was counting the
+    IP filter's FASTA opens while claiming to count the features-only scan's.
+    ``no_ip_filter`` is what actually takes the IP path out.
+    """
     from ema.config import args
     from ema.main import _apply_pas_filters, _write_pas_features
 
     args.ip_filter = False
+    args.no_ip_filter = True
     args.annot_filter = False
     args.genome_fasta = str(seam["genome"])
 

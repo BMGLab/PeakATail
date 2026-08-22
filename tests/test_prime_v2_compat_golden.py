@@ -48,7 +48,7 @@ from pathlib import Path
 
 import pytest
 
-from ema.config import variable_config
+from ema.config import args, variable_config
 from ema.countmatrix.indexing import BarcodeIndex
 from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.paswrite import support_path_for
@@ -140,6 +140,14 @@ def _v2_settings(seq_len: int) -> None:
     # --ip-filter was passed.  The veto lives above peak_calling(), so it
     # cannot move these goldens either; pinned for the same reason.
     variable_config.ip_filter_default = "off"
+    # TASK E (--ip-filter-mode): v2's literal default was "annotate" -- keep
+    # every flagged PAS, drop none.  The branch default is now the sentinel
+    # "auto", which resolves to "filter", because leaving it at "annotate"
+    # made --ip-filter-default auto a no-op (the veto ran and dropped
+    # nothing).  This is the FIRST compat knob that lives on the legacy
+    # `args` namespace rather than variable_config, which is why
+    # test_prime_compat_flags.py now reads pins from both.
+    args.ip_filter_mode = "annotate"
     # Change 4 (--polya-genomic-a-gate):  variable_config.polya_genomic_a_gate = False
 
 
@@ -153,11 +161,22 @@ def _restore_variable_config():
             "emit_inferred_cleavage", "clip_rate_sampling",
             "ip_filter_default")
     saved = {k: getattr(variable_config, k) for k in keys}
+    _ns = args._get()
+    _MISSING = object()
+    saved_args = {k: getattr(_ns, k, _MISSING) for k in ("ip_filter_mode",)}
     try:
         yield
     finally:
         for k, v in saved.items():
             setattr(variable_config, k, v)
+        for k, v in saved_args.items():
+            if v is _MISSING:
+                try:
+                    delattr(_ns, k)
+                except AttributeError:
+                    pass
+            else:
+                setattr(_ns, k, v)
 
 
 def _run_arm(strategy: str, seq_len: int, tmp_path: Path) -> dict[str, str]:
