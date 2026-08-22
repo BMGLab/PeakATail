@@ -135,16 +135,19 @@ def _support_by_coord(bed: Path):
         str(getattr(variable_config, "pas_features", "off")).lower() == "on")
     lines = Path(support_path_for(bed)).read_text().splitlines()
     assert lines[0].split("\t") == list(expect)
+    # Compared as TEXT, not as ints: clip_offset_mean is a signed float and is
+    # "NA" on a tier-2 row, and comparing the raw fields across paths is the
+    # stricter test anyway (it would catch a formatting divergence too).
     rows = {}
     for line in lines[1:]:
         f = line.split("\t")
-        rows[f[0]] = tuple(int(x) for x in f[1:])
+        rows[f[0]] = tuple(f[1:])
     out = {}
     for r in _rows(bed):
         key = (r["chrom"], r["start"], r["end"], r["strand"])
         out[key] = rows[str(r["name"])]
         # BED column 5 is the molecule count from the same sidecar row
-        assert int(r["score"]) == rows[str(r["name"])][1]
+        assert int(r["score"]) == int(rows[str(r["name"])][1])
     return out
 
 

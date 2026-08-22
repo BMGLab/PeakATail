@@ -99,6 +99,11 @@ class ChromJob:
     # sidecar's column set, so a child that fell back to the module default
     # would write a header the merge step does not expect.
     pas_features: str = "off"
+    # peakAtail-prime --clip-rate-sampling: the exact "pass" counter runs
+    # INSIDE this job, so a child at the module default would report a rate the
+    # run was not asked for -- and would put a line in the log that a
+    # --clip-rate-sampling head run must not have.
+    clip_rate_sampling: str = "head"
     # --- strategy (re-instantiated in the child) ---
     strategy_name: str = "original"
     strategy_kwargs: dict = field(default_factory=dict)
@@ -146,6 +151,7 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
     vc.read_geometry = job.read_geometry
     vc.read_exclude_flags = job.read_exclude_flags
     vc.pas_features = job.pas_features
+    vc.clip_rate_sampling = job.clip_rate_sampling
 
     reset_index()
     Peak.reset_pasnumber()
@@ -171,6 +177,8 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
     with open(cb, "w") as fh:
         for cb_str, _ in sorted(mapping.items(), key=lambda kv: kv[1]):
             fh.write(cb_str + "\n")
+    from ema.countmatrix.polya import take_last_clip_counts
+    _n_reads, _n_clip = take_last_clip_counts()
     return {
         "job_id": job.job_id,
         "contig": job.contig,
@@ -183,6 +191,12 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
         "n_cb": len(mapping),
         "wall_s": time.monotonic() - t0,
         "maxrss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+        # --clip-rate-sampling pass: this job's own exact counts, so the
+        # dispatcher can report ONE run-level rate instead of a warning per
+        # (contig, strand) -- chr21's '+' strand alone measures 0.2878 % on a
+        # perfectly healthy PBMC library.
+        "clip_rate_reads": _n_reads,
+        "clip_rate_clips": _n_clip,
     }
 
 
@@ -452,6 +466,8 @@ def run_chrom_parallel(
                 read_geometry=str(vc.read_geometry),
                 read_exclude_flags=int(vc.read_exclude_flags),
                 pas_features=str(getattr(vc, "pas_features", "off")),
+                clip_rate_sampling=str(getattr(vc, "clip_rate_sampling",
+                                               "head")),
                 strategy_name=strategy_name,
                 strategy_kwargs=dict(strategy_kwargs or {}),
                 peak_kwargs=peak_kwargs, log_queue=log_queue,
@@ -502,6 +518,18 @@ def run_chrom_parallel(
                 except Exception:
                     pool.terminate()
                     raise
+        # --clip-rate-sampling pass: ONE exact, run-level poly(A) clip rate,
+        # summed over the jobs that counted it.  This is the alarm; the
+        # per-job lines above are information.
+        _cr_reads = sum(int(r.get("clip_rate_reads", 0)) for r in results)
+        if _cr_reads:
+            from ema.countmatrix.polya import report_clip_rate_total
+            report_clip_rate_total(
+                _cr_reads,
+                sum(int(r.get("clip_rate_clips", 0)) for r in results),
+                str(bam_path),
+            )
+
         t_merge = time.monotonic()
         # Legacy numbering: peak_calling() seeds its state from the
         # class-level Peak.pasnumber and writes the final value back, and

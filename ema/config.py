@@ -342,17 +342,34 @@ class variable_config:
     # ignore this and use compute_lambda(heights) instead.  Negative
     # disables Tier 2 entirely.
     min_pas_prominence = 5.0
-    # 3' cleavage-site offset correction (issue #72).  Called peak 3' ends
-    # stop ~90-105 nt short of the true cleavage site (10x R2 coverage runs
-    # out before the poly(A) junction).  When > 0, the reported PAS 3' end is
-    # shifted downstream by this many bp after peak calling so tight-cutoff
-    # benchmarks and atlas annotation use the inferred cleavage position.
-    # 0 (default) = legacy behaviour (no shift).  See
-    # ema/countmatrix/cleavage_offset.py.
-    cleavage_offset = 0
+    # 3' cleavage-site offset correction.  ACCEPTS "none" (default, = v2, no
+    # shift), "auto" (this run's own clip-anchored estimate), or a signed
+    # integer.  An int is still read exactly as v2 read it -- positive means
+    # "shift the reported 3' end DOWNSTREAM by this many bp after peak
+    # calling" -- and an int is still what a legacy library caller may assign
+    # here; ema.countmatrix.cleavage_offset.parse_cleavage_offset accepts both
+    # spellings so `variable_config.cleavage_offset = 95` keeps working.
+    #
+    # THE DEFAULT IS "none" AND THE MEASUREMENT SAYS IT SHOULD STAY THERE.
+    # On the PBMC chr19+21 slice the default arm's exact-match optimum is
+    # -1 bp against the atlas and -2 bp against Kinnex long reads, and it is
+    # a BASE-PAIR-RESOLUTION effect only: P@100 moves by 0.0028 over the
+    # whole -8..+8 sweep while P@1 moves 0.3926 -> 0.4346.  The two truths
+    # disagree about the optimum at every intermediate window (atlas P@10
+    # wants +5, Kinnex t5 P@10 wants -4), which is itself the argument
+    # against shipping a shift.  See results/prime/taskE_offset_sweep_*.tsv.
+    cleavage_offset = "none"
     # When True, cleavage_offset is estimated per run from the called peaks +
     # genome FASTA instead of the fixed constant (issue #72; --auto-cleavage-
     # offset).  False (default) = use the cleavage_offset constant as-is.
+    #
+    # This is the COVERAGE caller's estimator (genomic A-fraction crest +
+    # AATAAA density downstream of each peak 3' end, searched in a 60..120 bp
+    # band).  It cannot return a small or negative offset by construction, and
+    # the +95 bp it estimates is measurably DESTRUCTIVE for clip_seeded
+    # (P@10 0.5209 -> 0.0551).  peakAtail-prime therefore refuses the
+    # combination rather than warning about it; use --cleavage-offset auto
+    # for the clip-anchored estimator instead.
     auto_cleavage_offset = False
     # Cache populated once per BAM by peak_calling when min_pas_spacing == -1.
     # Keyed by str(bam_path) -> int median read length.  Plain class-level
@@ -437,6 +454,48 @@ class variable_config:
     # threshold", which was chosen on GSE104556 mouse 1 (Rule T) and never by
     # reading a number this branch reports.
     pas_score_min = -1.0
+    # --- peakAtail-prime: poly(A) clip-rate QC sampling --------------------
+    # "pass" (BRANCH DEFAULT) | "strided" | "head" (= v2).
+    #
+    # v2 read the first 200,000 CB reads of the file, which on a
+    # coordinate-sorted BAM is the head of chr1: on PBMC 10k v3 that returns
+    # 2.2565% where the whole-file rate on the same denominator is 0.5364%.
+    # A 4.2x over-estimate is the dangerous direction -- it would MASK a
+    # genuinely destroyed evidence channel.
+    #
+    # THE BRANCH DEFAULT IS "pass", NOT "strided", AND THAT IS A MEASUREMENT.
+    # "strided" is the "sample across the BAM" design: coordinate-uniform
+    # windows, every read whose start falls in one, unbiased by construction
+    # and cheap (3 s).  It is nonetheless UNRELIABLE at any affordable budget,
+    # because clips are rare AND concentrated at the 3' ends of expressed
+    # genes, so the estimate is dominated by which windows happen to hit one:
+    # on the full PBMC BAM against the 0.5364% truth it returns 1.5258%
+    # (200k reads) and 1.8068% (1M); on the chr19+21 slice against a 0.6169%
+    # truth, 0.44%-0.79%.  "pass" instead COUNTS, during the peak-calling pass
+    # the run performs anyway, every accepted read and every qualifying clip
+    # among them -- exact, per (contig, strand), for zero extra I/O.
+    #
+    # The estimator is LOG-ONLY (no caller reads its return value), so this
+    # value changes no output byte; it is a flag because the branch's rule is
+    # that every behavioural change is reachable in both directions, and
+    # because a --clip-rate-sampling head run must reproduce v2's log line.
+    clip_rate_sampling = "pass"
+    # --- peakAtail-prime: the inferred_cleavage column ---------------------
+    # "on" (BRANCH DEFAULT) | "off" (= v2).  Appends `inferred_cleavage` to
+    # pas_support.tsv: the coordinate implied by this run's cleavage offset,
+    # reported WITHOUT moving pasbed.bed.  Needs --pas-features on for the
+    # per-site clip_offset_mean column the run-level estimate aggregates.
+    emit_inferred_cleavage = "on"
+    # --- peakAtail-prime: when --ip-filter turns itself on ------------------
+    # "auto" (BRANCH DEFAULT) = run the internal-priming veto whenever a
+    # --genome-fasta is available, and say loudly when there is none;
+    # "off" (= v2) = the veto runs only when --ip-filter is passed.
+    # The veto is the single largest measured accuracy lift in the caller
+    # (+7.7% to +12.8% relative recall at matched atlas precision, +17.7% to
+    # +22.9% at matched long-read precision), it is what every benchmark arm
+    # in the manuscript already runs with, and it was an opt-in flag.
+    # --no-ip-filter forces it off whatever this is set to.
+    ip_filter_default = "auto"
 
 @dataclass
 class filter_config:

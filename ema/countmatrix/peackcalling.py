@@ -11,7 +11,8 @@ from ema.countmatrix.paswrite import (
     PAS_FEATURE_MODES, matrix_write, open_support, pas_write, support_write,
 )
 from ema.countmatrix.polya import (
-    ClipSeeder, check_clip_rate, clip_read_ok, clip_site, read_umi,
+    ClipRateCounter, ClipSeeder, V2_CLIP_RATE_SAMPLING, check_clip_rate,
+    clip_read_ok, clip_site, read_umi,
 )
 from ema.config import directory_config, variable_config
 from ema.strategies.utils import merge_close_or_low_prominence
@@ -350,13 +351,20 @@ def peak_calling(
     # and warn loudly when the evidence channel looks destroyed.  Full-scan
     # invocations only — tile workers (region != None) inherit the check from
     # their dispatcher, and re-sampling per tile would be pure overhead.
-    if _polya_collect and region is None:
-        check_clip_rate(
-            str(bamfile_dir),
-            min_clip=polya_min_clip,
-            min_purity=polya_min_purity,
-            barcode_tag=variable_config.barcode_tag or "CB",
-        )
+    _clip_rate = None
+    if _polya_collect:
+        _clip_rate_mode = str(getattr(variable_config, "clip_rate_sampling",
+                                      V2_CLIP_RATE_SAMPLING))
+        if _clip_rate_mode == "pass":
+            _clip_rate = ClipRateCounter()
+        elif region is None:
+            check_clip_rate(
+                str(bamfile_dir),
+                min_clip=polya_min_clip,
+                min_purity=polya_min_purity,
+                barcode_tag=variable_config.barcode_tag or "CB",
+                sampling=_clip_rate_mode,
+            )
 
     # Open BAM with the caller's BGZF decompression thread count.  Region
     # jobs used to be forced to threads=1; the per-chromosome dispatcher
@@ -509,6 +517,11 @@ def peak_calling(
         _clip_ok = True
         if _polya_collect:
             _clip = clip_site(read, polya_min_clip, polya_min_purity)
+            if _clip_rate is not None:
+                # --clip-rate-sampling pass: the exact rate over the reads the
+                # caller ACCEPTS, counted here because clip_site has already
+                # been called on this read.  Two integer increments.
+                _clip_rate.add(_clip is not None)
             if _clip is not None:
                 _umi = read_umi(read)
                 # samtools -F 3844 on the clip-evidence channel only:
@@ -630,6 +643,16 @@ def peak_calling(
     bedfile.close()
     if supportfile is not None:
         supportfile.close()
+
+    if _clip_rate is not None:
+        # warn=False: this is one (contig, strand).  The per-chromosome rate
+        # legitimately spans 0.3669 %-0.8179 % on a healthy PBMC library and
+        # chr21's '+' strand alone is 0.2878 %, so the alarm belongs to the
+        # run-level total (chrom_parallel) rather than to a job.
+        _clip_rate.report("%s%s strand%s" % (
+            chro if chro else "", "-" if direction else "+",
+            f", region {region[0]}:{region[1]}-{region[2]}" if region else ""),
+            warn=region is None)
 
     if _seeder is not None:
         log.info("clip_seeded counting (%s strand%s): %s",

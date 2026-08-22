@@ -542,3 +542,368 @@ def rewrite_bed_3prime_offset(path, offset: int, *, skip_supported: bool = False
             dst.write("\t".join(parts) + "\n")
     os.replace(tmp, path)
     return shifted
+
+
+# ===========================================================================
+# peakAtail-prime (TASK E): the CLIP-ANCHORED offset, and a signed rewrite
+# ===========================================================================
+#
+# Everything above this line is the COVERAGE caller's estimator (issue #72):
+# it looks for a genomic A-fraction crest 60-120 bp downstream of a peak's
+# reported 3' end, because a coverage peak stops where R2 coverage runs out.
+# It cannot return a small or a negative offset -- the search band forbids it
+# -- and the +95 bp it returns is measurably destructive for ``clip_seeded``,
+# whose tier-1 PAS are already ON the cleavage base (P@10 0.5209 -> 0.0551,
+# results/algo_headroom/A4_resolution table T7).
+#
+# What follows is the different quantity TASK E asked for: the offset between
+# the base the caller REPORTS and the bases the poly(A) tails actually pinned,
+# estimated from the run's own clip-anchored subset -- no genome, no long
+# reads, no atlas.  The caller writes one number per tier-1 PAS
+# (``clip_offset_mean`` in ``pas_support.tsv``, ``--pas-features on``); this
+# module aggregates them into the per-library estimate.
+#
+# MEASURED, so nobody has to re-derive it: on the PBMC chr19+21 slice the
+# read-weighted estimate is -0.334 bp over 267,520 clip reads in 16,338
+# clusters (76.10 % of clip reads sit EXACTLY on the reported base); on the
+# GSE104556 mouse 1 chr18+19 slice it is +0.214 bp over 124,308 reads in
+# 8,722 clusters (56.90 % exactly on it).  Both round to ZERO, and both are
+# an average of two opposite per-strand values (+0.808/-0.748 PBMC,
+# +0.999/-1.102 mouse) produced by ``cluster_clip_sites``'s tie-break, which
+# resolves ties toward the LOWEST COORDINATE on both strands and is therefore
+# not strand-symmetric.
+#
+# The offset external truths prefer is NOT this number: on the same slice the
+# base-pair-exact optimum is -1 bp against the atlas and -2 bp against Kinnex
+# long reads.  The clip channel cannot see it -- which is exactly why
+# ``--cleavage-offset`` defaults to ``none`` and why ``auto`` is honest about
+# estimating ~0.
+
+#: Accepted spellings of ``--cleavage-offset`` beyond a signed integer.
+CLEAVAGE_OFFSET_MODES = ("none", "auto")
+
+#: The v2-compatibility value of ``--cleavage-offset``.
+V2_CLEAVAGE_OFFSET = "none"
+
+
+def parse_cleavage_offset(spec) -> tuple[str, int]:
+    """Resolve ``--cleavage-offset`` into ``(mode, constant)``.
+
+    Accepts, in order of precedence:
+
+    * ``"none"`` / ``None`` / ``""``      -> ``("none", 0)`` -- v2, no shift.
+    * ``"auto"``                          -> ``("auto", 0)`` -- use this run's
+      clip-anchored estimate (resolved later, once the clusters exist).
+    * an ``int`` or an integer string     -> ``("const", value)``.
+
+    ``int`` is accepted because ``variable_config.cleavage_offset`` was an int
+    in v2 and a library caller may still assign one; ``0`` is spelled
+    ``("none", 0)`` so the two v2 spellings collapse to one no-op.
+
+    Raises:
+        ValueError: on anything else, so a typo cannot be read as "no shift".
+    """
+    if spec is None:
+        return ("none", 0)
+    if isinstance(spec, bool):                       # guard: True is not 1 here
+        raise ValueError("cleavage_offset must be none/auto/<int>, got %r" % spec)
+    if isinstance(spec, int):
+        return ("none", 0) if spec == 0 else ("const", int(spec))
+    text = str(spec).strip().lower()
+    if text in ("", "none", "off", "0"):
+        return ("none", 0)
+    if text == "auto":
+        return ("auto", 0)
+    try:
+        value = int(text)
+    except ValueError:
+        raise ValueError(
+            "cleavage_offset must be 'none', 'auto' or a signed integer "
+            "number of bp, got %r" % (spec,)
+        ) from None
+    return ("none", 0) if value == 0 else ("const", value)
+
+
+def shift_cleavage_point(bed_start: int, bed_end: int, strand: str,
+                         offset: int) -> tuple[int, int]:
+    """Move a PAS interval's 3' end by a SIGNED *offset*, transcript-oriented.
+
+    Positive is downstream and reproduces :func:`shift_3prime_end` exactly
+    (the v2 behaviour: the 5' end stays put and the interval grows).  Negative
+    is upstream, which v2 could not express -- it returned the interval
+    unchanged -- and is what a base-pair-resolution correction needs.
+
+    A 1-bp interval (every ``clip_seeded`` tier-1 PAS) is carried whole, so
+    the reported base really moves; a wider interval keeps its 5' end unless
+    that would make it degenerate.  ``offset == 0`` returns the input tuple
+    unchanged, byte-for-byte.
+
+    Args:
+        bed_start: 0-based BED start (inclusive).
+        bed_end: 0-based BED end (exclusive).
+        strand: ``"+"`` or ``"-"``; anything else is treated as ``"+"``.
+        offset: Signed bp in TRANSCRIPT orientation (+ = downstream).
+
+    Returns:
+        ``(new_start, new_end)``, never negative and never degenerate.
+    """
+    if offset == 0:
+        return bed_start, bed_end
+    if strand == "-":
+        new_start = max(0, bed_start - offset)
+        new_end = max(bed_end, new_start + 1)
+        return new_start, new_end
+    new_end = max(1, bed_end + offset)
+    new_start = min(bed_start, new_end - 1)
+    return max(0, new_start), new_end
+
+
+def cleavage_point(bed_start: int, bed_end: int, strand: str) -> int:
+    """The single reported cleavage base of a PAS interval (0-based)."""
+    return bed_start if strand == "-" else bed_end - 1
+
+
+#: Which rows a signed offset is applied to under ``clip_seeded``.  The sign
+#: decides, and the measurement is why: a POSITIVE offset is the coverage
+#: correction (issue #72, ~+95 bp) and must not touch the clip-anchored tier
+#: -- that is v2's ``skip_supported`` rule, and applying +95 to tier 1 costs
+#: 46 points of P@10 -- while a NEGATIVE offset is the base-pair resolution
+#: correction, which is a tier-1 quantity: tier 2's own base-pair-exact
+#: precision is 0.0016 and moves by 0.0004 over the whole -8..+8 sweep.
+def rows_for_offset(offset: int, strategy: str) -> str:
+    """``"all"``, ``"tier1"`` or ``"tier2"`` -- which BED rows an offset moves."""
+    if str(strategy) != "clip_seeded":
+        return "all"
+    if offset > 0:
+        return "tier2"
+    if offset < 0:
+        return "tier1"
+    return "all"
+
+
+def rewrite_bed_cleavage_offset(path, offset: int, *,
+                                rows: str = "all") -> int:
+    """Rewrite a 6-column PAS BED in place, shifting 3' ends by a SIGNED offset.
+
+    The signed generalisation of :func:`rewrite_bed_3prime_offset`.  For
+    ``offset > 0`` with ``rows="tier2"`` it is byte-for-byte equivalent to
+    ``rewrite_bed_3prime_offset(path, offset, skip_supported=True)``; that
+    equivalence is pinned by
+    ``tests/test_cleavage_offset_prime.py::test_the_positive_path_is_v2``.
+
+    Args:
+        path: Path to the BED (str or :class:`pathlib.Path`).
+        offset: Signed bp, transcript orientation.  ``0`` is a no-op that
+            leaves the file byte-identical and returns 0.
+        rows: ``"all"``, ``"tier1"`` (BED score > 0) or ``"tier2"`` (score 0).
+            Malformed rows are always passed through unchanged.
+
+    Returns:
+        Number of records whose coordinates changed.
+    """
+    import os as _os
+
+    if offset == 0:
+        return 0
+    if rows not in ("all", "tier1", "tier2"):
+        raise ValueError("rows must be all/tier1/tier2, got %r" % (rows,))
+
+    shifted = 0
+    tmp = f"{_os.fspath(path)}.offset.tmp"
+    with open(path) as src, open(tmp, "w") as dst:
+        for line in src:
+            if not line.strip():
+                dst.write(line)
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 6:
+                dst.write(line)
+                continue
+            try:
+                start = int(parts[1])
+                end = int(parts[2])
+            except ValueError:
+                dst.write(line)
+                continue
+            if rows != "all":
+                try:
+                    is_tier1 = float(parts[4]) > 0
+                except ValueError:
+                    is_tier1 = False
+                if (rows == "tier1") != is_tier1:
+                    dst.write(line)
+                    continue
+            new_start, new_end = shift_cleavage_point(start, end, parts[5], offset)
+            if (new_start, new_end) != (start, end):
+                shifted += 1
+            parts[1] = str(new_start)
+            parts[2] = str(new_end)
+            dst.write("\t".join(parts) + "\n")
+    _os.replace(tmp, path)
+    return shifted
+
+
+def estimate_clip_anchored_offset(support_paths) -> tuple[float, dict]:
+    """Aggregate the caller's per-site ``clip_offset_mean`` into one number.
+
+    The per-site column is the read-weighted mean of ``member - call`` over a
+    tier-1 cluster's own clip positions, in transcript orientation; this
+    function weights each site by its ``clip_reads`` so the run-level estimate
+    is the read-weighted mean over every clip read in the run -- the same
+    quantity a single-pass estimator would compute, recovered from a file the
+    caller already writes.
+
+    Tier-2 rows carry ``NA`` and are skipped, as are rows written without
+    ``--pas-features on`` (no such column at all).
+
+    Args:
+        support_paths: Iterable of ``(path, strand)`` pairs -- the per-strand
+            ``*.support.tsv`` sidecars.  ``strand`` is used only to report the
+            per-strand split, which is not symmetric (see the module note).
+
+    Returns:
+        ``(offset, diagnostics)``.  ``offset`` is a float in bp (positive =
+        the tails pinned bases DOWNSTREAM of the reported one) and is ``0.0``
+        when nothing could be aggregated; ``diagnostics`` always carries
+        ``n_sites`` / ``n_clip_reads`` / ``available`` so a caller can tell
+        "measured zero" from "could not measure".
+    """
+    num = 0.0
+    den = 0
+    n_sites = 0
+    per_strand: dict[str, list] = {}
+    missing_column = False
+    for path, strand in support_paths:
+        try:
+            fh = open(path)
+        except (FileNotFoundError, TypeError):
+            continue
+        with fh:
+            header = fh.readline().rstrip("\n").split("\t")
+            try:
+                i_off = header.index("clip_offset_mean")
+                i_reads = header.index("clip_reads")
+                i_tier = header.index("tier")
+            except ValueError:
+                missing_column = True
+                continue
+            s_num, s_den, s_n = 0.0, 0, 0
+            for line in fh:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) <= i_off:
+                    continue
+                if parts[i_tier] != "1":
+                    continue
+                raw = parts[i_off]
+                if raw == "NA":
+                    continue
+                try:
+                    d = float(raw)
+                    w = int(parts[i_reads])
+                except ValueError:
+                    continue
+                if w <= 0:
+                    continue
+                s_num += d * w
+                s_den += w
+                s_n += 1
+            num += s_num
+            den += s_den
+            n_sites += s_n
+            if s_den:
+                acc = per_strand.setdefault(strand, [0.0, 0, 0])
+                acc[0] += s_num
+                acc[1] += s_den
+                acc[2] += s_n
+    diag = {
+        "available": bool(den),
+        "n_sites": n_sites,
+        "n_clip_reads": den,
+        "missing_column": missing_column,
+        "by_strand": {
+            s: {"offset_bp": round(v[0] / v[1], 4), "n_sites": v[2],
+                "n_clip_reads": v[1]}
+            for s, v in sorted(per_strand.items()) if v[1]
+        },
+    }
+    if not den:
+        return 0.0, diag
+    return num / den, diag
+
+
+#: Sidecar column appended by ``--emit-inferred-cleavage on``.
+INFERRED_CLEAVAGE_COLUMN = "inferred_cleavage"
+
+
+def append_inferred_cleavage(bed_path, support_path,
+                             offset_by_tier: dict) -> int:
+    """Append ``inferred_cleavage`` to one per-strand ``*.support.tsv``.
+
+    ``inferred_cleavage`` is the 0-based genomic coordinate this run's
+    cleavage offset implies for the PAS: the reported cleavage base moved by
+    ``offset_by_tier[tier]`` in transcript orientation.  It is REPORTED, never
+    substituted -- ``pasbed.bed`` keeps whatever coordinate the run's
+    ``--cleavage-offset`` produced, so with the default (``none``) the column
+    equals the reported base and says so explicitly rather than by omission.
+
+    The join is on the PAS id (BED column 4 == sidecar column 1), not on line
+    order, so it survives any future reordering of either file.  Idempotent:
+    a sidecar that already carries the column is left alone.
+
+    Args:
+        bed_path: The per-strand PAS BED whose coordinates are the source.
+        support_path: Its sidecar (``paswrite.support_path_for(bed_path)``).
+        offset_by_tier: ``{1: int, 2: int}`` signed bp, transcript oriented.
+
+    Returns:
+        Number of sidecar rows given a coordinate (0 if nothing was written).
+    """
+    import os as _os
+
+    if not _os.path.exists(support_path) or not _os.path.exists(bed_path):
+        return 0
+    coords: dict[str, tuple[int, int, str]] = {}
+    with open(bed_path) as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 6:
+                continue
+            try:
+                coords[parts[3]] = (int(parts[1]), int(parts[2]), parts[5])
+            except ValueError:
+                continue
+
+    tmp = f"{_os.fspath(support_path)}.infcleav.tmp"
+    written = 0
+    with open(support_path) as src, open(tmp, "w") as dst:
+        header = src.readline().rstrip("\n")
+        cols = header.split("\t")
+        if INFERRED_CLEAVAGE_COLUMN in cols:
+            _os.unlink(tmp)
+            return 0
+        try:
+            i_tier = cols.index("tier")
+        except ValueError:
+            _os.unlink(tmp)
+            return 0
+        dst.write(header + "\t" + INFERRED_CLEAVAGE_COLUMN + "\n")
+        for line in src:
+            row = line.rstrip("\n")
+            if not row:
+                continue
+            parts = row.split("\t")
+            rec = coords.get(parts[0])
+            if rec is None or len(parts) <= i_tier:
+                dst.write(row + "\tNA\n")
+                continue
+            start, end, strand = rec
+            try:
+                off = int(offset_by_tier.get(int(parts[i_tier]), 0))
+            except ValueError:
+                off = 0
+            base = cleavage_point(start, end, strand)
+            dst.write("%s\t%d\n" % (row, max(0, base - off if strand == "-"
+                                             else base + off)))
+            written += 1
+    _os.replace(tmp, support_path)
+    return written

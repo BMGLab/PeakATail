@@ -123,8 +123,24 @@ def _v2_settings(seq_len: int) -> None:
     variable_config.pas_score = "none"
     variable_config.pas_score_model = "prime1"
     variable_config.pas_score_min = -1.0
-    # Change 2 (--polya-genomic-a-gate):  variable_config.polya_genomic_a_gate = False
-    # Change 5 (--cleavage-edge-refine):  variable_config.cleavage_edge_refine = False
+    # TASK E (--cleavage-offset): v2 spelled "no shift" as the integer 0; the
+    # branch spells it "none" and both parse to the same no-op.  Pinned as the
+    # int so this function keeps stating the v2 SPELLING, not the branch's.
+    variable_config.cleavage_offset = 0
+    variable_config.auto_cleavage_offset = False
+    # TASK E (--emit-inferred-cleavage): v2 has no inferred_cleavage column.
+    # The branch default is "on" and it changes the sidecar's bytes, so this
+    # line is load-bearing for the two sidecar goldens below.
+    variable_config.emit_inferred_cleavage = "off"
+    # TASK E (--clip-rate-sampling): v2 sampled the head of the file.  The QC
+    # is log-only so this cannot move a golden, but the compat surface must be
+    # complete: --compat v2 has to reproduce v2's LOG line too.
+    variable_config.clip_rate_sampling = "head"
+    # TASK E (--ip-filter-default): v2 ran the internal-priming veto only when
+    # --ip-filter was passed.  The veto lives above peak_calling(), so it
+    # cannot move these goldens either; pinned for the same reason.
+    variable_config.ip_filter_default = "off"
+    # Change 4 (--polya-genomic-a-gate):  variable_config.polya_genomic_a_gate = False
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +148,10 @@ def _restore_variable_config():
     """Every knob `_v2_settings` touches is process-global; put it back afterwards."""
     keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
             "read_geometry", "read_exclude_flags", "pas_features",
-            "pas_score", "pas_score_model", "pas_score_min")
+            "pas_score", "pas_score_model", "pas_score_min",
+            "cleavage_offset", "auto_cleavage_offset",
+            "emit_inferred_cleavage", "clip_rate_sampling",
+            "ip_filter_default")
     saved = {k: getattr(variable_config, k) for k in keys}
     try:
         yield

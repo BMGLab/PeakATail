@@ -394,7 +394,8 @@ def test_the_writer_and_the_header_cannot_disagree(tmp_path):
             support_write(fh, 1, row, features)
         header, data = path.read_text().splitlines()
         assert len(header.split("\t")) == len(data.split("\t"))
-        assert len(header.split("\t")) == 7 + (2 if features else 0)
+        assert len(header.split("\t")) == 7 + (
+            len(CALL_FEATURE_COLUMNS) if features else 0)
 
 
 def test_a_missing_call_feature_is_NA_not_a_zero(tmp_path):
@@ -615,7 +616,8 @@ def test_end_to_end_seam_features_are_real(tmp_path):
 # ---------------------------------------------------------------------------
 # the ema.main seam, end to end -- including the "no extra FASTA pass" claim
 # ---------------------------------------------------------------------------
-_SEAM_ARG_NAMES = ("ip_filter", "ip_filter_mode", "annot_filter", "genome_fasta",
+_SEAM_ARG_NAMES = ("ip_filter", "no_ip_filter", "ip_filter_mode",
+                   "annot_filter", "genome_fasta",
                    "annotation_bed", "ip_a_stretch", "ip_a_fraction",
                    "ip_window_left", "ip_window_right", "polya_evidence",
                    "polya_mode")
@@ -667,9 +669,9 @@ def seam(tmp_path, monkeypatch):
     support = run_dir / "pas_support.tsv"
     support.write_text(
         "\t".join(SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS) + "\n"
-        "1\t9\t5\t0\t0\t120\t1\t2\t7\n"
-        "2\t1\t1\t0\t0\t44\t1\t1\t0\n"
-        "3\t14\t7\t0\t0\t260\t1\t3\t18\n"
+        "1\t9\t5\t0\t0\t120\t1\t2\t7\t0.50\n"
+        "2\t1\t1\t0\t0\t44\t1\t1\t0\t0.00\n"
+        "3\t14\t7\t0\t0\t260\t1\t3\t18\t-1.25\n"
     )
 
     opens: list[str] = []
@@ -718,8 +720,9 @@ def test_seam_appends_every_feature_column_inside_the_ip_pass(seam):
 
     cols, rows = _seam_support_rows(seam["support"])
     assert cols[:len(SUPPORT_COLUMNS)] == list(SUPPORT_COLUMNS)
-    assert cols[len(SUPPORT_COLUMNS):len(SUPPORT_COLUMNS) + 2] == list(CALL_FEATURE_COLUMNS)
-    assert cols[len(SUPPORT_COLUMNS) + 2:] == list(pf.SEAM_FEATURE_COLUMNS)
+    _ncall = len(CALL_FEATURE_COLUMNS)
+    assert cols[len(SUPPORT_COLUMNS):len(SUPPORT_COLUMNS) + _ncall] == list(CALL_FEATURE_COLUMNS)
+    assert cols[len(SUPPORT_COLUMNS) + _ncall:] == list(pf.SEAM_FEATURE_COLUMNS)
     assert set(rows) == {"1", "2", "3"}
     # the v2 values are untouched
     assert rows["1"]["clip_reads"] == "9" and rows["3"]["window_reads"] == "260"
@@ -854,8 +857,8 @@ def test_the_run_root_sidecar_keeps_the_callers_header(tmp_path):
     from ema.main import _write_run_support
 
     header = "\t".join(SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS)
-    for strand, rows in (("pos", ["1\t9\t5\t0\t0\t120\t1\t2\t7"]),
-                         ("neg", ["2\t3\t2\t0\t0\t44\t1\t1\t0"])):
+    for strand, rows in (("pos", ["1\t9\t5\t0\t0\t120\t1\t2\t7\t0.50"]),
+                         ("neg", ["2\t3\t2\t0\t0\t44\t1\t1\t0\t0.00"])):
         bed = tmp_path / f"{strand}.bed"
         bed.write_text("")
         Path(support_path_for(bed)).write_text(header + "\n" + "\n".join(rows) + "\n")

@@ -123,6 +123,7 @@ def reader_loop(
     read_geometry: str = "fixed",
     read_exclude_flags: int = 0,
     seq_len: int | None = None,
+    clip_rate_sampling: str = "head",
 ) -> None:
     """Reader stage: iterate BAM, validate, batch, emit on *out_queue*.
 
@@ -172,6 +173,11 @@ def reader_loop(
 
     bamfile = pysam.AlignmentFile(bam_path, "rb", threads=bam_threads)
 
+    # --clip-rate-sampling pass: the exact rate over the reads this reader
+    # accepts.  The reader is the only stage that sees every read, so the
+    # counter lives here rather than in the finder or the writer.
+    from ema.countmatrix.polya import ClipRateCounter
+    clip_rate = ClipRateCounter() if str(clip_rate_sampling) == "pass" else None
     batch: list[tuple[str, int, int, bool, str, int | None, str | None, bool]] = []
     try:
         for read in bamfile:
@@ -185,6 +191,8 @@ def reader_loop(
             clip_ok = True
             if polya_enabled:
                 clip = clip_site(read, polya_min_clip, polya_min_purity)
+                if clip_rate is not None:
+                    clip_rate.add(clip is not None)
                 if clip is not None:
                     umi = read_umi(read)
                     clip_ok = clip_read_ok(read)
@@ -196,6 +204,9 @@ def reader_loop(
         # Flush the final partial batch
         if batch:
             out_queue.put(batch)
+        if clip_rate is not None:
+            clip_rate.report("%s strand, pipeline reader"
+                             % ("-" if direction else "+"))
     finally:
         bamfile.close()
         # Signal end-of-stream
@@ -667,7 +678,7 @@ def run_pipeline(
             min_clip=polya_min_clip,
             min_purity=polya_min_purity,
             barcode_tag=_vc.barcode_tag or "CB",
-        )
+        )   # a no-op under --clip-rate-sampling pass; the reader counts instead
 
     # peakAtail-prime: the three stages are SPAWNED, so ema.config's legacy
     # globals come back at their module defaults in each child.  Resolve the
@@ -684,6 +695,8 @@ def run_pipeline(
         seq_len = _vc_geom.seqlen
     if pas_features is None:
         pas_features = getattr(_vc_geom, "pas_features", "off")
+    # --clip-rate-sampling: same spawn hazard, same fix.
+    _clip_rate_sampling = str(getattr(_vc_geom, "clip_rate_sampling", "head"))
 
     ctx = mp.get_context("spawn")
 
@@ -709,6 +722,7 @@ def run_pipeline(
             read_geometry,
             read_exclude_flags,
             seq_len,
+            _clip_rate_sampling,
         ),
         daemon=True,
     )

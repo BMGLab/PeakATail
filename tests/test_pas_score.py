@@ -323,7 +323,8 @@ def test_an_unknown_model_name_names_where_it_looked():
 # ---------------------------------------------------------------------------
 # the ema.main seam, end to end
 # ---------------------------------------------------------------------------
-_SEAM_ARG_NAMES = ("ip_filter", "ip_filter_mode", "annot_filter", "genome_fasta",
+_SEAM_ARG_NAMES = ("ip_filter", "no_ip_filter", "ip_filter_mode",
+                   "annot_filter", "genome_fasta",
                    "annotation_bed", "ip_a_stretch", "ip_a_fraction",
                    "ip_window_left", "ip_window_right", "polya_evidence",
                    "polya_mode")
@@ -376,12 +377,12 @@ def seam(tmp_path):
     support = run_dir / "pas_support.tsv"
     support.write_text(
         "\t".join(SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS) + "\n"
-        "1\t9\t5\t9\t5\t120\t1\t2\t7\n"
-        "2\t1\t1\t1\t1\t44\t1\t1\t0\n"
-        "3\t14\t7\t14\t7\t260\t1\t3\t18\n"
-        "4\t0\t0\t0\t0\t61\t2\t0\t0\n"
-        "5\t6\t4\t6\t4\t95\t1\t2\t4\n"
-        "6\t18\t9\t18\t9\t310\t1\t4\t22\n"
+        "1\t9\t5\t9\t5\t120\t1\t2\t7\t0.50\n"
+        "2\t1\t1\t1\t1\t44\t1\t1\t0\t0.00\n"
+        "3\t14\t7\t14\t7\t260\t1\t3\t18\t-1.25\n"
+        "4\t0\t0\t0\t0\t61\t2\t0\t0\tNA\n"
+        "5\t6\t4\t6\t4\t95\t1\t2\t4\t0.75\n"
+        "6\t18\t9\t18\t9\t310\t1\t4\t22\t-0.10\n"
     )
     variable_config.pas_features = "on"
     variable_config.pas_score = "none"
@@ -409,6 +410,10 @@ def _run_seam(seam, mode, ip_filter=False, score_min=-1.0):
     ns = args._get()
     ns.genome_fasta = str(seam["genome"])
     ns.ip_filter = ip_filter
+    # TASK E made the internal-priming veto default-on when a genome FASTA is
+    # available, and this seam always supplies one -- so "the veto is off" now
+    # has to be said, not left to the default.
+    ns.no_ip_filter = not ip_filter
     ns.ip_filter_mode = "filter"
     variable_config.pas_score = mode
     variable_config.pas_score_min = score_min
@@ -509,6 +514,7 @@ def test_select_refuses_to_run_without_the_caller_columns(seam):
     ns = args._get()
     ns.genome_fasta = str(seam["genome"])
     ns.ip_filter = False
+    ns.no_ip_filter = True
     variable_config.pas_score = "select"
     with pytest.raises(ValueError, match="never selected"):
         _apply_pas_filters(seam["mgr"])
@@ -538,6 +544,7 @@ def test_a_within_run_transform_is_computed_over_the_whole_run(seam):
         ns = args._get()
         ns.genome_fasta = str(seam["genome"])
         ns.ip_filter = False
+        ns.no_ip_filter = True
         variable_config.pas_score = "calibrated"
         variable_config.pas_score_model = "ranktest"
         res = _apply_pas_filters(seam["mgr"])

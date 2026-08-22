@@ -45,6 +45,8 @@ def find_close(posbed_dir=None,
                max_distance=5000,
                utr_multiplier=2.0,
                include_extended=False,
+               pas_gene_rescue="off",
+               pas_gene_rescue_min_mol=0,
                ) -> pd.DataFrame:
     """Find the closest gene for each PAS and annotate with confidence tier.
 
@@ -63,6 +65,20 @@ def find_close(posbed_dir=None,
         max_distance: Maximum distance (bp) for gene assignment.
         utr_multiplier: Multiplier for UTR length to define TIER_2.
         include_extended: If True, also keep TIER_3 PAS (default: TIER_1 + TIER_2 only).
+        pas_gene_rescue: ``"off"`` (default, = v2) or ``"inside"``.
+            peakAtail-prime TASK E item 4.  ``assign_tier`` can only award
+            TIER_1/TIER_2 when the assigned gene has an annotated 3'UTR
+            LENGTH, so a PAS that sits INSIDE its gene body -- distance 0 --
+            falls through to TIER_3 and is dropped whenever that gene has no
+            UTR record.  In practice that is every non-coding gene: on the
+            PBMC chr19+21 slice 1,762 of the 3,338 tier-1 clip clusters the
+            gene gate drops (52.8 %) are at distance 0, hosted by 514 genes of
+            which 469 are lncRNA and only 18 protein-coding.  ``"inside"``
+            grades those TIER_2 instead.  It is OFF by default because it is
+            measured to cost precision (see the CHANGELOG).
+        pas_gene_rescue_min_mol: Minimum BED score (clip molecules for a
+            ``clip_seeded`` tier-1 PAS) for ``pas_gene_rescue="inside"`` to
+            apply.  ``0`` (default) rescues every inside-gene PAS.
 
     Returns:
         pd.DataFrame: DataFrame with PAS IDs as index and gene_id as values,
@@ -116,11 +132,27 @@ def find_close(posbed_dir=None,
         return pd.DataFrame(columns=["gene_id", "tier"])
 
     # Assign confidence tiers based on distance and UTR length
+    _rescue_inside = str(pas_gene_rescue) == "inside"
+    _rescue_min = float(pas_gene_rescue_min_mol or 0)
+    PAS_SCORE_COL = 4
+
     def _get_tier(row):
         gene_id = row.iloc[GENE_ID_COL]
         distance = row.iloc[DISTANCE_COL]
         utr_len = utr_lengths.get(gene_id, 0)
-        return assign_tier(distance, utr_len, utr_multiplier, max_distance)
+        tier = assign_tier(distance, utr_len, utr_multiplier, max_distance)
+        # TASK E item 4: distance == 0 means the PAS is INSIDE the gene body
+        # it was assigned to, so the only way it can be TIER_3 is that the
+        # gene has no annotated 3'UTR to grade it against -- an annotation
+        # gap, not a distance judgement.
+        if _rescue_inside and tier == TIER_3 and int(distance) == 0:
+            try:
+                score = float(row.iloc[PAS_SCORE_COL])
+            except (TypeError, ValueError):
+                score = 0.0
+            if score >= _rescue_min:
+                return TIER_2
+        return tier
 
     annotated_frame["tier"] = annotated_frame.apply(_get_tier, axis=1)
 

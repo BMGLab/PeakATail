@@ -606,21 +606,49 @@ class RunConfig:
             ),
         ),
     )
-    cleavage_offset: int = field(
-        default=0,
+    cleavage_offset: str = field(
+        # Must equal ema.config.variable_config.cleavage_offset.
+        default="none",
         metadata=_spec(
             cli_flag="--cleavage-offset", yaml_key="cleavage_offset",
             legacy_dataclass_attr="variable_config.cleavage_offset",
             description=(
-                "3' cleavage-site offset correction (bp; issue #72).  Called "
-                "peak 3' ends stop ~90-105 nt short of the true cleavage site "
-                "because 10x R2 coverage runs out before the poly(A) junction. "
-                "When > 0, the reported PAS 3' end is shifted downstream by "
-                "this many bp after peak calling, so tight-cutoff benchmarks "
-                "and atlas annotation use the inferred cleavage position. "
-                "A sane data-driven constant is ~90-100 (try 95). "
-                "0 (default) preserves legacy behaviour (no shift). "
-                "Use --auto-cleavage-offset to estimate this from the data."
+                "3' cleavage-site offset applied to the reported PAS "
+                "coordinate: 'none' (default, = v2, nothing moves), 'auto' "
+                "(this run's own clip-anchored estimate) or a SIGNED integer "
+                "in bp, transcript orientation. A POSITIVE value is the "
+                "COVERAGE correction (issue #72: a coverage peak's 3' end "
+                "stops ~90-105 nt short of cleavage because 10x R2 coverage "
+                "runs out) and, under --peak-strategy clip_seeded, moves the "
+                "coverage-only tier ONLY -- applying it to clip-anchored "
+                "tier-1 PAS costs 46 points of P@10. A NEGATIVE value is the "
+                "base-pair resolution correction and moves the clip-anchored "
+                "tier only; the measured exact-match optimum on PBMC is -1 bp "
+                "against the atlas and -2 bp against Kinnex long reads, and "
+                "NOTHING at any window >= 25 bp, which is why it is not a "
+                "default. The offset is reported per site in "
+                "pas_support.tsv's inferred_cleavage column whether or not it "
+                "is applied. (For the coverage-caller's A-content estimator, "
+                "see --auto-cleavage-offset; it is refused under clip_seeded.)"
+            ),
+        ),
+    )
+    emit_inferred_cleavage: str = field(
+        # Must equal ema.config.variable_config.emit_inferred_cleavage.
+        default="on",
+        metadata=_spec(
+            cli_flag="--emit-inferred-cleavage",
+            yaml_key="emit_inferred_cleavage",
+            legacy_dataclass_attr="variable_config.emit_inferred_cleavage",
+            choice=("off", "on"),
+            description=(
+                "Append an inferred_cleavage column to pas_support.tsv "
+                "(peakAtail-prime): the coordinate this run's cleavage offset "
+                "implies for each PAS, REPORTED without moving pasbed.bed. "
+                "The per-library clip-anchored offset estimate and its "
+                "per-strand split are written to "
+                "01_peak_calling/cleavage_offset_stats.json and to "
+                "run_manifest.json either way. 'off' is the v2 value."
             ),
         ),
     )
@@ -631,13 +659,17 @@ class RunConfig:
             is_flag=True,
             legacy_dataclass_attr="variable_config.auto_cleavage_offset",
             description=(
-                "Data-driven 3' cleavage-offset estimation (issue #72).  When "
-                "set, the offset is inferred per run from the called peaks and "
+                "COVERAGE-caller 3' cleavage-offset estimation (issue #72). "
+                "Infers the offset per run from the called peaks and "
                 "--genome-fasta (genomic A-fraction crest + AATAAA density "
-                "downstream of each peak 3' end) instead of using the fixed "
-                "--cleavage-offset constant, then applied the same way.  "
-                "Requires --genome-fasta; falls back to ~95 bp if the profiles "
-                "are inconclusive.  Off (default) preserves legacy behaviour."
+                "downstream of each peak 3' end, searched in a 60-120 bp "
+                "band), then applies it like --cleavage-offset. Requires "
+                "--genome-fasta; falls back to ~95 bp when the profiles are "
+                "inconclusive. Off (default). REFUSED under --peak-strategy "
+                "clip_seeded: the band means it can only return a large "
+                "POSITIVE offset, and +95 bp costs 46 points of P@10 there "
+                "(0.5209 -> 0.0551) because clip-anchored PAS are already on "
+                "the cleavage base. Use --cleavage-offset auto instead."
             ),
         ),
     )
@@ -649,9 +681,43 @@ class RunConfig:
             cli_flag="--ip-filter", yaml_key="ip_filter", is_flag=True,
             legacy_args_attr="ip_filter",
             description=(
-                "Enable internal-priming filter: drops PAS near genomic "
+                "Force the internal-priming filter ON: drops PAS near genomic "
                 "A-rich stretches (requires --genome-fasta). Applied to the "
-                "pos/neg PAS BEDs before gene assignment."
+                "pos/neg PAS BEDs before gene assignment. On peakAtail-prime "
+                "this is already the default whenever --genome-fasta is "
+                "available (see --ip-filter-default); passing it explicitly "
+                "makes a missing FASTA an error instead of a warning."
+            ),
+        ),
+    )
+    no_ip_filter: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--no-ip-filter", yaml_key="no_ip_filter", is_flag=True,
+            legacy_args_attr="no_ip_filter",
+            description=(
+                "Force the internal-priming filter OFF whatever "
+                "--ip-filter-default says. This is the pre-peakAtail-prime "
+                "behaviour for a run that supplies a --genome-fasta."
+            ),
+        ),
+    )
+    ip_filter_default: str = field(
+        # Must equal ema.config.variable_config.ip_filter_default.
+        default="auto",
+        metadata=_spec(
+            cli_flag="--ip-filter-default", yaml_key="ip_filter_default",
+            legacy_dataclass_attr="variable_config.ip_filter_default",
+            choice=("off", "auto"),
+            description=(
+                "What --ip-filter does when it is not passed (peakAtail-prime). "
+                "'auto' (default on this branch) runs the internal-priming "
+                "veto whenever a readable --genome-fasta is available, and "
+                "warns LOUDLY when there is none. 'off' is the v2 value: the "
+                "veto runs only when --ip-filter is given. The veto is the "
+                "largest measured accuracy lift in the caller -- +7.7% to "
+                "+12.8% relative recall at matched atlas precision, +17.7% to "
+                "+22.9% at matched long-read precision -- and it was opt-in."
             ),
         ),
     )
@@ -860,6 +926,30 @@ class RunConfig:
             ),
         ),
     )
+    clip_rate_sampling: str = field(
+        # Must equal ema.config.variable_config.clip_rate_sampling.
+        default="pass",
+        metadata=_spec(
+            cli_flag="--clip-rate-sampling", yaml_key="clip_rate_sampling",
+            legacy_dataclass_attr="variable_config.clip_rate_sampling",
+            choice=("head", "strided", "pass"),
+            description=(
+                "How the poly(A) clip-rate QC gets its number "
+                "(peakAtail-prime). 'pass' (default on this branch) does not "
+                "estimate at all: it COUNTS every accepted read and every "
+                "qualifying clip during the peak-calling pass the run performs "
+                "anyway, and reports the EXACT rate per (contig, strand) for "
+                "zero extra I/O. 'head' is v2: the first 200,000 CB reads of "
+                "the file, which on a coordinate-sorted BAM is the head of the "
+                "first contig and reported 2.2565% on PBMC 10k v3 where the "
+                "whole-file rate on the same denominator is 0.5364%. 'strided' "
+                "samples coordinate-uniform windows across every mapped contig "
+                "-- unbiased by construction, but measured to be unreliable "
+                "(1.53%-1.81% on the same file) because clips are rare and "
+                "clustered at 3' ends. Log-only: no output byte changes."
+            ),
+        ),
+    )
     polya_count_window: str = field(
         default="auto,25",
         metadata=_spec(
@@ -917,6 +1007,43 @@ class RunConfig:
             cli_flag="--utr-multiplier", yaml_key="utr_multiplier",
             legacy_args_attr="utr_multiplier",
             description="3'UTR length multiplier for extended-3' annotation.",
+        ),
+    )
+    pas_gene_rescue: str = field(
+        default="off",
+        metadata=_spec(
+            cli_flag="--pas-gene-rescue", yaml_key="pas_gene_rescue",
+            legacy_args_attr="pas_gene_rescue",
+            choice=("off", "inside"),
+            description=(
+                "Rescue PAS the gene-assignment tier gate drops for lack of a "
+                "3'UTR annotation (peakAtail-prime). The tier ladder can only "
+                "award TIER_1/TIER_2 when the assigned gene has an annotated "
+                "3'UTR LENGTH, so a PAS INSIDE its gene body (distance 0) "
+                "falls to TIER_3 and is dropped whenever that gene has no UTR "
+                "record -- in practice every non-coding gene. 'inside' grades "
+                "those TIER_2. OFF by default because it is MEASURED to cost "
+                "precision: on the PBMC chr19+21 slice it takes the default "
+                "arm from P@100 0.7392 / R_det 0.2080 to 0.6646 / 0.2132. "
+                "See --pas-gene-rescue-min-mol."
+            ),
+        ),
+    )
+    pas_gene_rescue_min_mol: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--pas-gene-rescue-min-mol",
+            yaml_key="pas_gene_rescue_min_mol",
+            legacy_args_attr="pas_gene_rescue_min_mol",
+            description=(
+                "Minimum BED score (poly(A) clip molecules for a clip_seeded "
+                "tier-1 PAS) for --pas-gene-rescue inside to apply. 0 "
+                "(default) rescues every inside-gene PAS. Measured on the "
+                "PBMC slice: even the >=10-molecule casualties reach only "
+                "P@100 0.4138 and Kinnex t5 P@25 0.5655 against 0.7392 / "
+                "0.7839 for the calls already kept, so no floor makes the "
+                "rescue free."
+            ),
         ),
     )
     include_extended: bool = field(

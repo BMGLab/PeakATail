@@ -427,8 +427,11 @@ def test_clip_rate_warning_fires_on_clip_free_bam(tmp_path, caplog):
 
     bam = _write_bam(tmp_path / "noclip.bam", clipped_summit=0)
     _clip_rate_warned.pop(str(bam), None)
+    # peakAtail-prime: sampling is explicit here because the branch default is
+    # "pass", which does not estimate at all -- the peak-calling loop counts
+    # the real thing (tests/test_clip_rate_sampling.py covers that path).
     with caplog.at_level(logging.WARNING, logger="ema.countmatrix.polya"):
-        rate = check_clip_rate(str(bam))
+        rate = check_clip_rate(str(bam), sampling="head")
     assert rate == 0.0
     assert any("LOW POLY(A) CLIP RATE" in r.message for r in caplog.records)
 
@@ -441,6 +444,6 @@ def test_clip_rate_no_warning_on_clip_rich_bam(tmp_path, caplog):
     bam = _write_bam(tmp_path / "clippy.bam", clipped_summit=N_SUMMIT)
     _clip_rate_warned.pop(str(bam), None)
     with caplog.at_level(logging.WARNING, logger="ema.countmatrix.polya"):
-        rate = check_clip_rate(str(bam))
+        rate = check_clip_rate(str(bam), sampling="head")
     assert rate > 0.003
     assert not any("LOW POLY(A) CLIP RATE" in r.message for r in caplog.records)

@@ -673,13 +673,86 @@ def _validate_pas_score_config() -> None:
                 f"--pas-score-min resolved to {thr!r}.")
 
 
+#: Memo for _resolve_ip_filter's one-time log line, keyed by the inputs that
+#: decide it, so a repeat call inside the same run stays quiet.
+_ip_filter_resolved: dict = {}
+
+
+def _resolve_ip_filter() -> bool:
+    """Whether the internal-priming veto runs for this run.
+
+    peakAtail-prime TASK E item 3.  The veto is the single largest measured
+    accuracy lift in the caller -- +7.7 % to +12.8 % relative recall at matched
+    atlas precision and +17.7 % to +22.9 % at matched long-read precision
+    (results/algo_headroom/VERIFY/tables/v8_ipveto_value.tsv), more than every
+    detector change tested put together -- because it brings in information
+    the molecule thresholds do not have: genomic sequence.  In v2 it was an
+    opt-in flag, so every benchmark arm in the manuscript ran with it and
+    every user who did not read the flag list did not.
+
+    Resolution order, most explicit first:
+
+    1. ``--no-ip-filter``      -> OFF, whatever else is set.
+    2. ``--ip-filter``         -> ON (and ``_validate_pas_filter_config``
+                                  raises if there is no usable FASTA).
+    3. ``ip_filter_default``   -> ``"auto"`` (the branch default) turns it ON
+                                  whenever a readable ``--genome-fasta`` is
+                                  available, and says LOUDLY when there is
+                                  none; ``"off"`` is v2.
+
+    Never fails a run: without a FASTA the veto cannot run at all, so the
+    branch default degrades to v2 behaviour with a warning that names what it
+    costs.
+    """
+    import os
+
+    forced_off = bool(getattr(args, "no_ip_filter", False))
+    forced_on = bool(getattr(args, "ip_filter", False))
+    policy = str(getattr(variable_config, "ip_filter_default", "off"))
+    fasta = getattr(args, "genome_fasta", None)
+    have_fasta = bool(fasta) and os.path.exists(str(fasta))
+
+    if forced_off:
+        decision, why = False, "--no-ip-filter"
+    elif forced_on:
+        decision, why = True, "--ip-filter"
+    elif policy != "auto":
+        decision, why = False, "ip_filter_default=%s" % policy
+    elif have_fasta:
+        decision, why = True, "ip_filter_default=auto with a genome FASTA"
+    else:
+        decision, why = False, "ip_filter_default=auto but no genome FASTA"
+
+    key = (forced_off, forced_on, policy, str(fasta), have_fasta)
+    if _ip_filter_resolved.get("key") != key:
+        _ip_filter_resolved["key"] = key
+        if decision and not forced_on:
+            log.info(
+                "internal-priming filter ON by default (%s). It is the largest "
+                "measured accuracy lift in the caller (+7.7%%-12.8%% relative "
+                "recall at matched atlas precision). Pass --no-ip-filter for "
+                "the pre-peakAtail-prime behaviour.", why,
+            )
+        elif not decision and policy == "auto" and not forced_off:
+            log.warning(
+                "INTERNAL-PRIMING FILTER CANNOT RUN: no readable --genome-fasta "
+                "(got %r), so the veto is OFF for this run. It is worth "
+                "+7.7%%-12.8%% relative recall at matched atlas precision and "
+                "+17.7%%-22.9%% at matched long-read precision, and nothing "
+                "else in the caller replaces it -- it is the only stage that "
+                "reads genomic sequence. Supply --genome-fasta (indexed for "
+                "pyfaidx) to get it.", fasta,
+            )
+    return decision
+
+
 def _validate_pas_filter_config() -> None:
     """Raise a clear error BEFORE running if --ip-filter / --annot-filter
     are enabled but misconfigured. Never silently skips a requested filter.
     """
     import os
 
-    ip_filter = bool(getattr(args, "ip_filter", False))
+    ip_filter = _resolve_ip_filter()
     annot_filter = bool(getattr(args, "annot_filter", False))
     if not ip_filter and not annot_filter:
         return
@@ -821,7 +894,7 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     # computed on the clip-supported set when both are enabled.
     polya_stats = _apply_polya_gate(output_mgr)
 
-    ip_filter = bool(getattr(args, "ip_filter", False))
+    ip_filter = _resolve_ip_filter()
     annot_filter = bool(getattr(args, "annot_filter", False))
 
     # peakAtail-prime --pas-features: the per-site scoring covariates are
@@ -1452,65 +1525,159 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "polya_mode": str(getattr(args, "polya_mode", "annotate")),
     })
 
-    # ---- 3' cleavage-site offset correction (issue #72) ------------------
-    # Called peak 3' ends stop ~90-105 nt short of the true cleavage site
-    # (10x R2 coverage runs out before the poly(A) junction).  When the
-    # opt-in --cleavage-offset flag is > 0 we shift each reported PAS 3' end
-    # downstream, in place, on the per-(dataset,bam) strand BEDs produced by
-    # BOTH the tiled and sequential paths.  Doing it here -- the single point
-    # where all_pos_beds/all_neg_beds are finalised and before any snapshot,
-    # legacy copy, find_close() or annotatedpas.bed derives from them -- keeps
-    # the correction path-agnostic without threading a parameter through the
-    # spawn-based peak-calling workers.  0 (default) is a no-op (legacy).
-    _cleavage_offset = int(getattr(variable_config, "cleavage_offset", 0) or 0)
+    # ---- 3' cleavage-site offset (issue #72 + peakAtail-prime TASK E) ----
+    # Two different quantities live behind one flag name, and confusing them
+    # is expensive:
+    #
+    #   * a POSITIVE offset is the COVERAGE correction (issue #72): a coverage
+    #     peak's 3' end stops ~90-105 nt short of cleavage because 10x R2
+    #     coverage runs out before the poly(A) junction.  It belongs to
+    #     coverage-only rows.  Applying it to clip_seeded's tier-1 PAS -- which
+    #     are already ON the cleavage base -- costs 46 points of P@10
+    #     (0.5209 -> 0.0551, results/algo_headroom/A4_resolution T7).
+    #   * a NEGATIVE offset is the BASE-PAIR RESOLUTION correction: on the PBMC
+    #     chr19+21 slice the default arm's exact-match optimum is -1 bp against
+    #     the atlas and -2 bp against Kinnex long reads.  It belongs to the
+    #     clip-anchored tier; tier 2's own P@1 is 0.0016 and does not respond.
+    #
+    # ``rows_for_offset`` encodes exactly that, and it reproduces v2's
+    # ``skip_supported`` rule for every value v2 could express (offset > 0).
+    # Done here -- the single point where all_pos_beds/all_neg_beds are
+    # finalised and before any snapshot, legacy copy, find_close() or
+    # annotatedpas.bed derives from them -- so the correction stays
+    # path-agnostic without threading a parameter through the spawn-based
+    # peak-calling workers.  ``none`` (default) is a no-op (v2).
+    from ema.countmatrix.cleavage_offset import (
+        append_inferred_cleavage, estimate_clip_anchored_offset,
+        parse_cleavage_offset, rewrite_bed_cleavage_offset, rows_for_offset,
+    )
+    from ema.countmatrix.paswrite import support_path_for
+
+    _strategy = str(getattr(args, "strategy", ""))
+    _offset_mode, _offset_const = parse_cleavage_offset(
+        getattr(variable_config, "cleavage_offset", "none")
+    )
     _auto_offset = bool(getattr(variable_config, "auto_cleavage_offset", False))
-    _offset_diag = None
-    if _auto_offset:
-        # Data-driven mode: infer the offset from the called peaks + FASTA.
-        from ema.countmatrix.cleavage_offset import resolve_cleavage_offset
-
-        _genome_fasta = getattr(args, "genome_fasta", None)
-        _cleavage_offset, _offset_diag = resolve_cleavage_offset(
-            _cleavage_offset,
-            auto=True,
-            bed_paths=list(all_pos_beds) + list(all_neg_beds),
-            genome_fasta=_genome_fasta,
+    if _auto_offset and _strategy == "clip_seeded":
+        # Refuse rather than warn.  --auto-cleavage-offset is the COVERAGE
+        # estimator: it searches a 60-120 bp band for a genomic A-fraction
+        # crest, so it cannot return anything but a large positive number, and
+        # on this library it returns +95 -- which is destructive here.  A warn
+        # would leave a wrong number in a run tree that looks fine.
+        raise ValueError(
+            "--auto-cleavage-offset estimates the COVERAGE caller's offset "
+            "(genomic A-fraction crest, searched in a 60-120 bp band) and "
+            "returns ~+95 bp; applying that under --peak-strategy clip_seeded "
+            "costs 46 points of P@10 (0.5209 -> 0.0551, "
+            "results/algo_headroom/A4_resolution table T7), because tier-1 PAS "
+            "are already ON the cleavage base. Use --cleavage-offset auto for "
+            "the clip-anchored estimator, --cleavage-offset <int> for a "
+            "declared constant, or run --auto-cleavage-offset with a coverage "
+            "strategy."
         )
-    if _cleavage_offset > 0:
-        from ema.countmatrix.cleavage_offset import rewrite_bed_3prime_offset
 
-        # clip_seeded places tier-1 PAS at the observed poly(A) clip site (the
-        # true cleavage coordinate, recorded as a >0 BED score); only its
-        # coverage-only tier (score 0) carries the R2 read-length offset.
-        _skip_supported = str(getattr(args, "strategy", "")) == "clip_seeded"
-        _n_shifted = 0
+    # The per-library clip-anchored estimate: the read-weighted mean of
+    # (clip position - reported base) over every tier-1 cluster, transcript
+    # oriented.  Read back out of the sidecars the caller has already written
+    # (--pas-features on writes clip_offset_mean per site), so it costs one
+    # pass over a text file and no pass over anything expensive.
+    _support_pairs = ([(support_path_for(b), "+") for b in all_pos_beds]
+                      + [(support_path_for(b), "-") for b in all_neg_beds])
+    _emit_inferred = str(
+        getattr(variable_config, "emit_inferred_cleavage", "on")) == "on"
+    _clip_est = None
+    _clip_diag = {"available": False}
+    if _emit_inferred or _offset_mode == "auto":
+        _clip_est, _clip_diag = estimate_clip_anchored_offset(_support_pairs)
+        if _clip_diag.get("available"):
+            log.info(
+                "clip-anchored cleavage offset: %+.4f bp over %d clip reads in "
+                "%d tier-1 sites (per strand: %s). MEASURED, not applied "
+                "unless --cleavage-offset auto.",
+                _clip_est, _clip_diag["n_clip_reads"], _clip_diag["n_sites"],
+                _clip_diag["by_strand"],
+            )
+        elif _clip_diag.get("missing_column"):
+            log.warning(
+                "clip-anchored cleavage offset unavailable: the caller's "
+                "sidecars carry no clip_offset_mean column (--pas-features "
+                "off). --cleavage-offset auto cannot be resolved; "
+                "inferred_cleavage will report the offset in force."
+            )
+
+    if _offset_mode == "auto":
+        if not _clip_diag.get("available"):
+            raise ValueError(
+                "--cleavage-offset auto needs the caller's per-site "
+                "clip_offset_mean column, which is written by --pas-features "
+                "on (this run has --pas-features "
+                f"{getattr(variable_config, 'pas_features', 'off')}). Pass "
+                "--pas-features on, or give --cleavage-offset an explicit "
+                "integer."
+            )
+        _cleavage_offset = int(round(_clip_est))
+    else:
+        _cleavage_offset = int(_offset_const)
+    _rows = rows_for_offset(_cleavage_offset, _strategy)
+
+    # inferred_cleavage is computed from the PRE-SHIFT coordinates, so it and
+    # a shifted pasbed.bed agree instead of double-counting the offset.
+    _offset_by_tier = {
+        1: _cleavage_offset if _rows in ("all", "tier1") else 0,
+        2: _cleavage_offset if _rows in ("all", "tier2") else 0,
+    }
+    if _emit_inferred:
+        _n_inferred = 0
         for _bed in list(all_pos_beds) + list(all_neg_beds):
             try:
-                _n_shifted += rewrite_bed_3prime_offset(
-                    _bed, _cleavage_offset, skip_supported=_skip_supported
-                )
+                _n_inferred += append_inferred_cleavage(
+                    _bed, support_path_for(_bed), _offset_by_tier)
+            except OSError:
+                continue
+        if _n_inferred:
+            log.info(
+                "inferred_cleavage written for %d PAS (offset by tier: %s); "
+                "pasbed.bed coordinates are NOT changed by this column.",
+                _n_inferred, _offset_by_tier,
+            )
+
+    _n_shifted = 0
+    if _cleavage_offset != 0:
+        for _bed in list(all_pos_beds) + list(all_neg_beds):
+            try:
+                _n_shifted += rewrite_bed_cleavage_offset(
+                    _bed, _cleavage_offset, rows=_rows)
             except FileNotFoundError:
                 # A strand may legitimately produce no BED for a dataset.
                 continue
         log.info(
-            "3' cleavage-offset correction: shifted %d PAS 3' ends downstream "
-            "by %d bp (%s)%s", _n_shifted, _cleavage_offset,
-            "auto-estimated" if _auto_offset else "--cleavage-offset",
-            " [clip-supported tier exempt]" if _skip_supported else "",
+            "3' cleavage-offset correction: shifted %d PAS by %+d bp "
+            "(transcript orientation, rows=%s, mode=%s)",
+            _n_shifted, _cleavage_offset, _rows, _offset_mode,
         )
-        _stats = {
-            "cleavage_offset_bp": _cleavage_offset,
-            "n_pas_shifted": _n_shifted,
-            "auto": _auto_offset,
-        }
-        if _offset_diag is not None:
-            _stats["diagnostics"] = _offset_diag
-        # There is no dedicated "cleavage_offset" stage dir, so
-        # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
-        # real-run validation, not unit tests). The offset is a peak-calling
-        # correction -> persist alongside the peak-calling outputs. Use a local
-        # alias: a later `import json` in this function makes bare `json`
-        # function-local, so the module-level name is shadowed here.
+
+    _stats = {
+        "cleavage_offset_mode": _offset_mode,
+        "cleavage_offset_bp": _cleavage_offset,
+        "rows_shifted": _rows if _cleavage_offset else "none",
+        "n_pas_shifted": _n_shifted,
+        "clip_anchored_estimate_bp": (
+            round(_clip_est, 4) if _clip_est is not None else None),
+        "clip_anchored_diagnostics": _clip_diag,
+        "emit_inferred_cleavage": _emit_inferred,
+    }
+    # There is no dedicated "cleavage_offset" stage dir, so
+    # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
+    # real-run validation, not unit tests). The offset is a peak-calling
+    # correction -> persist alongside the peak-calling outputs. Use a local
+    # alias: a later `import json` in this function makes bare `json`
+    # function-local, so the module-level name is shadowed here.
+    #
+    # Written only when this block DID something, exactly as v2 was: a run
+    # with the v2 settings (--cleavage-offset none, --emit-inferred-cleavage
+    # off) must not leave an extra file in the tree, or the byte-identity
+    # check has an extra artefact to explain.
+    if _cleavage_offset != 0 or _emit_inferred:
         import json as _json_coff
         with open(
             output_mgr.path("peak_calling", "cleavage_offset_stats.json"), "w"
@@ -1628,6 +1795,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             max_distance=getattr(args, "max_gene_distance", 5000),
             utr_multiplier=getattr(args, "utr_multiplier", 2.0),
             include_extended=getattr(args, "include_extended", False),
+            pas_gene_rescue=getattr(args, "pas_gene_rescue", "off"),
+            pas_gene_rescue_min_mol=getattr(
+                args, "pas_gene_rescue_min_mol", 0),
         )
         _advance(_pas_gene_stage)
 
@@ -1976,6 +2146,8 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         max_distance=getattr(args, "max_gene_distance", 5000),
         utr_multiplier=getattr(args, "utr_multiplier", 2.0),
         include_extended=getattr(args, "include_extended", False),
+        pas_gene_rescue=getattr(args, "pas_gene_rescue", "off"),
+        pas_gene_rescue_min_mol=getattr(args, "pas_gene_rescue_min_mol", 0),
     )
 
     output_mgr.save_stats("gtf_annotation", {

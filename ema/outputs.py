@@ -364,6 +364,13 @@ def build_resolved_run_config() -> dict:
             # ...and for --pas-score: it decides whether a pas_score column
             # exists and, in "select" mode, which PAS survive at all.
             "pas_score", "pas_score_model", "pas_score_min",
+            # TASK E: --cleavage-offset can MOVE a reported coordinate, and
+            # the other three decide whether a column exists, how the
+            # clip-rate QC was sampled, and whether the internal-priming veto
+            # ran without being asked for.  All four are read off
+            # variable_config for the same reason as above.
+            "cleavage_offset", "emit_inferred_cleavage",
+            "clip_rate_sampling", "ip_filter_default",
         )
     }
     resolved["filters"] = {

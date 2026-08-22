@@ -48,6 +48,8 @@ SUPPORT_COLUMNS: tuple[str, ...] = (
 CALL_FEATURE_COLUMNS: tuple[str, ...] = (
     "clip_positions",     # distinct poly(A) clip POSITIONS backing this PAS
     "clip_span",          # bp between the first and last of them (0 if <2)
+    "clip_offset_mean",   # read-weighted mean(member - call), transcript
+                          # orientation, + = downstream (TASK E); NA on tier 2
 )
 
 

@@ -111,6 +111,8 @@ NO_NEIGHBOUR = 1_000_000
 CALL_FEATURE_COLUMNS: tuple[str, ...] = (
     "clip_positions",   # distinct poly(A) clip POSITIONS backing this PAS
     "clip_span",        # bp between the first and last of them (0 if <2)
+    "clip_offset_mean",  # read-weighted mean(member - call), transcript
+                         # orientation, + = downstream; NA on a tier-2 row
 )
 
 #: Written at the internal-priming seam, from the genome FASTA.
