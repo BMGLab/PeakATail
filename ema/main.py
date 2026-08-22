@@ -339,6 +339,23 @@ def _write_run_support(bed_paths, out_path) -> None:
             first = fh.readline()
         if first.startswith("pas_id"):
             header = first if first.endswith("\n") else first + "\n"
+        # ...and every OTHER source must carry the same one.  This function
+        # concatenates rows blindly, so two sidecars with different column
+        # counts (--pas-features or --emit-inferred-cleavage having reached
+        # one strand and not the other) would produce a ragged file in which
+        # every column after `tier` is mislabelled for half the rows -- with
+        # no error anywhere.  Never let that be silent.
+        for s in srcs[1:]:
+            with open(s) as fh:
+                other = fh.readline()
+            other = other if other.endswith("\n") else other + "\n"
+            if other.startswith("pas_id") and other != header:
+                log.error(
+                    "pas_support.tsv: %s has a different header from %s "
+                    "(%r vs %r); the merged sidecar will be RAGGED and every "
+                    "column after `tier` mislabelled for part of the rows.",
+                    s, srcs[0], other.rstrip("\n"), header.rstrip("\n"),
+                )
         with open(out_path, "w") as out:
             out.write(header)
             for s in srcs:
@@ -723,16 +740,40 @@ def _resolve_ip_filter() -> bool:
     else:
         decision, why = False, "ip_filter_default=auto but no genome FASTA"
 
-    key = (forced_off, forced_on, policy, str(fasta), have_fasta)
+    # WHICH MODE the veto runs in decides whether it does anything at all, and
+    # the two are set by different flags.  `--ip-filter-mode` defaults to
+    # `annotate`, which KEEPS every flagged PAS (the D9 decision: an
+    # internally-primed peak is more likely real alternative-PAS signal than
+    # noise).  The measured lift this policy exists to deliver -- +7.7 % to
+    # +12.8 % relative recall at matched atlas precision -- is the lift of
+    # DROPPING them, i.e. of `--ip-filter-mode filter`.  Verified on the PBMC
+    # chr19+21 slice: the branch default with a FASTA and no --ip-filter-mode
+    # flags 5,015 of 32,752 candidates and drops 0, so the call set is v2's to
+    # the row (18,865 PAS), not the 15,925 of the filter arm.  Say that here
+    # rather than promising a recall gain the run is not going to get.
+    ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
+    key = (forced_off, forced_on, policy, str(fasta), have_fasta, ip_mode)
     if _ip_filter_resolved.get("key") != key:
         _ip_filter_resolved["key"] = key
         if decision and not forced_on:
-            log.info(
-                "internal-priming filter ON by default (%s). It is the largest "
-                "measured accuracy lift in the caller (+7.7%%-12.8%% relative "
-                "recall at matched atlas precision). Pass --no-ip-filter for "
-                "the pre-peakAtail-prime behaviour.", why,
-            )
+            if ip_mode == "filter":
+                log.info(
+                    "internal-priming filter ON by default (%s), mode=filter: "
+                    "flagged PAS are DROPPED. This is the largest measured "
+                    "accuracy lift in the caller (+7.7%%-12.8%% relative recall "
+                    "at matched atlas precision). Pass --no-ip-filter for the "
+                    "pre-peakAtail-prime behaviour.", why,
+                )
+            else:
+                log.warning(
+                    "internal-priming filter ON by default (%s) but "
+                    "mode=%s, so NOTHING IS DROPPED: every flagged PAS is kept "
+                    "and only annotated, and this run's call set is the same "
+                    "one it would have had with --no-ip-filter. The measured "
+                    "+7.7%%-12.8%% relative recall at matched atlas precision "
+                    "is the lift of DROPPING them -- pass --ip-filter-mode "
+                    "filter to get it.", why, ip_mode,
+                )
         elif not decision and policy == "auto" and not forced_off:
             log.warning(
                 "INTERNAL-PRIMING FILTER CANNOT RUN: no readable --genome-fasta "

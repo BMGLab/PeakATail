@@ -277,9 +277,20 @@ def _merged_support_header(results: list[dict[str, Any]], direction: bool) -> st
     peakAtail-prime: ``--pas-features on`` appends columns to the sidecar, so
     the merged file's header has to come from the children (which knew the
     setting) rather than from this module's compile-time
-    :data:`~ema.countmatrix.paswrite.SUPPORT_COLUMNS`.  Falls back to
-    ``SUPPORT_COLUMNS`` when no child wrote a header at all.
+    :data:`~ema.countmatrix.paswrite.SUPPORT_COLUMNS`.
+
+    Two things are checked rather than assumed, because a header that does not
+    match its own rows is silent and corrupts every column after ``tier``:
+
+    * the children of one direction must all have written the SAME header (a
+      disagreement means the setting did not reach one of them);
+    * the fallback used when NO child wrote a header is this run's column set
+      (``support_columns(--pas-features)``), not v2's -- otherwise a direction
+      whose contigs all came back empty would get a seven-column header while
+      the other direction got the full one, and the run-root merge would
+      concatenate the two into a ragged file.
     """
+    header = None
     for r in results:
         if r.get("direction") != direction:
             continue
@@ -288,9 +299,26 @@ def _merged_support_header(results: list[dict[str, Any]], direction: bool) -> st
             continue
         with open(sp) as fh:
             first = fh.readline()
-        if first.startswith("pas_id"):
-            return first if first.endswith("\n") else first + "\n"
-    return "\t".join(SUPPORT_COLUMNS) + "\n"
+        if not first.startswith("pas_id"):
+            continue
+        first = first if first.endswith("\n") else first + "\n"
+        if header is None:
+            header = first
+        elif first != header:
+            log.error(
+                "sidecar header mismatch between per-contig workers on the %s "
+                "strand: %r wrote %r, an earlier worker wrote %r. One of the "
+                "spawned children did not receive --pas-features; the merged "
+                "pas_support.tsv would mislabel every column after `tier`.",
+                "-" if direction else "+", sp, first.rstrip("\n"),
+                header.rstrip("\n"),
+            )
+    if header is not None:
+        return header
+    from ema.config import variable_config as _vc
+    from ema.countmatrix.paswrite import support_columns
+    return "\t".join(support_columns(
+        str(getattr(_vc, "pas_features", "off")).lower() == "on")) + "\n"
 
 
 def merge_chrom_results(
