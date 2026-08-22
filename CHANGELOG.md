@@ -1,5 +1,113 @@
 # Changelog
 
+## Unreleased (branch `peakAtail-prime`) — the calibrated per-site score
+
+**One new capability, three flags, and it is OFF by default because the
+pre-registered criterion said so.**
+
+The measurement programme found exactly one change that *lifts* this caller's
+precision/recall curve rather than sliding along it: a calibrated per-site score
+used as a **re-ranker inside the existing tier-1 and internal-priming gates**,
+replacing only the `>= 2 clip molecules` threshold. This release implements it,
+and reports the two things that matter about it.
+
+**It transfers.** The model is fitted on GSE104556 testis mouse 1 alone and
+applied **unchanged** to PBMC 10k v3 — a different species, chemistry and
+aligner — and to testis mouse 2. At matched call count it is up-and-right
+against the current default on **both** held-out datasets:
+
+| dataset | arm | n | P@10 | P@100 | R_det@100 |
+|---|---:|---:|---:|---:|---:|
+| PBMC 10k v3 | current default | 46,524 | 0.5209 | 0.7062 | 0.1754 |
+| | score, matched n | 46,524 | **0.6020** | **0.7538** | **0.1809** |
+| testis mouse 2 | current default | 26,526 | 0.5945 | 0.7572 | 0.2080 |
+| | score, matched n | 26,526 | **0.6570** | **0.8043** | **0.2195** |
+
+At matched precision that is **+11.7 % (PBMC) / +16.4 % (mouse 2) / +20.9 %
+(mouse 1) relative recall**. Ranking the same candidates by molecule count
+instead — the incumbent ordering — gives −0.0007 / −0.0002 on PBMC, so this is
+re-ranking and not a rename.
+
+**The default still does not move.** The adoption criterion is *default vs
+default* at the threshold the model actually ships with, and it needs
+`dP@100 >= -0.005`, `dR_det@100 >= +0.010` and `dF1 > 0` on all three datasets.
+The shipped threshold — the calibrated decision boundary `p >= 0.50`, fixed on
+mouse 1 without reading any metric — lands at a precision-first operating point
+and **fails criterion (ii) on all three** (PBMC: dP **+0.0673**, dR **−0.0048**).
+Two other threshold rules, also fixed on mouse 1, fail differently: matching the
+incumbent's call count still gives dR +0.0058 on PBMC, and matching the
+incumbent's precision on mouse 1 costs 0.047 of precision on PBMC. **No fixed
+probability clears the criterion everywhere**, because 33 % of mouse candidates
+are atlas-positive against 13.9 % of PBMC's: **the probability transfers as a
+ranking, not as an absolute scale.** So the flag ships OFF, and the probability
+ships as a column regardless.
+
+### Added
+
+- **`--pas-score {none,calibrated,select}`** (`pas_score`), **default `none`**
+  (= previous behaviour).
+  - `calibrated` appends one column, `pas_score`, to `pas_support.tsv`. It
+    **adds, drops and moves no PAS**.
+  - `select` additionally uses the score **in place of** the molecule-count
+    threshold. **Tier-1 membership and the internal-priming veto stay hard
+    gates in front of it**: the score runs at the same seam, immediately after
+    the veto, on the BEDs the veto has already rewritten, so it can only ever
+    *remove* a tier-1 candidate — never promote a coverage-only one, never
+    rescue a vetoed one. A test pins that by giving an internally-primed
+    candidate a `0.0` threshold and asserting it stays dropped.
+- **`--pas-score-model NAME|PATH`** (`pas_score_model`), default `prime1` — a
+  model shipped with the package, or a JSON produced offline.
+- **`--pas-score-min FLOAT`** (`pas_score_min`), default `-1` = "the threshold
+  the model was shipped with".
+- `run_config.json` records all three under `variables`.
+- `ema/countmatrix/models/pas_score_model_prime1.json` — 161 trees, 9,821 nodes,
+  0.46 MB of constants. Fitted offline by `scripts/prime/taskD_fit_model.py`;
+  the fit is deterministic (re-running reproduces the file byte-for-byte).
+
+### Engineering notes for the reviewer
+
+- **scikit-learn never enters the run-time path.** `ema/countmatrix/pas_score.py`
+  evaluates node arrays with numpy; the offline exporter refuses to write a
+  model whose numpy evaluation differs from scikit-learn's by more than 1e-9 on
+  any training row (the shipped one agrees to **2.2e-16**), and a subprocess
+  test asserts that loading a model and scoring with it imports no `sklearn`.
+- **Every one of the 21 features is a `pas_support.tsv` column, verbatim**
+  (`tier`, not a derived indicator), so the offline fitter and the tool are one
+  computation and any `pas_score` can be recomputed from the row beside it. On a
+  real run the tool's column and an independent offline recomputation agree to
+  **5.0e-7** — half of the last printed digit.
+- **One pass, not two.** The score rides the pass `--ip-filter` already makes and
+  reuses the feature collector's rows through a lazy `ScoredFeatures` view, so
+  the sidecar is still appended to once and a genome-wide run never holds two
+  copies of 650 k rows.
+- **`seq_ok == 0` means `NA`, not zero.** A candidate whose sequence window could
+  not be read is exempt from `select` rather than silently dropped.
+- **Cost.** PBMC chr19+21 slice at 8 threads with `--pas-score calibrated`:
+  6 m 26.5 s / 1.169 GB against the reference 6 m 35.4 s / 1.164 GB — 1.00x wall,
+  1.004x peak RSS.
+
+### Measured on all three full BAMs
+
+Full transcript, every threshold rule, the calibration curves and the
+reproduction commands: `results/prime/TASK_D_pas_score.md`.
+
+**A score inherits the truth that trained it — record this one.** Trained on a
+curated atlas, the score buys atlas agreement and *loses* long-read agreement:
+on PBMC at the shipped cut, Kinnex x3p t5 P@25 falls **0.7647 -> 0.7294** (t20
+0.5584 -> 0.5061) while the internal-priming decoy rate falls **0.1300 ->
+0.0650**. An otherwise identical model trained on the Kinnex long reads instead
+*raises* t5 P@25 to 0.7904. On separating long-read termini from decoys the
+shipped score reaches AUC 0.7185 against **0.7790 for the tool's own inverted
+`ip_tool_afrac`** — i.e. it does not beat one covariate the caller already
+computes on that axis, and no atlas-trained variant does. Calibration says the
+same thing twice: expected calibration error 0.0210 on mouse 2 against the
+training label, 0.0399 on PBMC against the same label, and **0.1300 on PBMC
+against long reads**.
+
+**The development slice reverses the sign of that read-out.** On chr19+21 the
+same comparison gives Kinnex t5 **+0.0129**; on the other 22 contigs it is
+**−0.0380**. Any atlas-independent claim from this branch has to be genome-wide.
+
 ## Unreleased (branch `peakAtail-prime`) — per-site scoring features
 
 **One new flag. It appends columns to a sidecar and changes nothing else.**

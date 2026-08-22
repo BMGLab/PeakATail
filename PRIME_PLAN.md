@@ -152,7 +152,75 @@ Correct the constant, fix or remove the estimator (GitHub #99 §2 is its open is
 
 ---
 
-## Change 2 — a calibrated per-site score as a RE-RANKER inside the existing gates  *(the big one)*
+## Change 2 — a calibrated per-site score as a RE-RANKER inside the existing gates  *(LANDED; default NOT moved)*
+
+**STATUS: implemented, the transfer test PASSED, the pre-registered default criterion FAILED, and
+the flag therefore ships OFF.** Flags are `--pas-score {none,calibrated,select}` (default `none`),
+`--pas-score-model` (default `prime1`) and `--pas-score-min` (default `-1` = the model's own
+threshold) — not the `--pas-score {none,calibrated}` this plan first proposed; a third value was
+added because emitting the probability and *acting* on it are separate decisions and the branch
+does the first by request and the second never by default. Evidence:
+`results/prime/TASK_D_pas_score.md`, `results/prime/taskD_decoy_auc_pbmc.tsv`,
+`results/prime/taskD_posthoc_countmatched.tsv`,
+`results/prime/taskD_posthoc_T3_mouse1_matched_precision.tsv`,
+`results/prime/identity_taskD_compat_vs_v2.txt`.
+
+**Deliverable 1 — the transfer test — PASSED.** Fitted on GSE104556 mouse 1 alone (mouse atlas
+label, the verifier's recipe, all downstream-A features dropped) and applied unchanged:
+
+| dataset | ΔP@100 at matched n | ΔR_det@100 at matched n | rel. ΔR at matched precision |
+|---|---:|---:|---:|
+| PBMC 10k v3 (held out, different species/chemistry/aligner) | **+0.0476** | **+0.0054** | **+11.6 %** |
+| testis mouse 2 (held out) | **+0.0471** | **+0.0115** | **+16.4 %** |
+| testis mouse 1 (fitting set — *not evidence*) | +0.0661 | +0.0154 | +20.7 % |
+| control: rank by molecule count (PBMC) | −0.0007 | −0.0002 | −0.2 % |
+
+Fitted *within* PBMC on chromosome-disjoint folds the same recipe reaches +0.0953 / +0.0142, so
+**cross-species transfer keeps about half the gain**. The verified bracket this plan quoted
+(+6.6 % at matched n with +7.0 precision points, or +14.3 % at matched precision) is reproduced in
+kind: +11.6 % to +20.9 % at matched precision, with +4.7 to +6.6 precision points at matched n.
+
+**Deliverable 2 — the bar in point 2 below — NOT CLEARED.** On separating Kinnex long-read termini
+from internal-priming decoys the shipped score reaches AUC **0.7185** against **0.7790** for the
+tool's own inverted `ip_tool_afrac` (the verifier's figure, reproduced here from the caller's own
+column). No *atlas-trained* variant clears it, including the one with the downstream-A features
+(0.7313). Only a **Kinnex-trained** model does (0.8041). The plan's own words apply: on that axis
+the score is not better than a covariate the caller already computes. It is kept because it is not
+that axis it improves — see the next paragraph.
+
+**Deliverable 3 — the default — NOT MOVED, per [24] §3.1.** At the shipped threshold
+(`p >= 0.50`, rule T1, fixed on mouse 1 before any threshold's effect was looked at):
+
+| dataset | ΔP@100 | ΔR_det@100 | ΔF1 | verdict |
+|---|---:|---:|---:|---|
+| PBMC | +0.0673 | **−0.0048** | −0.0015 | FAIL (ii), (iii) |
+| mouse 1 *(fitting set)* | +0.0846 | +0.0049 | +0.0134 | FAIL (ii) |
+| mouse 2 | +0.0585 | +0.0052 | +0.0117 | FAIL (ii) |
+
+**No fixed probability threshold chosen on mouse 1 clears §3.1 on all three**: the calibrated cut
+is too strict everywhere, a count-matched cut still gives ΔR +0.0058 on PBMC, and a
+precision-matched cut costs 0.047 of precision there. 33 % of mouse candidates are atlas-positive
+at 25 bp against 13.9 % of PBMC's, so **the probability transfers as a ranking and not as an
+absolute scale.** A per-dataset threshold at matched precision *would* pass on all three; it cannot
+be chosen under Rule T because choosing it means reading the reported metric. That decision belongs
+to an adoption pre-registration ([24] §3.4).
+
+**Deliverable 4 — the column — SHIPPED, and it carries the result worth keeping.** A score inherits
+the truth that trained it. Atlas-trained, it buys atlas agreement and loses long-read agreement
+(PBMC Kinnex t5 P@25 0.7647 → 0.7294 at the shipped cut, 0.6624 at matched atlas precision) while
+halving the decoy rate (0.1300 → 0.0650); Kinnex-trained, the same recipe raises t5 P@25 to 0.7904.
+Calibration says it twice: ECE 0.0210 on mouse 2 against the training label, 0.0399 on PBMC against
+the same label, **0.1300 on PBMC against long reads** — with mid-range optimism (predicted 0.647 →
+observed 0.588) and severe low-end pessimism (predicted 0.068 → observed **0.242**), i.e. the
+disagreement is concentrated in exactly the sites a threshold discards.
+
+**And the dev slice reverses the sign of the atlas-independent read-out**: ΔKinnex t5 is **+0.0129**
+on chr19+21 and **−0.0380** on the other 22 contigs. [V §5] said slice-only positives are
+optimistic; here one is the wrong sign.
+
+---
+
+## Change 2 (original plan) — a calibrated per-site score as a RE-RANKER inside the existing gates
 
 **Where.** new `ema/countmatrix/pas_score.py`; consumed by `ema/countmatrix/paswrite.py`.
 
