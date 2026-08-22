@@ -414,6 +414,29 @@ class variable_config:
     # 3-stage pipeline's writer args all carry it explicitly, because a
     # spawned child's legacy globals come back at module defaults.
     pas_features = "on"
+    # --- peakAtail-prime: the calibrated per-site score (--pas-score) -------
+    # "none" (= v2, and the BRANCH DEFAULT) | "calibrated" | "select".
+    #
+    # THE DEFAULT IS "none" BECAUSE manuscript/24 3.3 SAYS SO, not because the
+    # change is unfinished: a per-site score with a shipped threshold is the
+    # single easiest way to manufacture a result, so it ships flag-off until
+    # 24 3.1 (dP@100 >= -0.005, dR_det >= +0.010, dF1 > 0 on PBMC and BOTH
+    # mice, default vs default) is met.  The measured deltas are recorded in
+    # results/prime/TASK_D_pas_score.md and in the CHANGELOG; moving this
+    # literal is an adoption decision and belongs to whoever owns the
+    # pre-registration.
+    #
+    # Unlike --read-geometry and --pas-features this value never reaches a
+    # spawned child: the score is evaluated once, in the parent, at the
+    # internal-priming seam, from columns the caller has already written.
+    pas_score = "none"
+    # Which model --pas-score evaluates: a name shipped in
+    # ema/countmatrix/models/, or a path to a model JSON.
+    pas_score_model = "prime1"
+    # Threshold for --pas-score select; < 0 means "the model's own shipped
+    # threshold", which was chosen on GSE104556 mouse 1 (Rule T) and never by
+    # reading a number this branch reports.
+    pas_score_min = -1.0
 
 @dataclass
 class filter_config:

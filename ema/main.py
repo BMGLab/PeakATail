@@ -404,6 +404,162 @@ def _collect_pas_features_standalone(collector, genome_fasta) -> None:
             collect_from_bed(bed, collector)
 
 
+def _pas_score_mode() -> str:
+    """``--pas-score`` (peakAtail-prime), read from ``variable_config``.
+
+    Not from ``args``: that namespace carries schema DEFAULTS for anything the
+    Click layer resolved (bug B0's class of defect), while ``variable_config``
+    is what this seam actually acts on.
+    """
+    from ema.config import variable_config as _vc
+
+    return str(getattr(_vc, "pas_score", "none")).lower()
+
+
+def _apply_pas_score(collector, stats: dict, output_mgr) -> None:
+    """Compute the calibrated per-site score, and optionally SELECT on it.
+
+    Runs at the same seam as the internal-priming veto, immediately after it,
+    because that is where the per-site features exist and where a dropped PAS
+    still disappears cleanly from ``genes.index`` (and therefore from the count
+    matrix).  Three things happen here and nothing else:
+
+    1. every candidate's probability is computed from the shipped constants
+       (:mod:`ema.countmatrix.pas_score`; numpy only, no scikit-learn);
+    2. the probabilities are handed to :func:`_write_pas_features`, which
+       appends them to ``pas_support.tsv`` as one more column;
+    3. **only** in ``--pas-score select``: a **tier-1** PAS whose probability is
+       below the threshold is dropped from the pos/neg BEDs.
+
+    THE HARD GATES STAY HARD.  The score is a re-ranker INSIDE tier-1 and
+    inside the internal-priming veto -- it replaces the ">= 2 clip molecules"
+    threshold and nothing else.  It can only ever REMOVE a tier-1 candidate:
+    it cannot rescue an internally-primed one (the veto has already dropped it
+    when ``--ip-filter --ip-filter-mode filter`` ran) and it cannot promote a
+    coverage-only tier-2 one.  Every configuration in which a score was allowed
+    to override the veto looked spectacular on the curated atlas and no better
+    on long reads (`results/algo_headroom/VERIFY/` §1.4, §7.1).
+
+    A PAS whose sequence window could not be read (``seq_ok != 1``: a contig
+    missing from the FASTA, or a candidate too close to a contig edge) gets
+    ``pas_score`` ``NA`` and is EXEMPT from the gate rather than silently
+    dropped -- "we could not score it" must not be spelled the same way as
+    "we scored it and it lost".
+    """
+    import os
+
+    import numpy as np
+
+    mode = _pas_score_mode()
+    if mode == "none":
+        return
+    from ema.countmatrix.pas_features import SEAM_FEATURE_COLUMNS
+    from ema.countmatrix.pas_score import load_model
+
+    if collector is None:
+        raise ValueError(
+            "--pas-score requires --pas-features on: the score is computed "
+            "from the per-site feature columns and cannot be evaluated "
+            "without them.")
+
+    support = Path(directory_config.output_dir) / "pas_support.tsv"
+    if not support.exists():
+        log.warning(
+            "--pas-score: no run-root pas_support.tsv (multi-BAM runs re-key "
+            "their PAS ids in merge_pas_beds); no score computed.")
+        return
+
+    from ema.config import variable_config as _vc
+
+    model = load_model(getattr(_vc, "pas_score_model", None) or "prime1")
+    feats = collector.finish()
+
+    import pandas as pd
+
+    caller_cols = [c for c in model.features if c not in SEAM_FEATURE_COLUMNS]
+    seam_cols = [c for c in model.features if c in SEAM_FEATURE_COLUMNS]
+    sup = pd.read_csv(support, sep="\t", usecols=["pas_id"] + caller_cols,
+                      dtype={"pas_id": str}, na_values=["NA"])
+    n = len(sup)
+    ids = sup.pas_id.values
+
+    # The seam block is stored as tab-joined TEXT (one string per candidate, so
+    # a genome-wide run does not hold a 22-key dict each).  Pull only the
+    # columns this model names, straight into preallocated arrays -- building a
+    # 650k x 22 object DataFrame first would cost most of a gigabyte for values
+    # that are about to become floats.
+    take = [(SEAM_FEATURE_COLUMNS.index(c), c) for c in seam_cols]
+    cols = {c: np.full(n, np.nan) for _, c in take}
+    ok = np.zeros(n, dtype=bool)
+    seq_ok_at = SEAM_FEATURE_COLUMNS.index("seq_ok")
+    n_missing = 0
+    for i, pid in enumerate(ids):
+        txt = feats.get(pid)
+        if txt is None:
+            n_missing += 1
+            continue
+        parts = txt.split("\t")
+        ok[i] = parts[seq_ok_at] == "1"
+        for j, c in take:
+            v = parts[j]
+            if v != "NA":
+                cols[c][i] = float(v)
+    for c in caller_cols:
+        cols[c] = pd.to_numeric(sup[c], errors="coerce").values.astype(float)
+
+    prob = np.full(n, np.nan)
+    if ok.any():
+        sub = {k: v[ok] for k, v in cols.items()}
+        prob[ok] = model.predict_proba(sub)
+    scores = {str(pid): prob[i] for i, pid in enumerate(ids)}
+
+    thr = getattr(_vc, "pas_score_min", -1.0)
+    thr = model.threshold if thr is None or float(thr) < 0 else float(thr)
+    st = {"mode": mode, "model": model.name, "threshold": float(thr),
+          "n_scored": int(ok.sum()), "n_unscoreable": int((~ok).sum()),
+          "n_missing_features": int(n_missing),
+          "mean_prob": float(np.nanmean(prob)) if ok.any() else None}
+
+    if mode == "select":
+        dropped = kept = 0
+        for bed_path in (str(directory_config.posbed), str(directory_config.negbed)):
+            if not os.path.exists(bed_path) or os.path.getsize(bed_path) == 0:
+                continue
+            tmp = bed_path + ".pas_score_tmp"
+            with open(bed_path) as src, open(tmp, "w") as dst:
+                for line in src:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 6:
+                        dst.write(line)
+                        continue
+                    try:
+                        tier1 = float(parts[4]) > 0
+                    except ValueError:
+                        tier1 = False
+                    p = scores.get(parts[3])
+                    if tier1 and p is not None and p == p and p < thr:
+                        dropped += 1
+                        continue
+                    dst.write(line)
+                    kept += 1
+            os.replace(tmp, bed_path)
+        st.update({"n_dropped": dropped, "n_kept": kept})
+        log.info("pas_score: select at p >= %.6f (model %s): kept %d, dropped %d "
+                 "tier-1 candidates", thr, model.name, kept, dropped)
+    else:
+        log.info("pas_score: %d candidates scored with model %s "
+                 "(threshold %.6f is RECORDED, not applied -- use "
+                 "--pas-score select to apply it)", int(ok.sum()), model.name, thr)
+
+    stats["pas_score"] = scores
+    stats["pas_score_stats"] = st
+    try:
+        with open(output_mgr.path("pas_gene", "pas_score_stats.json"), "w") as fh:
+            json.dump(st, fh, indent=2)
+    except Exception as exc:  # pragma: no cover - bookkeeping only
+        log.warning("pas_score: stats write failed: %s", exc)
+
+
 def _write_pas_features(pas_filter_result) -> None:
     """Append the seam's feature columns to the run-root sidecar.
 
@@ -424,18 +580,31 @@ def _write_pas_features(pas_filter_result) -> None:
             append_columns, write_features_tsv,
         )
 
+        from ema.countmatrix.pas_features import SEAM_FEATURE_COLUMNS
+
         feats = collector.finish()
+        columns = SEAM_FEATURE_COLUMNS
+        # --pas-score: the probability is one more column on the SAME append,
+        # folded into the collector's own tab-joined text exactly the way
+        # finish() folds the context block in -- so the sidecar is rewritten
+        # once, not twice, whether or not the score was asked for.
+        scores = (pas_filter_result or {}).get("pas_score")
+        if scores:
+            from ema.countmatrix.pas_score import ScoredFeatures
+
+            columns = SEAM_FEATURE_COLUMNS + ("pas_score",)
+            feats = ScoredFeatures(feats, scores)
         root = Path(directory_config.output_dir)
         support = root / "pas_support.tsv"
         if support.exists():
-            n = append_columns(support, feats)
+            n = append_columns(support, feats, columns)
             log.info(
                 "pas_support.tsv: %d feature columns appended to %d rows (%s)",
-                len(next(iter(feats.values()), {})), n, collector.stats(),
+                len(columns), n, collector.stats(),
             )
         else:
             out = root / "pas_features.tsv"
-            n = write_features_tsv(out, feats)
+            n = write_features_tsv(out, feats, columns)
             log.info("pas_features.tsv: %d rows written (%s)", n, collector.stats())
     except Exception as exc:  # pragma: no cover - annotation only
         log.warning("pas_support.tsv feature columns not written: %s", exc)
@@ -452,6 +621,41 @@ def _resolve_annotation_bed() -> str:
     if override:
         return str(override)
     return str(directory_config.endbed)
+
+
+def _validate_pas_score_config() -> None:
+    """Fail BEFORE the run when --pas-score is misconfigured.
+
+    A score computed from NA sequence columns would be a number that looks
+    exactly like a real one in the sidecar, so the two things it cannot do
+    without are checked here rather than warned about later.
+    """
+    import os
+
+    mode = _pas_score_mode()
+    if mode == "none":
+        return
+    if not _pas_features_enabled():
+        raise ValueError(
+            "--pas-score requires --pas-features on: the score is computed "
+            "from the per-site feature columns.")
+    genome_fasta = getattr(args, "genome_fasta", None)
+    if not genome_fasta or not os.path.exists(genome_fasta):
+        raise ValueError(
+            "--pas-score requires --genome-fasta: the model uses the "
+            "canonical-hexamer columns, which are NA without a genome "
+            f"(got: {genome_fasta!r}).")
+    from ema.countmatrix.pas_score import load_model
+
+    model = load_model(getattr(variable_config, "pas_score_model", None) or "prime1")
+    if mode == "select":
+        thr = getattr(variable_config, "pas_score_min", -1.0)
+        thr = model.threshold if thr is None or float(thr) < 0 else float(thr)
+        if not (0.0 <= float(thr) <= 1.0):
+            raise ValueError(
+                f"--pas-score select needs a probability threshold in [0, 1]; "
+                f"model {model.name!r} carries {model.threshold!r} and "
+                f"--pas-score-min resolved to {thr!r}.")
 
 
 def _validate_pas_filter_config() -> None:
@@ -622,6 +826,7 @@ def _apply_pas_filters(output_mgr) -> dict | None:
             _collect_pas_features_standalone(
                 collector, getattr(args, "genome_fasta", None))
             _out["pas_features"] = collector
+            _apply_pas_score(collector, _out, output_mgr)
         return _out or None
 
     ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
@@ -692,6 +897,10 @@ def _apply_pas_filters(output_mgr) -> dict | None:
             _collect_pas_features_standalone(
                 collector, getattr(args, "genome_fasta", None))
         combined_stats["pas_features"] = collector
+        # The score runs AFTER the internal-priming veto, on the BEDs the veto
+        # has already rewritten, so `--pas-score select` can only ever remove a
+        # tier-1 candidate the veto let through -- never rescue one it dropped.
+        _apply_pas_score(collector, combined_stats, output_mgr)
 
     if ip_filter:
         n_ip_flagged = sum(1 for v in ip_of.values() if v)
@@ -794,6 +1003,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # D6: fail loud, before any peak-calling compute is spent, if --ip-filter
     # / --annot-filter are enabled but misconfigured (see _apply_pas_filters).
     _validate_pas_filter_config()
+    _validate_pas_score_config()
 
     # Save run configuration (B0: serialize the RESOLVED config actually in
     # effect — directory_config/variable_config/filter_config — not the raw

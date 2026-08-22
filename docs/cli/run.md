@@ -216,6 +216,9 @@ Options:
 | `--read-geometry` | `fixed`/`keep`/`true` | `fixed` | How a read's genomic interval is derived. See below. |
 | `--read-exclude-flags` | INT | 0 | SAM flag mask vetoed on the coverage/count channel, like `samtools view -F`. `0` = no filtering. See below. |
 | `--pas-features` | `off`/`on` | `on` | Append per-site scoring features to `pas_support.tsv`. Adds, drops and moves no PAS. See [`--pas-features`](#pas-features--per-site-scoring-covariates). |
+| `--pas-score` | `none`/`calibrated`/`select` | `none` | Calibrated per-site PAS probability. `calibrated` appends a `pas_score` column and moves no call; `select` additionally uses it in place of the molecule-count threshold, inside tier-1 and inside the internal-priming veto. See [`--pas-score`](#pas-score--the-calibrated-per-site-score). |
+| `--pas-score-model` | TEXT | `prime1` | Which model `--pas-score` evaluates: a name shipped with the package, or a path to a model JSON. |
+| `--pas-score-min` | FLOAT | `-1` | Threshold for `--pas-score select`. Negative means "the threshold the model was shipped with". |
 
 #### `--read-geometry` — how a read becomes an interval
 
@@ -516,6 +519,66 @@ is no run-root `pas_support.tsv` to extend; those runs get a standalone
 `<run>/pas_features.tsv` with `pas_id` plus the 22 seam columns, in the merged
 id space. The per-caller `<bed>.support.tsv` files still carry the two
 call-time columns.
+
+#### `--pas-score` — the calibrated per-site score
+
+**Default `none`, which is v2.** Nothing is loaded, nothing is computed and no
+column is written unless you ask.
+
+`calibrated` evaluates a model that was fitted **offline** and ships as a table
+of constants (`ema/countmatrix/models/pas_score_model_prime1.json`), and
+appends one column to `pas_support.tsv`:
+
+| column | meaning |
+|---|---|
+| `pas_score` | probability that this candidate is a real polyadenylation site, in `[0, 1]`; `NA` when the site could not be scored |
+
+It **changes nothing else**: no PAS is added, dropped or moved, and every other
+column keeps its bytes. `select` additionally uses the score as the selection
+rule — see below.
+
+**What the score replaces, and what it does not touch.** PeakATail's
+precision-first arm is `tier 1 ∩ internal-priming-pass ∩ ≥ 2 clip molecules`.
+The score replaces **only the `≥ 2 molecules` threshold**. Tier-1 membership
+and the internal-priming veto stay hard gates in front of it, so
+`--pas-score select` can only ever *remove* a tier-1 candidate: it cannot
+promote a coverage-only tier-2 candidate and it cannot rescue a site the veto
+dropped. That is not a stylistic choice — every configuration in which a score
+was allowed to override the veto looked spectacular on the curated atlas and no
+better against long-read truth.
+
+**What it is made of.** Twenty-one covariates, every one of them a column of
+`pas_support.tsv` verbatim: the clip channel (`clip_reads`, `clip_umis`, their
+`-F 3844` twins, `tier`, `clip_positions`, `clip_span`), `window_reads`, the
+canonical-hexamer block, and the local candidate context. The downstream
+A-content columns are deliberately **excluded** — the internal-priming veto
+already uses that evidence as a hard gate, and a model that recites the same
+rule behind it is double-counting. Because every feature is a sidecar column,
+any `pas_score` can be recomputed from the row it sits on.
+
+**Requirements.** `--pas-features on` (the default) and `--genome-fasta`; both
+are checked before the run starts, not warned about afterwards. A candidate
+whose sequence window could not be read (`seq_ok` `0` — a contig missing from
+the FASTA, or a site too close to a contig edge) gets `pas_score` `NA` and is
+**exempt** from `select`: "we could not score it" is not spelled the same way
+as "we scored it and it lost".
+
+**Cost.** The score rides the pass the internal-priming filter already makes —
+no extra pass over the FASTA, over the BAM or over the BED. Evaluating the
+shipped 161-tree ensemble is a few seconds per 100 k candidates, in the parent
+process, once per run.
+
+**No scikit-learn at run time.** Models are fitted offline by
+`scripts/prime/taskD_fit_model.py` and shipped as node arrays evaluated with
+numpy; the exporter refuses to write a model whose numpy evaluation differs
+from scikit-learn's by more than 1e-9 on any training row (the shipped one
+agrees to 2.2e-16). A test asserts, in a subprocess, that loading a model and
+scoring with it imports no scikit-learn.
+
+**Where the threshold came from.** `prime1` was fitted on GSE104556 testis
+mouse 1 and its threshold is the calibrated decision boundary `p ≥ 0.50` —
+chosen without reading any precision, recall or call count, and never on a
+dataset it is reported against.
 
 ### Internal-priming annotation (D9)
 

@@ -361,6 +361,9 @@ def build_resolved_run_config() -> dict:
             # Same reasoning for --pas-features: it decides the sidecar's
             # column set, so a run record that omits it cannot be replayed.
             "pas_features",
+            # ...and for --pas-score: it decides whether a pas_score column
+            # exists and, in "select" mode, which PAS survive at all.
+            "pas_score", "pas_score_model", "pas_score_min",
         )
     }
     resolved["filters"] = {

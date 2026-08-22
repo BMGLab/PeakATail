@@ -114,8 +114,16 @@ def _v2_settings(seq_len: int) -> None:
     # columns still changes the sidecar's BYTES, which is why it is a flag
     # and why it is pinned here.
     variable_config.pas_features = "off"
+    # TASK D (--pas-score): v2 has no per-site score and no pas_score column.
+    # "none" is ALSO the branch default (manuscript/24 3.3 ships a score
+    # flag-off until 3.1 is met), so this line is not what makes these arms
+    # pass today -- it is here so the compat surface stays complete in one
+    # place if that default ever moves, and because --compat v2 must be
+    # exactly equivalent to this function.
+    variable_config.pas_score = "none"
+    variable_config.pas_score_model = "prime1"
+    variable_config.pas_score_min = -1.0
     # Change 2 (--polya-genomic-a-gate):  variable_config.polya_genomic_a_gate = False
-    # Change 3 (--pas-score):             variable_config.pas_score = "none"
     # Change 5 (--cleavage-edge-refine):  variable_config.cleavage_edge_refine = False
 
 
@@ -123,7 +131,8 @@ def _v2_settings(seq_len: int) -> None:
 def _restore_variable_config():
     """Every knob `_v2_settings` touches is process-global; put it back afterwards."""
     keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
-            "read_geometry", "read_exclude_flags", "pas_features")
+            "read_geometry", "read_exclude_flags", "pas_features",
+            "pas_score", "pas_score_model", "pas_score_min")
     saved = {k: getattr(variable_config, k) for k in keys}
     try:
         yield

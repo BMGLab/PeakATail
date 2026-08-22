@@ -326,6 +326,60 @@ class RunConfig:
             ),
         ),
     )
+    pas_score: str = field(
+        # Must equal ema.config.variable_config.pas_score.  DEFAULT "none"
+        # until manuscript/24 3.1 is met on all three datasets -- see the note
+        # in ema/config.py for the measured deltas that decide it.
+        default="none",
+        metadata=_spec(
+            cli_flag="--pas-score", yaml_key="pas_score",
+            legacy_dataclass_attr="variable_config.pas_score",
+            choice=("none", "calibrated", "select"),
+            description=(
+                "Calibrated per-site PAS score (peakAtail-prime). 'none' "
+                "(default, = v2) computes nothing. 'calibrated' evaluates the "
+                "shipped model at the internal-priming seam and appends a "
+                "pas_score probability column to pas_support.tsv -- it adds, "
+                "drops and moves no PAS. 'select' additionally uses the score "
+                "IN PLACE OF the molecule-count threshold: a tier-1 candidate "
+                "scoring below --pas-score-min is dropped. Tier-1 membership "
+                "and the internal-priming veto stay HARD GATES in front of it "
+                "-- the score can only remove a tier-1 candidate, never "
+                "promote a coverage-only one and never rescue an "
+                "internally-primed one. Requires --pas-features on and "
+                "--genome-fasta."
+            ),
+        ),
+    )
+    pas_score_model: str = field(
+        default="prime1",
+        metadata=_spec(
+            cli_flag="--pas-score-model", yaml_key="pas_score_model",
+            legacy_dataclass_attr="variable_config.pas_score_model",
+            description=(
+                "Which scoring model --pas-score evaluates: a name shipped "
+                "with the package (default 'prime1', trained offline on "
+                "GSE104556 testis mouse 1) or a path to a model JSON produced "
+                "by scripts/prime/taskD_fit_model.py. Models are constants "
+                "evaluated with numpy; scikit-learn is never imported at run "
+                "time."
+            ),
+        ),
+    )
+    pas_score_min: float = field(
+        default=-1.0,
+        metadata=_spec(
+            cli_flag="--pas-score-min", yaml_key="pas_score_min",
+            legacy_dataclass_attr="variable_config.pas_score_min",
+            description=(
+                "Probability threshold used by --pas-score select. Negative "
+                "(default) means 'use the threshold the model itself was "
+                "shipped with', which was fixed on GSE104556 mouse 1 and never "
+                "on the datasets it is reported against (manuscript/24 3.3, "
+                "Rule T). Ignored unless --pas-score select."
+            ),
+        ),
+    )
     barcode_tag: Optional[str] = field(
         default=None,
         metadata=_spec(
