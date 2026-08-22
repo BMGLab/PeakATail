@@ -170,15 +170,15 @@ label, the verifier's recipe, all downstream-A features dropped) and applied unc
 
 | dataset | ΔP@100 at matched n | ΔR_det@100 at matched n | rel. ΔR at matched precision |
 |---|---:|---:|---:|
-| PBMC 10k v3 (held out, different species/chemistry/aligner) | **+0.0476** | **+0.0054** | **+11.6 %** |
+| PBMC 10k v3 (held out, different species/chemistry/aligner) | **+0.0476** | **+0.0054** | **+11.7 %** |
 | testis mouse 2 (held out) | **+0.0471** | **+0.0115** | **+16.4 %** |
-| testis mouse 1 (fitting set — *not evidence*) | +0.0661 | +0.0154 | +20.7 % |
+| testis mouse 1 (fitting set — *not evidence*) | +0.0661 | +0.0154 | +20.9 % |
 | control: rank by molecule count (PBMC) | −0.0007 | −0.0002 | −0.2 % |
 
 Fitted *within* PBMC on chromosome-disjoint folds the same recipe reaches +0.0953 / +0.0142, so
 **cross-species transfer keeps about half the gain**. The verified bracket this plan quoted
 (+6.6 % at matched n with +7.0 precision points, or +14.3 % at matched precision) is reproduced in
-kind: +11.6 % to +20.9 % at matched precision, with +4.7 to +6.6 precision points at matched n.
+kind: +11.7 % to +20.9 % at matched precision, with +4.7 to +6.6 precision points at matched n.
 
 **Deliverable 2 — the bar in point 2 below — NOT CLEARED.** On separating Kinnex long-read termini
 from internal-priming decoys the shipped score reaches AUC **0.7185** against **0.7790** for the
