@@ -208,8 +208,11 @@ groups stay header-addressed, and `--pas-features off` is still v2 exactly.
 
 All 50 data files of a PBMC chr19+21 slice run with the v2 pins
 (`--read-geometry fixed --read-exclude-flags 0 --pas-features off --pas-score
-none --cleavage-offset none --emit-inferred-cleavage off --clip-rate-sampling
-head --ip-filter-default off`) are **byte-identical to the v2 reference run**,
+none --pas-score-model prime1 --pas-score-min -1 --cleavage-offset none
+--emit-inferred-cleavage off --clip-rate-sampling head --ip-filter-default off
+--pas-gene-rescue off --pas-gene-rescue-min-mol 0` — the canonical copy of this list is
+`ema.cli.config_schema.V2_COMPAT_FLAGS`, and `tests/test_prime_compat_flags.py`
+checks this paragraph against it) are **byte-identical to the v2 reference run**,
 including its clip-rate log line; only `run_config.json` / `run_manifest.json`
 differ, by the keys that record the new options.
 `tests/test_prime_v2_compat_golden.py::_v2_settings()` pins all five new knobs.

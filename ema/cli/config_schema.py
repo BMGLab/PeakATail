@@ -116,6 +116,56 @@ def _spec(**kwargs: Any) -> dict[str, FieldSpec]:
 # RunConfig: the schema.  ORDER MATTERS for the auto-generated --help
 # layout (Click renders flags top-to-bottom in declaration order).
 # ---------------------------------------------------------------------------
+#: The exact CLI incantation that pins every ``peakAtail-prime`` option to its
+#: v2 (commit ``9dfdefb``) value, so a run of this branch reproduces the code
+#: that produced the manuscript's numbers **byte-for-byte**.
+#:
+#: THIS TUPLE IS THE CARDINAL RULE IN MACHINE-READABLE FORM.  It used to live
+#: only as prose in ``CHANGELOG.md``, where nothing could check it: a new prime
+#: option with a non-v2 default that was pinned in
+#: ``tests/test_prime_v2_compat_golden.py::_v2_settings`` but left out of the
+#: documented command line would have made every *published* compat run
+#: silently stop being v2, with the unit test still green.
+#: ``tests/test_prime_compat_flags.py`` ties the two together in both
+#: directions and checks the prose against this tuple.
+#:
+#: Validated on the real PBMC chr19+21 and GSE104556 mouse1 chr18+19 slices:
+#: 50 / 50 data files byte-identical to a run of the frozen v2 worktree, the
+#: run journal identical after timestamp normalisation, and the only remaining
+#: difference the new keys in ``run_config.json`` / ``run_manifest.json``
+#: (which a v2 config file could not have contained).
+#:
+#: Options whose branch default is ALREADY the v2 value are listed too, so the
+#: incantation stays complete and readable if a default ever moves.  Every
+#: value-carrying option this branch adds must appear here, and
+#: ``tests/test_prime_compat_flags.py`` checks that against the frozen v2
+#: worktree rather than against a hand-kept list.
+V2_COMPAT_FLAGS: tuple[str, ...] = (
+    "--read-geometry", "fixed",
+    "--read-exclude-flags", "0",
+    "--pas-features", "off",
+    "--pas-score", "none",
+    "--pas-score-model", "prime1",
+    "--pas-score-min", "-1",
+    "--cleavage-offset", "none",
+    "--emit-inferred-cleavage", "off",
+    "--clip-rate-sampling", "head",
+    "--ip-filter-default", "off",
+    "--pas-gene-rescue", "off",
+    "--pas-gene-rescue-min-mol", "0",
+)
+
+#: peakAtail-prime options that are BOOLEAN FLAGS: their v2 behaviour is
+#: "do not pass the flag", so they cannot appear in :data:`V2_COMPAT_FLAGS`
+#: (which is flag/value pairs).  Declared explicitly so the completeness check
+#: in ``tests/test_prime_compat_flags.py`` cannot be satisfied by forgetting
+#: one.
+V2_COMPAT_OMITTED_FLAGS: tuple[str, ...] = (
+    "--no-ip-filter",      # forces the internal-priming veto off; v2 = absent,
+                           # and --ip-filter-default off already restores v2.
+)
+
+
 @dataclass
 class RunConfig:
     """Canonical parameter container for ``ema run``.
