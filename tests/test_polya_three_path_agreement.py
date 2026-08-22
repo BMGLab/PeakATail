@@ -63,7 +63,8 @@ def _slice_config():
     saved = {
         k: getattr(variable_config, k)
         for k in ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
-                  "default_threshold", "merge_len", "pas_features")
+                  "default_threshold", "merge_len", "pas_features",
+                  "read_geometry", "clip_rate_sampling")
     }
     variable_config.seqlen = SEQ_LEN
     variable_config.cb_len = 16
@@ -244,3 +245,55 @@ def test_the_sidecar_column_set_survives_the_spawn(bam, tmp_path):
             assert len(line.split("\t")) == len(SUPPORT_COLUMNS), (
                 f"{label}: row has feature columns the header does not declare"
             )
+
+
+@pytest.mark.parametrize("geometry", ["true"])
+def test_all_three_paths_agree_under_a_non_default_read_geometry(
+        bam, tmp_path, geometry):
+    """``--read-geometry`` must reach the spawned pipeline and tile workers.
+
+    ``run_tiled`` hands its workers a legacy DICT rather than a ``JobSpec``,
+    and that dict was missed on the first cut of the flag: the tile path
+    silently ran v2 geometry while the monolithic path ran the branch value.
+    That was caught only because ``"true"`` was the branch DEFAULT at the
+    time; the measurement has since moved the default back to ``"fixed"``, so
+    every other test in this file now runs at the value the child falls back
+    to anyway and the regression would be invisible again.  Hence an arm that
+    forces a non-default value.
+
+    Only ``"true"`` is an arm: this fixture has no read whose reference span
+    exceeds ``--seq-len``, so ``"keep"`` is byte-equal to ``"fixed"`` here and
+    could not tell a broken hand-off from a working one.
+    """
+    from ema.config import variable_config
+
+    variable_config.read_geometry = geometry
+    mono = _call(bam, tmp_path, f"geo_mono_{geometry}", "clip_seeded")
+    pipe = _call(bam, tmp_path, f"geo_pipe_{geometry}", "clip_seeded",
+                 use_pipeline=True)
+    tiled = _call(bam, tmp_path, f"geo_tile_{geometry}", "clip_seeded",
+                  use_tiles=True, tile_size=8_000, tile_overlap=2_000,
+                  n_workers=2)
+    for label, bed in (("pipeline", pipe), ("tiles", tiled)):
+        assert _coords_and_scores(bed) == _coords_and_scores(mono), (
+            f"--read-geometry {geometry} did not reach the {label} workers "
+            "(coordinates diverged from the monolithic path)"
+        )
+        assert _counts_by_coord(bed) == _counts_by_coord(mono), (
+            f"--read-geometry {geometry} did not reach the {label} workers "
+            "(count matrix diverged)"
+        )
+        assert _support_by_coord(bed) == _support_by_coord(mono), (
+            f"--read-geometry {geometry} did not reach the {label} workers "
+            "(clip support diverged)"
+        )
+
+    # Not vacuous: v2 geometry gives a different answer on this fixture.
+    variable_config.read_geometry = "fixed"
+    v2 = _call(bam, tmp_path, "geo_mono_fixed", "clip_seeded")
+    assert _coords_and_scores(v2) != _coords_and_scores(mono) or \
+        _counts_by_coord(v2) != _counts_by_coord(mono), (
+        f"--read-geometry {geometry} reproduced v2 on this fixture, so the "
+        "agreement above cannot distinguish 'the flag travelled' from "
+        "'nothing happened'"
+    )
