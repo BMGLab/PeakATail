@@ -868,7 +868,9 @@ class RunConfig:
                 "relative recall at matched atlas precision. 'annotate' "
                 "KEEPS every PAS and only records the internal_priming flag "
                 "on the PAS ledger + pasbed; it is v2's literal default and "
-                "is what --compat v2 pins. The mode that was actually used "
+                "is the value pinned by the documented v2-compatibility "
+                "flag list (ema.cli.config_schema.V2_COMPAT_FLAGS; there is "
+                "no --compat flag). The mode that was actually used "
                 "is logged and written to run_config.json / "
                 "run_manifest.json under 'internal_priming'."
             ),

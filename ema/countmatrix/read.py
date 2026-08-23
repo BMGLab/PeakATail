@@ -18,7 +18,9 @@ from ema.countmatrix.cb_encode import encode_cb
 #:     inside the span, N (intron) removed.
 READ_GEOMETRIES = ("fixed", "keep", "true")
 
-#: v2's value, and what ``--compat v2`` pins ``--read-geometry`` to.
+#: v2's value, and what :data:`ema.cli.config_schema.V2_COMPAT_FLAGS` -- the
+#: documented v2-compatibility command line, not a ``--compat`` flag (there is
+#: none) -- pins ``--read-geometry`` to.
 V2_READ_GEOMETRY = "fixed"
 
 # Fallback sample_id used when a read has no RG tag. main.py sets this to the

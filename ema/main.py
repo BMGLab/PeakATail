@@ -974,8 +974,9 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     behavioural default is that the veto runs.  D9 chose ``annotate`` when the
     veto was opt-in (an internally-primed peak is candidate alternative-PAS
     signal, not noise, for a scientist hunting APA); that choice is still one
-    flag away, ``--ip-filter-mode annotate``, and it is what ``--compat v2``
-    pins.  (``--annot-filter``, the gene-region membership filter, is a
+    flag away, ``--ip-filter-mode annotate``, and it is the value pinned by
+    :data:`ema.cli.config_schema.V2_COMPAT_FLAGS` (the documented
+    v2-compatibility command line -- there is no ``--compat`` flag).  (``--annot-filter``, the gene-region membership filter, is a
     distinct concept and is unaffected -- it always drops non-overlapping
     peaks.)
 
