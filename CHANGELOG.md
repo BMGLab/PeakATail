@@ -58,6 +58,20 @@ advertised "+7.7 %–12.8 % relative recall at matched atlas precision". Every
 number published for that change was measured on a run that also passed
 `--ip-filter-mode filter` explicitly.
 
+### BREAKING — the flagless call set changes
+
+**A flagless v2 user who supplies `--genome-fasta` silently loses 17.09 % of
+their calls** — the internally-primed ones (PBMC 10k v3 full BAM:
+402,765 → 333,920, −68,845; `results/prime_bench/fourway_headline.txt` §3).
+Nothing about their command line changes; the output does. That is the
+intended behaviour of the default flip, and it is the definition of a breaking
+default change. Escapes, in increasing strictness: `--ip-filter-mode annotate`
+(the veto still runs but drops nothing — flags are recorded);
+`--ip-filter-default off` or `--no-ip-filter` (v2's call set); the full
+14-pair `V2_COMPAT_FLAGS` command line (v2 byte-for-byte, every file). With no
+readable `--genome-fasta` the veto cannot run and the flagless output stays
+byte-identical to v2's.
+
 ### The literal
 
 `ema/cli/config_schema.py`, field `ip_filter_mode`:
