@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased (branch `peakAtail-prime`) — the dynamic-threshold crash guard
+
+**`--dynamic-threshold` at its documented companion setting
+(`--lambda-fold-change 2.0`, the parameter reference's first entry under "find
+more PAS") aborts the caller with a bare `IndexError`.** Both peak-calling
+loops compute the current peak's right edge as
+`l_end = data_array[-current_threshold]`
+(`ema/countmatrix/peackcalling.py`, `ema/countmatrix/peak_pipeline.py`), the
+dynamic estimator sets
+`current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))`,
+and nothing bounds it by `len(data_array)`: when the threshold outgrows the
+live read window the index runs off the front of the list. Found by the
+2026-08 parameter sweep (`results/paramsweep/VERDICTS.md` §5) on the PBMC
+chr19+21 dev slice; the sweep's accuracy verifier reproduced the same abort on
+the GSE104556 mouse1 chr18+19 slice
+(`results/paramsweep/VERIFY/rerun_identity.tsv`), so the defect is
+species-independent. It is a v2 (`9dfdefb`) defect, reachable **only** with
+`--dynamic-threshold` (off by default): `--lambda-fold-change` is read at
+exactly two places in the tree, both inside `if dynamic_threshold:`, so no
+published PeakATail number is affected.
+
+### Added
+
+* **`--dynamic-threshold-clamp {off,on}`, default `off`.** `off` is v2 to the
+  character — the same expression, the same `IndexError`, the same abort —
+  because the branch's cardinal rule is that v2 stays reproducible
+  byte-for-byte and a fix that changes what a run emits would have to clear
+  `manuscript/28` §2 first. On the default path the loops evaluate v2's own
+  literal expression with nothing wrapped around it — same expression, same
+  cost, same bare `IndexError` (which cost the sweep a whole arm before
+  anyone read the source; the flag that stops it is now named in this file,
+  in the issue, and in the module docstring).
+  `on` bounds the look-back index to the live window (returning the oldest
+  end still in it) and logs how often it fired. The single copy of the rule
+  is `ema.countmatrix.dynamic_threshold.resolve_l_end()`, and its identity
+  guarantee — for every in-range threshold both settings return the same
+  element, so `on` can only change a run that would otherwise have aborted —
+  is tested exhaustively in `tests/test_prime_dynamic_threshold_clamp.py`,
+  which also reproduces the crash itself on a 14-read synthetic BAM through
+  the monolithic and pipeline paths.
+* The flag is threaded through all four dispatch paths (monolithic,
+  per-chromosome parallel, 3-stage pipeline, tiled — including the
+  single-tile short-circuit), and `V2_COMPAT_FLAGS` gains
+  `--dynamic-threshold-clamp off` (14 flag/value pairs), so the documented
+  compat command stays the complete list.
+
 ## Unreleased (branch `peakAtail-prime`) — the default that was a no-op
 
 **`--ip-filter-mode`'s default was v2's `annotate`, so the branch's one
@@ -276,7 +322,8 @@ All 50 data files of a PBMC chr19+21 slice run with the v2 pins
 (`--read-geometry fixed --read-exclude-flags 0 --pas-features off --pas-score
 none --pas-score-model prime1 --pas-score-min -1 --cleavage-offset none
 --emit-inferred-cleavage off --clip-rate-sampling head --ip-filter-default off
---ip-filter-mode annotate --pas-gene-rescue off --pas-gene-rescue-min-mol 0` — the canonical copy of this list is
+--ip-filter-mode annotate --pas-gene-rescue off --pas-gene-rescue-min-mol 0
+--dynamic-threshold-clamp off` — the canonical copy of this list is
 `ema.cli.config_schema.V2_COMPAT_FLAGS`, and `tests/test_prime_compat_flags.py`
 checks this paragraph against it) are **byte-identical to the v2 reference run**,
 including its clip-rate log line; only `run_config.json` / `run_manifest.json`

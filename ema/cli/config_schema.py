@@ -210,6 +210,7 @@ V2_COMPAT_FLAGS: tuple[str, ...] = (
     "--ip-filter-mode", IP_FILTER_MODE_V2,
     "--pas-gene-rescue", "off",
     "--pas-gene-rescue-min-mol", "0",
+    "--dynamic-threshold-clamp", "off",
 )
 
 #: peakAtail-prime options that are BOOLEAN FLAGS: their v2 behaviour is
@@ -677,6 +678,23 @@ class RunConfig:
             cli_flag="--floor-threshold", yaml_key="floor_threshold",
             legacy_args_attr="floor_threshold",
             description="Minimum peak height (clamps dynamic threshold).",
+        ),
+    )
+    dynamic_threshold_clamp: str = field(
+        default="off",
+        metadata=_spec(
+            cli_flag="--dynamic-threshold-clamp",
+            yaml_key="dynamic_threshold_clamp",
+            legacy_args_attr="dynamic_threshold_clamp",
+            choice=("off", "on"),
+            description=(
+                "Bound the dynamic-threshold look-back index so "
+                "--dynamic-threshold cannot abort the run with an IndexError "
+                "(peakAtail-prime). 'off' (default, = v2) leaves the v2 "
+                "expression untouched. 'on' clamps the index to the live "
+                "window. Only reachable with --dynamic-threshold, which is "
+                "off by default."
+            ),
         ),
     )
     pas_gap: int = field(

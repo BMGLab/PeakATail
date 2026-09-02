@@ -1,0 +1,285 @@
+"""``--dynamic-threshold-clamp``: the crash, reproduced, and the identity rule.
+
+The 2026-08 parameter sweep proved (``results/paramsweep/VERDICTS.md`` §5) that
+``--dynamic-threshold --lambda-fold-change 2.0`` — the parameter reference's
+own documented "find more PAS" setting — aborts the caller with a bare
+``IndexError`` at::
+
+    l_end = data_array[-current_threshold]
+
+because the dynamic estimator sets ``current_threshold`` from the local read
+density and nothing bounds it by ``len(data_array)``.  The sweep's accuracy
+verifier reproduced the same abort on the mouse dev slice
+(``results/paramsweep/VERIFY/rerun_identity.tsv``), so the defect is
+species-independent.  It is a v2 (``9dfdefb``) defect, reachable only with
+``--dynamic-threshold`` (off by default).
+
+This module pins the branch's answer, ``--dynamic-threshold-clamp``:
+
+1. the crash REPRODUCES here, on a 14-read synthetic BAM, with the flag at its
+   default ``off`` — which is deliberate: ``off`` is v2 to the character, and
+   the day this assertion fails is the day someone silently changed v2
+   behaviour without the flag;
+2. ``on`` completes the identical run and still emits the peak;
+3. ``on`` is byte-identical to ``off`` on a dynamic-threshold run that does
+   NOT crash — the clamp can only change a run v2 would have aborted;
+4. :func:`ema.countmatrix.dynamic_threshold.resolve_l_end` honours the same
+   identity exhaustively at the unit level;
+5. both loop implementations are covered: the monolithic loop
+   (``peackcalling.py``) and the 3-stage pipeline's finder
+   (``peak_pipeline.py``), which the sweep found carries the same expression.
+
+Run against code WITHOUT the fix (the frozen v2 worktree, or this branch
+before it), test 1 still passes — it documents the defect — while tests 2/3
+fail with ``TypeError: unexpected keyword argument 'dynamic_threshold_clamp'``
+and test 4 with ``ModuleNotFoundError``.  That asymmetry is the proof that the
+fixture really trips the bound rather than testing nothing.
+
+CRASH MECHANICS OF THE FIXTURE (all forward-strand, one chromosome):
+14 reads start at ``920+i``; under v2 "fixed" geometry each end is rewritten
+to ``start + seq_len``, so the ends land at ``1011..1024`` — inside one
+``lambda_window`` of each other, so the background deque never prunes.  With
+``default_threshold=floor_threshold=3`` the signal fires at read 3.  At read
+11 the deque tops 10 entries (the estimator's minimum), and with
+``lambda_window=1000, lambda_fold_change=10000`` the threshold jumps to
+``int(11/1000 * 10000) = 110`` while the live window holds 10 ends:
+``data_array[-110]`` → ``IndexError``.  With ``lambda_fold_change=2.0`` the
+same arithmetic yields ``max(3, int(0.011*2)) = 3`` and nothing ever crashes,
+which is what makes fixture 3's identity comparison meaningful.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pysam
+import pytest
+
+CHROM = "1"
+CHROM_LEN = 200_000
+SEQ_LEN = 91
+N_READS = 14
+
+# Crash arm: threshold jumps to int(11/1000 * 10000) = 110 >> window size 10.
+CRASH_KWARGS = dict(
+    dynamic_threshold=True,
+    floor_threshold=3,
+    lambda_window=1000,
+    lambda_fold_change=10000.0,
+)
+# Benign arm: same run, threshold stays at the floor; v2 completes it.
+BENIGN_KWARGS = dict(
+    dynamic_threshold=True,
+    floor_threshold=3,
+    lambda_window=1000,
+    lambda_fold_change=2.0,
+)
+
+# spawn (pipeline path) re-parses argv in the children — same convention as
+# tests/test_polya_three_path_agreement.py.
+_ARGV = [
+    "ema",
+    "--sequenceLen", str(SEQ_LEN),
+    "--CellBarcodeLen", "16",
+    "--BarcodeTag", "CB",
+]
+
+
+def _barcode(i: int) -> str:
+    alphabet = "ACGT"
+    out = [alphabet[(i >> (2 * k)) & 3] for k in range(8)]
+    return ("".join(out) + "ACGTACGT")[:16]
+
+
+def _write_crash_bam(path: Path) -> Path:
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": CHROM, "LN": CHROM_LEN}],
+        "RG": [{"ID": "testsample", "SM": "testsample"}],
+    }
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i in range(N_READS):
+            # The last four reads carry a genuine terminal poly(A) soft clip:
+            # clip_seeded's seeder then guarantees a tier-1 call whether or
+            # not a coverage peak completes, so the rescued runs have a row
+            # to assert on.  The clip does not touch the crash mechanics —
+            # read_check's coverage 5-tuple ignores soft clips.
+            clip = 12 if i >= N_READS - 4 else 0
+            a = pysam.AlignedSegment()
+            a.query_name = f"r{i}"
+            a.query_sequence = "C" * 80 + "A" * clip
+            a.flag = 0
+            a.reference_id = 0
+            a.reference_start = 920 + i
+            a.mapping_quality = 60
+            a.cigartuples = [(0, 80)] + ([(4, clip)] if clip else [])
+            a.query_qualities = pysam.qualitystring_to_array(
+                "I" * (80 + clip))
+            a.set_tag("CB", _barcode(i))
+            a.set_tag("UB", f"UMI{i:06d}")
+            a.set_tag("RG", "testsample")
+            out.write(a)
+    pysam.index(str(path))
+    return path
+
+
+@pytest.fixture(scope="module")
+def crash_bam(tmp_path_factory) -> Path:
+    d = tmp_path_factory.mktemp("dyn_clamp_bam")
+    return _write_crash_bam(d / "crash.bam")
+
+
+@pytest.fixture(autouse=True)
+def _slice_config():
+    """Point ``variable_config`` at the fixture BAM's parameters; restore after."""
+    from ema.config import variable_config
+
+    saved = {
+        k: getattr(variable_config, k)
+        for k in ("seqlen", "cb_len", "barcode_tag", "ignore_chro")
+    }
+    variable_config.seqlen = SEQ_LEN
+    variable_config.cb_len = 16
+    variable_config.barcode_tag = "CB"
+    variable_config.ignore_chro = []
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            setattr(variable_config, k, v)
+
+
+def _call(bam: Path, out: Path, tag: str, **kwargs):
+    from ema.countmatrix.indexing import reset_index
+    from ema.countmatrix.peackcalling import peak_calling
+    from ema.countmatrix.peak import Peak
+    from ema.strategies import get_strategy
+
+    reset_index()
+    Peak.reset_pasnumber()
+    bed = out / f"{tag}.bed"
+    mtx = out / f"{tag}.mtx"
+    with patch.object(sys, "argv", _ARGV):
+        peak_calling(
+            False,
+            bedfilepath=str(bed),
+            matrixpath=str(mtx),
+            bamfile_dir=str(bam),
+            default_threshold=3,
+            merge_len=100,
+            strategy=get_strategy("clip_seeded"),
+            **kwargs,
+        )
+    return bed, mtx
+
+
+# ---------------------------------------------------------------------------
+# 1. the crash, reproduced — and reproduced as V2 BEHAVIOUR (default off)
+# ---------------------------------------------------------------------------
+
+def test_default_off_reproduces_the_v2_indexerror(crash_bam, tmp_path):
+    """The sweep's crash, in 14 reads.  Passing on pre-fix code is the point:
+    ``off`` must abort exactly as v2 does.  If this test ever fails, v2
+    behaviour changed without the flag — that is the regression."""
+    with pytest.raises(IndexError):
+        _call(crash_bam, tmp_path, "off_crash", **CRASH_KWARGS)
+
+
+def test_explicit_off_is_the_same_abort(crash_bam, tmp_path):
+    with pytest.raises(IndexError):
+        _call(crash_bam, tmp_path, "off_explicit",
+              dynamic_threshold_clamp=False, **CRASH_KWARGS)
+
+
+# ---------------------------------------------------------------------------
+# 2. clamp on: the identical run completes and still emits the peak
+# ---------------------------------------------------------------------------
+
+def test_clamp_on_completes_where_v2_aborts(crash_bam, tmp_path):
+    bed, _ = _call(crash_bam, tmp_path, "on_rescued",
+                   dynamic_threshold_clamp=True, **CRASH_KWARGS)
+    rows = [l for l in bed.read_text().splitlines() if l.strip()]
+    assert rows, "the rescued run must still emit the coverage peak"
+    for l in rows:
+        assert len(l.split("\t")) == 6, "pasbed must stay BED6-parseable"
+
+
+# ---------------------------------------------------------------------------
+# 3. clamp on == clamp off, byte for byte, when v2 would not have crashed
+# ---------------------------------------------------------------------------
+
+def test_clamp_is_byte_identity_on_a_run_that_does_not_crash(crash_bam, tmp_path):
+    bed_off, mtx_off = _call(crash_bam, tmp_path, "benign_off",
+                             dynamic_threshold_clamp=False, **BENIGN_KWARGS)
+    bed_on, mtx_on = _call(crash_bam, tmp_path, "benign_on",
+                           dynamic_threshold_clamp=True, **BENIGN_KWARGS)
+    assert bed_off.read_bytes() == bed_on.read_bytes(), (
+        "--dynamic-threshold-clamp on changed the BED of a run that would "
+        "not have crashed — it must only be able to rescue an abort"
+    )
+    assert mtx_off.read_bytes() == mtx_on.read_bytes(), (
+        "--dynamic-threshold-clamp on changed the count matrix of a run "
+        "that would not have crashed"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4. the single copy of the rule, exhaustively
+# ---------------------------------------------------------------------------
+
+def test_resolve_l_end_identity_exhaustive():
+    from sortedcontainers import SortedList
+
+    from ema.countmatrix.dynamic_threshold import resolve_l_end
+
+    for n in range(1, 9):
+        arr = SortedList(range(100, 100 + n))
+        # in range: both settings return the same element (the identity
+        # guarantee that makes the clamp safe to offer at all)
+        for thr in range(1, n + 1):
+            assert resolve_l_end(arr, thr, clamp=False) == arr[-thr]
+            assert resolve_l_end(arr, thr, clamp=True) == arr[-thr]
+        # out of range: off raises exactly as v2, on returns the oldest end
+        for thr in (n + 1, n + 7, 10 * n):
+            with pytest.raises(IndexError):
+                resolve_l_end(arr, thr, clamp=False)
+            assert resolve_l_end(arr, thr, clamp=True) == arr[0]
+    # an empty window has no oldest end: clamping must not invent one
+    empty = SortedList()
+    for clamp in (False, True):
+        with pytest.raises(IndexError):
+            resolve_l_end(empty, 3, clamp=clamp)
+
+
+def test_guard_counts_clamp_hits():
+    from sortedcontainers import SortedList
+
+    from ema.countmatrix.dynamic_threshold import DynamicThresholdGuard
+
+    g = DynamicThresholdGuard(True)
+    arr = SortedList([5, 6, 7])
+    assert g.l_end(arr, 2) == 6
+    assert g.n_clamped == 0
+    assert g.l_end(arr, 9) == 5
+    assert g.n_clamped == 1
+    assert (g.worst_threshold, g.worst_len) == (9, 3)
+
+
+# ---------------------------------------------------------------------------
+# 5. the pipeline finder carries the same expression — cover it too
+# ---------------------------------------------------------------------------
+
+def test_pipeline_path_crash_and_rescue(crash_bam, tmp_path):
+    """``peak_pipeline.finder_loop`` has the identical unbounded index
+    (VERDICTS §5 names ``peak_pipeline.py`` alongside the monolithic loop).
+    The finder dies in a spawned subprocess, so the abort surfaces as
+    ``run_pipeline``'s RuntimeError; the clamp must rescue this path too."""
+    with pytest.raises(RuntimeError, match="finder"):
+        _call(crash_bam, tmp_path, "pipe_off", use_pipeline=True,
+              **CRASH_KWARGS)
+
+    bed, _ = _call(crash_bam, tmp_path, "pipe_on", use_pipeline=True,
+                   dynamic_threshold_clamp=True, **CRASH_KWARGS)
+    rows = [l for l in bed.read_text().splitlines() if l.strip()]
+    assert rows, "the rescued pipeline run must still emit the coverage peak"

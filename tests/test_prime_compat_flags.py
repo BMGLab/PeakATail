@@ -55,7 +55,13 @@ _FIXTURE_SHAPE = {"seq_len", "cb_len", "barcode_tag", "ignore_chro"}
 #: now pins it on ``args`` and :func:`_pinned_value` reads pins from both
 #: holders, so the command line and the library pin are checked against each
 #: other for args-bridged options too.
-_ARGS_BRIDGED = {"--pas-gene-rescue", "--pas-gene-rescue-min-mol"}
+#: ``--dynamic-threshold-clamp`` qualifies: bridged to ``args``, default
+#: ``off`` == v2 (the unbounded look-back index, IndexError included), and the
+#: fixture golden cannot see it because the fixture never turns
+#: ``--dynamic-threshold`` on.  ``tests/test_prime_dynamic_threshold_clamp.py``
+#: pins its off==v2 / on-only-rescues-a-crash contract instead.
+_ARGS_BRIDGED = {"--pas-gene-rescue", "--pas-gene-rescue-min-mol",
+                 "--dynamic-threshold-clamp"}
 
 
 def _pinned_value(name, spec):

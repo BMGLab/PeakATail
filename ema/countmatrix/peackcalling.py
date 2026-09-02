@@ -16,6 +16,7 @@ from ema.countmatrix.polya import (
 )
 from ema.config import directory_config, variable_config
 from ema.strategies.utils import merge_close_or_low_prominence
+from ema.countmatrix.dynamic_threshold import DynamicThresholdGuard
 from typing import TYPE_CHECKING
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,9 @@ def peak_calling(
                     floor_threshold: int = 3,
                     lambda_fold_change: float = 2.0,
                     lambda_window: int = 5000,
+                    # peakAtail-prime: bound the dynamic-threshold look-back
+                    # index.  False (default) == v2, IndexError and all.
+                    dynamic_threshold_clamp: bool = False,
                     bam_threads: int = 4,
                     use_pipeline: bool = False,
                     batch_size: int = 10000,
@@ -94,6 +98,11 @@ def peak_calling(
         floor_threshold: Absolute minimum threshold in dynamic mode (default: 3).
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
         lambda_window: Window size in bp for local lambda estimation (default: 5000).
+        dynamic_threshold_clamp: peakAtail-prime ``--dynamic-threshold-clamp``.
+            False (default) reproduces v2 exactly, including the IndexError
+            v2 raises when the dynamic threshold outgrows the live read
+            window.  True bounds the look-back index to that window.  Only
+            reachable when ``dynamic_threshold`` is True.
         bam_threads: Number of threads for pysam BGZF block decompression (default: 4).
         use_pipeline: When True, dispatch to the 3-stage Reader->Finder->Writer
             pipeline instead of the monolithic single-threaded loop.  Default
@@ -176,6 +185,7 @@ def peak_calling(
             floor_threshold=floor_threshold,
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
+            dynamic_threshold_clamp=dynamic_threshold_clamp,
             bam_threads=bam_threads,
             tile_size=tile_size,
             tile_overlap=tile_overlap,
@@ -227,6 +237,7 @@ def peak_calling(
             floor_threshold=floor_threshold,
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
+            dynamic_threshold_clamp=dynamic_threshold_clamp,
             bam_threads=bam_threads,
             batch_size=batch_size,
             default_sample_id=_default_sample_id,
@@ -333,6 +344,16 @@ def peak_calling(
     # Window-based local lambda tracking (deque of recent read positions)
     # Only used when dynamic_threshold=True
     background_deque = deque()
+
+    # peakAtail-prime --dynamic-threshold-clamp.  None (the default) means the
+    # loop below evaluates v2's own `data_array[-current_threshold]` with
+    # nothing wrapped around it -- same expression, same IndexError, same
+    # cost.  A guard object is built ONLY when the operator asked for the
+    # clamp, and only the dynamic path can reach it.
+    _dyn_guard = (
+        DynamicThresholdGuard(True)
+        if (dynamic_threshold and dynamic_threshold_clamp) else None
+    )
 
     log.debug("peak_calling: bamfile_dir=%s", bamfile_dir)
 
@@ -582,7 +603,10 @@ def peak_calling(
                 current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))
 
         if signal:
-            l_end = data_array[-current_threshold]  # it takes -N from end, where N is the active threshold
+            if _dyn_guard is None:
+                l_end = data_array[-current_threshold]  # it takes -N from end, where N is the active threshold
+            else:
+                l_end = _dyn_guard.l_end(data_array, current_threshold)
             if start1 <= l_end:  # only count if read is still within peak
                 peak.cb_counting(cb=cb)
                 peak.cb_position_counting(end1, cb)
@@ -643,6 +667,11 @@ def peak_calling(
     bedfile.close()
     if supportfile is not None:
         supportfile.close()
+
+    if _dyn_guard is not None:
+        _dyn_guard.report("%s%s strand%s" % (
+            chro if chro else "", "-" if direction else "+",
+            f", region {region[0]}:{region[1]}-{region[2]}" if region else ""))
 
     if _clip_rate is not None:
         # warn=False: this is one (contig, strand).  The per-chromosome rate

@@ -1259,6 +1259,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         floor_threshold=args.floor_threshold,
         lambda_fold_change=args.lambda_fold_change,
         lambda_window=args.lambda_window,
+        # peakAtail-prime --dynamic-threshold-clamp ("off"/"on" on the CLI,
+        # a bool at the peak_calling seam).  "off" == v2, IndexError and all;
+        # only reachable with --dynamic-threshold (off by default).
+        dynamic_threshold_clamp=(
+            str(getattr(args, "dynamic_threshold_clamp", "off")).lower() == "on"
+        ),
         bam_threads=getattr(args, 'bam_threads', 4),
         # Post-detection PAS merger (strategy-agnostic).
         # -1 spacing triggers auto-detect (median read length per BAM) inside
@@ -1391,6 +1397,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             dynamic_threshold=peak_kwargs.get("dynamic_threshold", False),
             floor_threshold=peak_kwargs.get("floor_threshold", 3),
             lambda_fold_change=peak_kwargs.get("lambda_fold_change", 2.0),
+            dynamic_threshold_clamp=peak_kwargs.get("dynamic_threshold_clamp", False),
             lambda_window=peak_kwargs.get("lambda_window", 5000),
             bam_threads=peak_kwargs.get("bam_threads", 4),
             per_bam_tile_sizes=per_bam_tile_sizes if _tile_size_is_auto else None,

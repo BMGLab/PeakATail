@@ -225,6 +225,7 @@ def finder_loop(
     lambda_fold_change: float,
     lambda_window: int,
     polya_enabled: bool = True,
+    dynamic_threshold_clamp: bool = False,
     polya_seeded: bool = False,
     read_geometry: str = "fixed",
     seq_len: int | None = None,
@@ -254,6 +255,10 @@ def finder_loop(
         floor_threshold: Minimum threshold in dynamic mode.
         lambda_fold_change: Multiplier on local lambda for dynamic threshold.
         lambda_window: Window size in bp for local lambda estimation.
+        dynamic_threshold_clamp: peakAtail-prime
+            ``--dynamic-threshold-clamp``.  ``False`` (default) == v2, the
+            IndexError included.  See
+            :mod:`ema.countmatrix.dynamic_threshold`.
     """
     from collections import deque
 
@@ -262,8 +267,16 @@ def finder_loop(
     from ema.countmatrix.peak import Peak
     from ema.countmatrix.polya import ClipStream
 
+    from ema.countmatrix.dynamic_threshold import DynamicThresholdGuard
+
     current_threshold = default_threshold
     background_deque: deque[int] = deque()
+    # See the identical comment in peackcalling.py: None keeps v2's own
+    # expression on the default path.
+    _dyn_guard = (
+        DynamicThresholdGuard(True)
+        if (dynamic_threshold and dynamic_threshold_clamp) else None
+    )
 
     data_array: SortedList = SortedList()
     signal = False
@@ -350,7 +363,10 @@ def finder_loop(
 
                 # --- peak accumulation logic (mirrors monolithic exactly) ---
                 if signal:
-                    l_end = data_array[-current_threshold]
+                    if _dyn_guard is None:
+                        l_end = data_array[-current_threshold]
+                    else:
+                        l_end = _dyn_guard.l_end(data_array, current_threshold)
                     if start1 <= l_end:
                         peak.cb_counting(cb=cb)
                         peak.cb_position_counting(end1, cb)
@@ -591,6 +607,7 @@ def run_pipeline(
     floor_threshold: int = 3,
     lambda_fold_change: float = 2.0,
     lambda_window: int = 5000,
+    dynamic_threshold_clamp: bool = False,
     bam_threads: int = 4,
     batch_size: int = 10000,
     default_sample_id: str = "default",
@@ -742,6 +759,7 @@ def run_pipeline(
             lambda_fold_change,
             lambda_window,
             _polya_collect,
+            dynamic_threshold_clamp,
             _polya_seeded,
             read_geometry,
             seq_len,

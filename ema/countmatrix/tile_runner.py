@@ -152,6 +152,8 @@ class JobSpec:
     floor_threshold: int = 3
     lambda_fold_change: float = 2.0
     lambda_window: int = 5000
+    # peakAtail-prime --dynamic-threshold-clamp; False == v2.
+    dynamic_threshold_clamp: bool = False
     bam_threads: int = 4
     default_sample_id: str = "default"
     # Post-detection PAS merger (strategy-agnostic).  -1 for spacing triggers
@@ -323,6 +325,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_floor_threshold = args.floor_threshold
         _args_lambda_fold_change = args.lambda_fold_change
         _args_lambda_window = args.lambda_window
+        _args_dyn_clamp = getattr(args, "dynamic_threshold_clamp", False)
         _args_bam_threads = args.bam_threads
         _args_default_sample_id = args.default_sample_id
         _args_min_pas_spacing = args.min_pas_spacing
@@ -354,6 +357,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_floor_threshold = args["floor_threshold"]
         _args_lambda_fold_change = args["lambda_fold_change"]
         _args_lambda_window = args["lambda_window"]
+        _args_dyn_clamp = args.get("dynamic_threshold_clamp", False)
         _args_bam_threads = args["bam_threads"]
         _args_default_sample_id = args["default_sample_id"]
         _args_min_pas_spacing = args.get("min_pas_spacing", -1)
@@ -427,6 +431,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             floor_threshold=_args_floor_threshold,
             lambda_fold_change=_args_lambda_fold_change,
             lambda_window=_args_lambda_window,
+            dynamic_threshold_clamp=_args_dyn_clamp,
             bam_threads=_args_bam_threads,
             region=(chrom, fetch_start, fetch_end),
             min_pas_spacing=_args_min_pas_spacing,
@@ -719,6 +724,7 @@ def build_job_specs(
     dynamic_threshold: bool = False,
     floor_threshold: int = 3,
     lambda_fold_change: float = 2.0,
+    dynamic_threshold_clamp: bool = False,
     lambda_window: int = 5000,
     bam_threads: int = 4,
     per_bam_tile_sizes: dict[str, int] | None = None,
@@ -801,6 +807,7 @@ def build_job_specs(
                         floor_threshold=floor_threshold,
                         lambda_fold_change=lambda_fold_change,
                         lambda_window=lambda_window,
+                        dynamic_threshold_clamp=dynamic_threshold_clamp,
                         bam_threads=bam_threads,
                         default_sample_id=dataset_id,
                         min_pas_spacing=per_bam_spacing,
@@ -947,6 +954,7 @@ def run_tiled(
     dynamic_threshold: bool = False,
     floor_threshold: int = 3,
     lambda_fold_change: float = 2.0,
+    dynamic_threshold_clamp: bool = False,
     lambda_window: int = 5000,
     bam_threads: int = 4,
     tile_size: int = 25_000_000,
@@ -1089,6 +1097,7 @@ def run_tiled(
             floor_threshold=floor_threshold,
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
+            dynamic_threshold_clamp=dynamic_threshold_clamp,
             bam_threads=bam_threads,
             min_pas_spacing=min_pas_spacing,
             min_pas_prominence=min_pas_prominence,
@@ -1152,6 +1161,7 @@ def run_tiled(
             "floor_threshold": floor_threshold,
             "lambda_fold_change": lambda_fold_change,
             "lambda_window": lambda_window,
+            "dynamic_threshold_clamp": dynamic_threshold_clamp,
             "bam_threads": bam_threads,
             "default_sample_id": default_sample_id,
             "min_pas_spacing": _resolved_spacing,
