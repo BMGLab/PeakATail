@@ -20,13 +20,16 @@ Output schema (long-format):
 
 When ``aggregation="per_isoform"``, the classic 2-PAS selection is applied
 *per transcript* (using transcript-coordinate ranks from *pas_isoform_map*).
-Transcripts with <2 PAS are excluded.
+Transcripts with <2 DISTINCT PAS are excluded (a transcript whose
+proximal and distal endpoints resolve to the same PAS carries no length
+information -- its PDUI would be 0.5 by construction).
 
 Parallelized via ``joblib.Parallel`` when ``n_genes > 5000``.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -40,6 +43,9 @@ from ema.quantification.strategies.base import (
     PDUIStrategy,
 )
 from ema.quantification.strategies import register_pdui_strategy
+
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +124,16 @@ def _pdui_per_gene_isoform_level(
 ) -> list[dict[str, Any]]:
     """Compute classic PDUI per isoform for one gene.
 
+    A transcript is skipped unless it has at least two DISTINCT PAS.  The
+    same PAS can appear more than once in *transcript_pas* — one bedtools
+    row per UTR exon it intersects — and ranking those duplicates as if they
+    were separate sites selected the SAME PAS as both endpoints, emitting a
+    degenerate pair whose PDUI is 0.5 by construction and which carries no
+    length information at all (issue #98: 18,116 such rows on GSE104556
+    mouse1).  Duplicates are collapsed on ``pas_id`` (keeping each PAS's most
+    proximal rank), and a transcript left with a single usable PAS is
+    excluded exactly like any other ``<2`` PAS transcript.
+
     Args:
         gene_id: Gene identifier.
         transcript_pas: Mapping transcript_id ->
@@ -131,14 +147,29 @@ def _pdui_per_gene_isoform_level(
     rows: list[dict[str, Any]] = []
     cells = count_matrix.columns.tolist()
     valid_ids = set(count_matrix.index)
+    n_degenerate = 0
 
     for transcript_id, ranked_pairs in transcript_pas.items():
         if len(ranked_pairs) < 2:
             continue
-        # rank=0 is proximal, max rank is distal
+        # rank=0 is proximal, max rank is distal.  The sort is STABLE, so
+        # PAS tied on rank keep their original relative order.
         ranked_sorted = sorted(ranked_pairs, key=lambda x: x[1])
-        proximal_id = ranked_sorted[0][0]
-        distal_id = ranked_sorted[-1][0]
+        # Collapse repeated PAS (same site, several UTR exons) before
+        # picking the endpoints, keeping the first (most proximal) rank.
+        seen: set[int] = set()
+        unique_ranked: list[tuple[int, int]] = []
+        for pas_id, rank in ranked_sorted:
+            if pas_id in seen:
+                continue
+            seen.add(pas_id)
+            unique_ranked.append((pas_id, rank))
+        if len(unique_ranked) < 2:
+            # Single usable PAS -> proximal == distal: no length signal.
+            n_degenerate += 1
+            continue
+        proximal_id = unique_ranked[0][0]
+        distal_id = unique_ranked[-1][0]
 
         if proximal_id not in valid_ids or distal_id not in valid_ids:
             continue
@@ -165,6 +196,14 @@ def _pdui_per_gene_isoform_level(
                 }
             )
 
+    if n_degenerate:
+        log.warning(
+            "classic per_isoform: %s: dropped %d transcript(s) whose "
+            "proximal and distal endpoints resolved to the SAME PAS "
+            "(duplicate UTR-exon rows / single usable PAS); such a pair has "
+            "PDUI == 0.5 by construction and carries no length information.",
+            gene_id, n_degenerate,
+        )
     return rows
 
 

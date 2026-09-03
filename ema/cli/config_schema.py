@@ -677,7 +677,16 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--floor-threshold", yaml_key="floor_threshold",
             legacy_args_attr="floor_threshold",
-            description="Minimum peak height (clamps dynamic threshold).",
+            # IntRange, not plain INT: the value is used as the look-back
+            # distance data_array[-floor_threshold], so 0 silently returns the
+            # OLDEST end in the window instead of the peak edge and a negative
+            # value indexes from the wrong end (issue #101).  peak_calling()
+            # re-checks it for YAML and library callers.
+            click_type=click.IntRange(min=1),
+            description=(
+                "Minimum peak height in dynamic mode (--dynamic-threshold); "
+                "floors the per-window threshold.  Must be >= 1."
+            ),
         ),
     )
     dynamic_threshold_clamp: str = field(
@@ -688,12 +697,11 @@ class RunConfig:
             legacy_args_attr="dynamic_threshold_clamp",
             choice=("off", "on"),
             description=(
-                "Bound the dynamic-threshold look-back index so "
-                "--dynamic-threshold cannot abort the run with an IndexError "
-                "(peakAtail-prime). 'off' (default, = v2) leaves the v2 "
-                "expression untouched. 'on' clamps the index to the live "
-                "window. Only reachable with --dynamic-threshold, which is "
-                "off by default."
+                "NO-OP, accepted for compatibility. The dynamic-threshold "
+                "look-back index is now bounded by the live read window on "
+                "every path (issue #101), so neither 'off' nor 'on' can "
+                "change a run: both values mean bounded. Kept so existing "
+                "command lines and YAML configs keep parsing."
             ),
         ),
     )
@@ -702,7 +710,16 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--pas-gap", yaml_key="pas_gap",
             legacy_args_attr="pas_gap",
-            description="Minimum gap between PAS within a peak (bp).",
+            # issue #101: this is read at exactly one place in the tree,
+            # merge_pas_beds() on the multi-dataset unified path.  It has
+            # never had any effect on a single-BAM run, whatever its old help
+            # text ("minimum gap between PAS within a peak") implied.
+            description=(
+                "MULTI-DATASET MERGE ONLY: minimum gap (bp) between PAS when "
+                "unifying per-dataset pasbed.bed files.  Has NO effect on a "
+                "single-BAM run -- it does not split or merge PAS within a "
+                "peak."
+            ),
         ),
     )
     min_pas_spacing: int = field(
@@ -1121,7 +1138,13 @@ class RunConfig:
             cli_flag="--min-pas-per-cell", yaml_key="min_pas_per_cell",
             legacy_alias="min_genes",
             legacy_dataclass_attr="filter_config.min_pas_per_cell",
-            description="Minimum PAS per cell (also bridges to filter_config.min_genes).",
+            # issue #101: an AnnData filter, applied in preprocessing() AFTER
+            # pasbed.bed is written -- not a call-set filter.
+            description=(
+                "Minimum PAS per cell.  Filters the AnnData in preprocessing "
+                "only; pasbed.bed is already written and is unaffected. "
+                "(Also bridges to filter_config.min_genes.)"
+            ),
         ),
     )
     min_read: int = field(
@@ -1137,7 +1160,13 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--min-cells", yaml_key="min_cells",
             legacy_dataclass_attr="filter_config.min_cells",
-            description="Minimum cells expressing a PAS.",
+            # issue #101: as above -- this drops columns from the AnnData, it
+            # does not drop PAS from the call set.
+            description=(
+                "Minimum cells expressing a PAS.  Filters the AnnData in "
+                "preprocessing only; pasbed.bed is already written and is "
+                "unaffected."
+            ),
         ),
     )
 
@@ -1271,12 +1300,22 @@ class RunConfig:
     # so the YAML loader recognises them (they appear in _LIVE_KEYS) and so
     # defaults are schema-derived instead of duplicated in _SUBCOMMAND_DEFAULTS.
     # skip_legacy_bridge=True keeps them out of the `ema run` legacy bridge.
+    # Issue #94: the default was 200, which pre-selected the tested PAS with
+    # the SAME cluster labels the test then contrasts (a label double-dip) and
+    # additionally shrank the within-gene Fisher denominator.  Under a
+    # label-permutation null that made EVERY strategy anti-conservative
+    # (fisher/reads 20.3% of null p<0.05, fisher/cells 13.0%, nb_pairwise
+    # 24.7%, with a q<0.05 "hit" in 19-20 of 20 permutations).  0 (no
+    # pre-selection) was the only FDR-controlled configuration measured
+    # (3.0%, 0/20), so it is now the default.
     marker_top_n: int = field(
-        default=200,
+        default=0,
         metadata=_spec(
             cli_flag="--marker-top-n", yaml_key="marker_top_n",
             skip_legacy_bridge=True,
-            description="Top-N markers per cluster for differential APA.",
+            description="Top-N markers per cluster for differential APA "
+                        "(0 = disabled, the FDR-controlled default; any "
+                        "non-zero value double-dips on the cluster labels).",
             applies_to=frozenset({"switch_diff"}),
         ),
     )

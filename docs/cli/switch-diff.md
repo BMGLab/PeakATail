@@ -37,14 +37,13 @@ uv run ema switch diff \
   --h5ad peakatail_runs/emaout_2026-05-11_120000/per_dataset/sample1/clusters.h5ad \
   --strategy fisher \
   --fdr 0.05 \
-  --marker-top-n 200 \
   --min-cells-per-group 10
 ```
 
 What lands on disk after this command (inside the originating run dir):
 
 - `peakatail_runs/emaout_.../switch_diff_<ts>/differential/fisher_0_vs_1.tsv` — per-pair result TSV with augmented schema (see Output files).
-- `peakatail_runs/emaout_.../switch_diff_<ts>/markers.tsv` — top marker PAS per cluster used for pre-filtering (when `--marker-top-n > 0`).
+- `peakatail_runs/emaout_.../switch_diff_<ts>/markers.tsv` — top marker PAS per cluster used for pre-filtering (only when `--marker-top-n > 0`; the default 0 writes no markers file).
 - `peakatail_runs/emaout_.../switch_diff_<ts>/peakatail_<ts>.log` — run log.
 - Volcano plot figures in `switch_diff_<ts>/figures/` (when plotting is enabled).
 
@@ -85,7 +84,19 @@ Options:
   --gtf PATH
   --cluster-pairs TEXT            `c1,c2;c3,c4` — limit to specific pairs.
   --cluster-key TEXT              [default: leiden]
-  --marker-top-n INTEGER          [default: 200]
+  --marker-top-n INTEGER          Pre-filter the tested PAS to the union of the
+                                  top-N marker PAS per cluster. 0 (default)
+                                  disables pre-selection and is the only FDR-
+                                  controlled setting (issue #94): markers are
+                                  ranked with the SAME cluster labels the
+                                  differential test then contrasts, so any non-
+                                  zero value double-dips on the labels, making
+                                  every strategy anti-conservative. The
+                                  restriction no longer changes the within-gene
+                                  Fisher denominator (that is computed from the
+                                  full matrix), but it still selects what is
+                                  tested. Speed-only; not a statistical filter.
+                                  [default: 0]
   --marker-method TEXT            [default: wilcoxon]
   -s, --strategy TEXT             Differential APA strategy (run --list-
                                   strategies to see).  [default: fisher]
@@ -115,7 +126,7 @@ Options:
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--strategy` / `-s` | TEXT | `fisher` | Differential APA strategy. Run `ema switch diff --list-strategies` to see registered names. `fisher` applies a within-gene Fisher exact test (see Within-gene Fisher framing below). |
-| `--marker-top-n` | INT | 200 | Pre-filter the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Set to 0 to disable pre-filtering (test all PAS). The markers TSV is saved to `markers.tsv` for inspection. Reduce to 50–100 to speed up NB strategies on large datasets. |
+| `--marker-top-n` | INT | `0` (disabled) | **Speed shortcut, not a statistical filter — leave it at 0.** Pre-filters the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Any non-zero value ranks those markers with the **same cluster labels** the differential test then contrasts (a label double-dip), so the reported q-values are **not FDR-calibrated** — see [Why `--marker-top-n` defaults to 0](#why---marker-top-n-defaults-to-0). When set, the markers TSV is saved to `markers.tsv` for inspection. |
 | `--marker-method` | TEXT | `wilcoxon` | Marker ranking method passed to `scanpy.tl.rank_genes_groups`. Options include `wilcoxon`, `t-test`, `logreg`. |
 | `--min-cells-per-group` | INT | 10 | Minimum number of cells (with non-zero counts for NB strategies) in each cluster group for a PAS to be included in differential testing. PAS failing this filter in either cluster of a pair are dropped. Source: `ema/cli/config_schema.py`, `ema/switch_test/runner.py::run_diff`. |
 
@@ -138,6 +149,44 @@ Options:
 |---|---|---|---|
 | `--per-worker-mb` | INT | 300 | Estimated peak RAM per parallel worker in MB. Used by `ResourceManager` to cap outer parallelism: `n_outer = available_RAM / per_worker_mb`. Lower this to run more workers on memory-constrained machines; raise it if workers are crashing with OOM errors. |
 | `--threads` | INT | auto | Absolute thread ceiling. See [Common flags](index.md#common-flags). |
+
+## Why `--marker-top-n` defaults to 0
+
+`--marker-top-n` used to default to `200`: before testing, the PAS matrix was
+restricted to the union of the top-200 marker PAS per cluster, ranked by
+`scanpy.tl.rank_genes_groups` on `--cluster-key`. That is a **label
+double-dip** — the markers are chosen with the *same* labels the differential
+test then contrasts, so the PAS that enter the test are exactly the ones that
+already look cluster-associated by chance. Restricting the p-value *set* this
+way alone put 17.4 % of null p-values below 0.05 (nominal 5 %).
+
+Restricting the matrix used to also shrink the within-gene Fisher denominator,
+because the "rest of the gene" background became the same label-selected
+subset — the same PAS scored an `n_reads_gene` of 1,746 restricted vs 5,289
+unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
+marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
+unrestricted matrix for the denominator, so `--marker-top-n N` changes only
+*which* PAS are tested and reported, and each reported p-value is bit-identical
+to the one the unrestricted run produces. The numbers in the table below were
+measured before that fix; the label double-dip they are driven by is unchanged.
+
+Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
+(cluster labels shuffled, so there is nothing true to find; issue #94):
+
+| Configuration | Null p < 0.05 | Runs with a q < 0.05 "hit" |
+|---|---|---|
+| `fisher --count-mode reads --marker-top-n 200` | 20.3 % | 20 / 20 |
+| `fisher --count-mode cells --marker-top-n 200` | 13.0 % | 19 / 20 |
+| `nb_pairwise --marker-top-n 200` | 24.7 % | 19 / 20 |
+| `fisher --count-mode cells --marker-top-n 0` | **3.0 %** | **0 / 20** |
+
+Only `--marker-top-n 0` controls the FDR, so it is now the default: a flagless
+`ema switch diff` is calibrated. Any non-zero value still works but logs a loud
+warning — use it as a **speed shortcut / ranking screen** on large datasets
+(NB strategies scale badly in the number of PAS), never as evidence of
+significance. If you need both speed and calibration, cut the search space
+with something independent of the labels instead (e.g. `--cluster-pairs`,
+`--min-cells-per-group`, or a PAS list from a separate dataset).
 
 ## Within-gene Fisher framing
 
@@ -179,8 +228,8 @@ One TSV per cluster pair. Columns (in order):
 | `strand` | str | `+` or `-`. |
 | `cluster1` | str | First cluster label of this pair. |
 | `cluster2` | str | Second cluster label of this pair. |
-| `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). |
-| `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2. |
+| `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). Summed over **all** PAS of the gene, including any excluded by `--marker-top-n`. |
+| `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2, on the same basis. |
 | `statistic` | float | Test statistic (odds ratio for Fisher). |
 | `pvalue` | float | Raw p-value. |
 | `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR). |
@@ -189,7 +238,7 @@ The augmented column order (pas_id, gene_id, chrom, start, end, strand, cluster1
 
 **`markers.tsv`**
 
-Written when `--marker-top-n > 0`. Two-column TSV: `cluster` and `pas_id`. Lists the top-N marker PAS per cluster used as pre-filter for differential testing.
+Written only when `--marker-top-n > 0` (not at the default 0). Two-column TSV: `cluster` and `pas_id`. Lists the top-N marker PAS per cluster used as pre-filter for differential testing.
 
 **`figures/volcano_<c1>_vs_<c2>.*`**
 

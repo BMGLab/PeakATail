@@ -1,4 +1,12 @@
-"""``--dynamic-threshold-clamp``: the crash, reproduced, and the identity rule.
+"""``--dynamic-threshold-clamp``: the crash, now bounded, and the identity rule.
+
+MERGE NOTE (develop -> peakAtail-prime, issues #101/#102).  This module used
+to pin ``off`` == v2 == ``IndexError``.  It no longer can: the merge made the
+look-back bound UNCONDITIONAL and reduced ``--dynamic-threshold-clamp`` to an
+accepted no-op, so neither value can reproduce the abort.  The two tests that
+asserted the crash now assert the flag's no-op-ness instead -- the same
+fixture, the opposite expectation -- and the identity guarantee they rested
+on is unchanged and still checked exhaustively below.
 
 The 2026-08 parameter sweep proved (``results/paramsweep/VERDICTS.md`` §5) that
 ``--dynamic-threshold --lambda-fold-change 2.0`` — the parameter reference's
@@ -14,26 +22,25 @@ verifier reproduced the same abort on the mouse dev slice
 species-independent.  It is a v2 (``9dfdefb``) defect, reachable only with
 ``--dynamic-threshold`` (off by default).
 
-This module pins the branch's answer, ``--dynamic-threshold-clamp``:
+This module pins what the merged tree does:
 
-1. the crash REPRODUCES here, on a 14-read synthetic BAM, with the flag at its
-   default ``off`` — which is deliberate: ``off`` is v2 to the character, and
-   the day this assertion fails is the day someone silently changed v2
-   behaviour without the flag;
+1. the crash fixture — a 14-read synthetic BAM — COMPLETES at the flag's
+   default, because the bound no longer needs asking for;
 2. ``on`` completes the identical run and still emits the peak;
 3. ``on`` is byte-identical to ``off`` on a dynamic-threshold run that does
-   NOT crash — the clamp can only change a run v2 would have aborted;
+   NOT trip the bound — the bound can only change a run v2 would have
+   aborted;
 4. :func:`ema.countmatrix.dynamic_threshold.resolve_l_end` honours the same
    identity exhaustively at the unit level;
 5. both loop implementations are covered: the monolithic loop
    (``peackcalling.py``) and the 3-stage pipeline's finder
    (``peak_pipeline.py``), which the sweep found carries the same expression.
 
-Run against code WITHOUT the fix (the frozen v2 worktree, or this branch
-before it), test 1 still passes — it documents the defect — while tests 2/3
-fail with ``TypeError: unexpected keyword argument 'dynamic_threshold_clamp'``
-and test 4 with ``ModuleNotFoundError``.  That asymmetry is the proof that the
-fixture really trips the bound rather than testing nothing.
+Run against code WITHOUT the fix (the frozen v2 worktree), tests 1 and 2 fail
+with ``IndexError`` / ``TypeError: unexpected keyword argument
+'dynamic_threshold_clamp'`` and test 4 with ``ModuleNotFoundError``.  That the
+fixture really reaches the bound is proved directly by test 4's exhaustive
+unit check of the same rule, and by the fixture arithmetic spelled out below.
 
 CRASH MECHANICS OF THE FIXTURE (all forward-strand, one chromosome):
 14 reads start at ``920+i``; under v2 "fixed" geometry each end is rewritten
@@ -178,18 +185,39 @@ def _call(bam: Path, out: Path, tag: str, **kwargs):
 # 1. the crash, reproduced — and reproduced as V2 BEHAVIOUR (default off)
 # ---------------------------------------------------------------------------
 
-def test_default_off_reproduces_the_v2_indexerror(crash_bam, tmp_path):
-    """The sweep's crash, in 14 reads.  Passing on pre-fix code is the point:
-    ``off`` must abort exactly as v2 does.  If this test ever fails, v2
-    behaviour changed without the flag — that is the regression."""
-    with pytest.raises(IndexError):
-        _call(crash_bam, tmp_path, "off_crash", **CRASH_KWARGS)
+def test_the_default_no_longer_aborts(crash_bam, tmp_path):
+    """The sweep's crash, in 14 reads — and it does not happen any more.
+
+    Before the merge this asserted ``pytest.raises(IndexError)``, because the
+    branch defaulted the clamp ``off`` to keep v2 reproducible down to its
+    abort.  Issue #101 settled that a crash is not a behaviour worth
+    preserving, so the bound is on with nothing asked for."""
+    bed, _ = _call(crash_bam, tmp_path, "default_bounded", **CRASH_KWARGS)
+    rows = [ln for ln in bed.read_text().splitlines() if ln.strip()]
+    assert rows, "the bounded run must still emit the coverage peak"
 
 
-def test_explicit_off_is_the_same_abort(crash_bam, tmp_path):
-    with pytest.raises(IndexError):
-        _call(crash_bam, tmp_path, "off_explicit",
-              dynamic_threshold_clamp=False, **CRASH_KWARGS)
+def test_explicit_off_cannot_bring_the_abort_back(crash_bam, tmp_path):
+    """``--dynamic-threshold-clamp off`` is an accepted NO-OP.
+
+    It is still parsed, still threaded through every dispatch path and still
+    in ``V2_COMPAT_FLAGS`` so existing command lines and configs keep working
+    — but it can no longer select the unbounded index.  If this ever raises
+    again, someone re-introduced a user-reachable route to issue #101."""
+    bed, _ = _call(crash_bam, tmp_path, "off_is_a_noop",
+                   dynamic_threshold_clamp=False, **CRASH_KWARGS)
+    rows = [ln for ln in bed.read_text().splitlines() if ln.strip()]
+    assert rows, "clamp=off must behave exactly like clamp=on now"
+
+
+def test_off_and_on_agree_on_the_run_that_used_to_abort(crash_bam, tmp_path):
+    """The no-op claim, stated as bytes rather than as an absence of raise."""
+    bed_off, mtx_off = _call(crash_bam, tmp_path, "noop_off",
+                             dynamic_threshold_clamp=False, **CRASH_KWARGS)
+    bed_on, mtx_on = _call(crash_bam, tmp_path, "noop_on",
+                           dynamic_threshold_clamp=True, **CRASH_KWARGS)
+    assert bed_off.read_bytes() == bed_on.read_bytes()
+    assert mtx_off.read_bytes() == mtx_on.read_bytes()
 
 
 # ---------------------------------------------------------------------------
@@ -270,16 +298,18 @@ def test_guard_counts_clamp_hits():
 # 5. the pipeline finder carries the same expression — cover it too
 # ---------------------------------------------------------------------------
 
-def test_pipeline_path_crash_and_rescue(crash_bam, tmp_path):
-    """``peak_pipeline.finder_loop`` has the identical unbounded index
-    (VERDICTS §5 names ``peak_pipeline.py`` alongside the monolithic loop).
-    The finder dies in a spawned subprocess, so the abort surfaces as
-    ``run_pipeline``'s RuntimeError; the clamp must rescue this path too."""
-    with pytest.raises(RuntimeError, match="finder"):
-        _call(crash_bam, tmp_path, "pipe_off", use_pipeline=True,
-              **CRASH_KWARGS)
+def test_pipeline_path_is_bounded_too(crash_bam, tmp_path):
+    """``peak_pipeline.finder_loop`` carries the identical index (VERDICTS §5
+    names ``peak_pipeline.py`` alongside the monolithic loop).  Before the
+    merge the finder died in a spawned subprocess and the abort surfaced as
+    ``run_pipeline``'s RuntimeError; the bound must cover this path too."""
+    bed_default, _ = _call(crash_bam, tmp_path, "pipe_default",
+                           use_pipeline=True, **CRASH_KWARGS)
+    rows = [l for l in bed_default.read_text().splitlines() if l.strip()]
+    assert rows, "the bounded pipeline run must still emit the coverage peak"
 
-    bed, _ = _call(crash_bam, tmp_path, "pipe_on", use_pipeline=True,
-                   dynamic_threshold_clamp=True, **CRASH_KWARGS)
-    rows = [l for l in bed.read_text().splitlines() if l.strip()]
-    assert rows, "the rescued pipeline run must still emit the coverage peak"
+    bed_off, _ = _call(crash_bam, tmp_path, "pipe_off", use_pipeline=True,
+                       dynamic_threshold_clamp=False, **CRASH_KWARGS)
+    assert bed_off.read_bytes() == bed_default.read_bytes(), (
+        "the pipeline finder must honour the bound with the no-op flag too"
+    )

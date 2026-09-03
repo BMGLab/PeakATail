@@ -69,6 +69,7 @@ class FisherStrategy(DiffAPAStrategy):
         pas_gene_map: dict[str, str] | None = None,
         n_jobs: int = -1,  # Fisher is fast; n_jobs is accepted but unused.
         count_mode: str = "cells",
+        full_count_matrix: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
         """Run Fisher exact test for differential PAS usage.
 
@@ -84,6 +85,17 @@ class FisherStrategy(DiffAPAStrategy):
             Minimum cells per group for a PAS to be testable.
         n_jobs:
             Ignored; Fisher test is not parallelised internally.
+        full_count_matrix:
+            Optional UNRESTRICTED matrix (same rows, a superset of
+            ``count_matrix``'s columns) from which the within-gene
+            denominator is computed.  Issue #94: when a caller pre-selects
+            the tested PAS (``--marker-top-n``), the gene total must still be
+            "all PAS of this gene", not "the selected PAS of this gene" --
+            otherwise opting into a *speed* filter silently changes the
+            statistic itself.  ``count_matrix`` then only decides WHICH PAS
+            are tested and reported; every count entering a 2x2 table comes
+            from this matrix.  ``None`` (the default) means no restriction is
+            in play and ``count_matrix`` serves both roles.
 
         Returns
         -------
@@ -121,8 +133,31 @@ class FisherStrategy(DiffAPAStrategy):
         # it asks "for this gene, does this PAS get used differentially?".
         # Without pas_gene_map we cannot group within-gene, so fall back to
         # the global "this PAS vs all OTHER PAS" framing with a warning.
-        cm1 = count_matrix.loc[cells1]
-        cm2 = count_matrix.loc[cells2]
+        #
+        # Issue #94: ``count_matrix`` may have been column-restricted by the
+        # caller (``--marker-top-n`` pre-selection).  That restriction is a
+        # SPEED filter -- it must decide only WHICH PAS are tested, never what
+        # "the rest of the gene" means.  Computing the gene total from the
+        # restricted matrix silently shrinks the denominator (observed: the
+        # same PAS scoring n_reads_gene 1,746 restricted vs 5,289 unrestricted,
+        # with only 629/6,453 p-values agreeing between the two runs).  So all
+        # counts come from ``denom_matrix`` -- the FULL matrix when the caller
+        # supplied one -- and ``tested_pas`` alone carries the restriction.
+        if full_count_matrix is not None:
+            missing = [c for c in count_matrix.columns if c not in full_count_matrix.columns]
+            if missing:
+                raise ValueError(
+                    "full_count_matrix must be a column-superset of count_matrix; "
+                    f"{len(missing)} tested PAS are absent from it (e.g. {missing[:3]})"
+                )
+            denom_matrix = full_count_matrix.reindex(index=count_matrix.index)
+            tested_pas: set | None = set(count_matrix.columns)
+        else:
+            denom_matrix = count_matrix
+            tested_pas = None
+
+        cm1 = denom_matrix.loc[cells1]
+        cm2 = denom_matrix.loc[cells2]
         n1 = int(len(cells1))
         n2 = int(len(cells2))
 
@@ -135,7 +170,7 @@ class FisherStrategy(DiffAPAStrategy):
         # PAS as its own (singleton) gene which collapses the within-gene
         # comparison to the legacy global one — still correct but loses
         # APA-specific framing.
-        pas_ids = list(count_matrix.columns)
+        pas_ids = list(denom_matrix.columns)
         if pas_gene_map is None:
             log.warning(
                 "FisherStrategy: no pas_gene_map supplied; falling back to "
@@ -167,6 +202,11 @@ class FisherStrategy(DiffAPAStrategy):
         for gene_id, pas_in_gene in pas_by_gene.items():
             if len(pas_in_gene) < 2:
                 continue  # need >=2 PAS in the gene to compare within-gene
+            # Under a marker restriction the gene is still assembled (and its
+            # totals still summed) from ALL its PAS; only the reported rows
+            # are filtered.  Genes with nothing to report are skipped whole.
+            if tested_pas is not None and not any(p in tested_pas for p in pas_in_gene):
+                continue
 
             # Reads columns are always reported (for reference), but the TABLE +
             # proportions use the chosen count_mode.
@@ -181,6 +221,8 @@ class FisherStrategy(DiffAPAStrategy):
                 continue
 
             for p in pas_in_gene:
+                if tested_pas is not None and p not in tested_pas:
+                    continue  # contributes to the denominator, is not tested
                 reads_p_c1 = int(agg1[p])
                 reads_p_c2 = int(agg2[p])
                 if count_mode == "cells":

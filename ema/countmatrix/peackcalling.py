@@ -15,8 +15,10 @@ from ema.countmatrix.polya import (
     clip_read_ok, clip_site, read_umi,
 )
 from ema.config import directory_config, variable_config
+from ema.countmatrix.dynamic_threshold import (
+    DynamicThresholdGuard, validate_floor_threshold,
+)
 from ema.strategies.utils import merge_close_or_low_prominence
-from ema.countmatrix.dynamic_threshold import DynamicThresholdGuard
 from typing import TYPE_CHECKING
 
 log = logging.getLogger(__name__)
@@ -96,13 +98,18 @@ def peak_calling(
         strategy: PeakFinderStrategy instance. Defaults to 'original'.
         dynamic_threshold: When True, use window-based local lambda for threshold.
         floor_threshold: Absolute minimum threshold in dynamic mode (default: 3).
+            Must be >= 1: it is the look-back distance in
+            ``data_array[-floor_threshold]``, so 0 would silently read the
+            oldest end in the window (issue #101).
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
         lambda_window: Window size in bp for local lambda estimation (default: 5000).
-        dynamic_threshold_clamp: peakAtail-prime ``--dynamic-threshold-clamp``.
-            False (default) reproduces v2 exactly, including the IndexError
-            v2 raises when the dynamic threshold outgrows the live read
-            window.  True bounds the look-back index to that window.  Only
-            reachable when ``dynamic_threshold`` is True.
+        dynamic_threshold_clamp: ACCEPTED AND IGNORED.  peakAtail-prime's
+            ``--dynamic-threshold-clamp`` used this to choose between v2's
+            unbounded look-back index (and its IndexError) and a bounded one;
+            issue #101 made the bound unconditional, so both values now mean
+            the same thing.  Kept so existing command lines, YAML configs and
+            library callers keep working.  See
+            :mod:`ema.countmatrix.dynamic_threshold`.
         bam_threads: Number of threads for pysam BGZF block decompression (default: 4).
         use_pipeline: When True, dispatch to the 3-stage Reader->Finder->Writer
             pipeline instead of the monolithic single-threaded loop.  Default
@@ -156,6 +163,13 @@ def peak_calling(
         # Deprecated alias: --polya-min-reads named reads but has always
         # gated on distinct molecules (see ClipSeeder.flush).
         polya_min_umis = polya_min_reads
+
+    # issue #101: `--floor-threshold 0` is not a crash but a silent wrong
+    # answer (data_array[-0] is data_array[0], the OLDEST end in the window).
+    # Checked here rather than only in Click so YAML and library callers --
+    # including every spawned tile / chromosome worker, which all re-enter
+    # through this function -- get the same refusal.
+    floor_threshold = validate_floor_threshold(floor_threshold)
 
     # --- Tile dispatch (takes precedence over pipeline) -------------------
     if use_tiles:
@@ -345,15 +359,18 @@ def peak_calling(
     # Only used when dynamic_threshold=True
     background_deque = deque()
 
-    # peakAtail-prime --dynamic-threshold-clamp.  None (the default) means the
-    # loop below evaluates v2's own `data_array[-current_threshold]` with
-    # nothing wrapped around it -- same expression, same IndexError, same
-    # cost.  A guard object is built ONLY when the operator asked for the
-    # clamp, and only the dynamic path can reach it.
-    _dyn_guard = (
-        DynamicThresholdGuard(True)
-        if (dynamic_threshold and dynamic_threshold_clamp) else None
-    )
+    # issue #101: the dynamic threshold can outgrow the live read window, and
+    # the look-back index then runs off the front of the list.  The guard
+    # bounds it (and counts how often it fired).  Built ONLY on the dynamic
+    # path, so a static-threshold run keeps the literal expression below and
+    # pays nothing for a bound it cannot need.
+    #
+    # `dynamic_threshold_clamp` is NOT consulted here.  peakAtail-prime built
+    # the guard only when that flag asked for it, so a default run kept v2's
+    # unbounded expression and its IndexError; the merge with develop settled
+    # on the bound being unconditional (see ema/countmatrix/dynamic_threshold
+    # for why, and for what the flag now means).
+    _dyn_guard = DynamicThresholdGuard() if dynamic_threshold else None
 
     log.debug("peak_calling: bamfile_dir=%s", bamfile_dir)
 
@@ -603,10 +620,9 @@ def peak_calling(
                 current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))
 
         if signal:
-            if _dyn_guard is None:
-                l_end = data_array[-current_threshold]  # it takes -N from end, where N is the active threshold
-            else:
-                l_end = _dyn_guard.l_end(data_array, current_threshold)
+            # it takes -N from end, where N is the active threshold
+            l_end = (data_array[-current_threshold] if _dyn_guard is None
+                     else _dyn_guard.l_end(data_array, current_threshold))
             if start1 <= l_end:  # only count if read is still within peak
                 peak.cb_counting(cb=cb)
                 peak.cb_position_counting(end1, cb)

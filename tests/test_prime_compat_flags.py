@@ -56,10 +56,12 @@ _FIXTURE_SHAPE = {"seq_len", "cb_len", "barcode_tag", "ignore_chro"}
 #: holders, so the command line and the library pin are checked against each
 #: other for args-bridged options too.
 #: ``--dynamic-threshold-clamp`` qualifies: bridged to ``args``, default
-#: ``off`` == v2 (the unbounded look-back index, IndexError included), and the
-#: fixture golden cannot see it because the fixture never turns
-#: ``--dynamic-threshold`` on.  ``tests/test_prime_dynamic_threshold_clamp.py``
-#: pins its off==v2 / on-only-rescues-a-crash contract instead.
+#: ``off``, and the fixture golden cannot see it because the fixture never
+#: turns ``--dynamic-threshold`` on.  Since the merge with ``develop`` the
+#: flag is an accepted NO-OP -- the look-back bound is unconditional (issue
+#: #101) -- so ``off`` is trivially still safe to leave on the documented
+#: compat command line.  ``tests/test_prime_dynamic_threshold_clamp.py`` pins
+#: the no-op contract.
 _ARGS_BRIDGED = {"--pas-gene-rescue", "--pas-gene-rescue-min-mol",
                  "--dynamic-threshold-clamp"}
 
@@ -417,6 +419,27 @@ def test_the_frozen_v2_snapshot_still_matches_the_v2_worktree():
     )
 
 
+#: Fields that exist in v2's ``RunConfig`` but CANNOT appear on the documented
+#: v2-compat command line, because that command line is an ``ema run``
+#: invocation and these options belong to a different subcommand.  Declared by
+#: name, with the reason, rather than inferred silently -- the whole point of
+#: the check below is that a moved default must never go unnoticed.
+#:
+#: ``marker_top_n`` is a ``switch diff`` option.  ``develop`` moved its default
+#: 200 -> 0 (issue #94: pre-selecting the tested PAS with the SAME cluster
+#: labels the test then contrasts is a double-dip, and 0 was the only
+#: FDR-controlled setting measured).  ``ema run`` does not accept
+#: ``--marker-top-n``, so restoring v2's 200 on the compat RUN command is
+#: impossible AND meaningless: no run-level output depends on it.  The default
+#: itself is guarded by ``tests/test_marker_top_n_double_dip_i94.py``.
+_NOT_ON_THE_RUN_COMMAND_LINE = {"marker_top_n"}
+
+
+def _is_run_option(spec) -> bool:
+    """True when a field can be typed on an ``ema run`` command line."""
+    return not spec.applies_to or "run" in spec.applies_to
+
+
 def test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line():
     """The check that would have caught the no-op default.
 
@@ -448,6 +471,15 @@ def test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line(
         if str(branch[name]) == str(v2_defaults[name]):
             continue
         moved.append((name, v2_defaults[name], branch[name]))
+        if not _is_run_option(spec):
+            # Not typeable on an `ema run` line at all; must be declared.
+            assert name in _NOT_ON_THE_RUN_COMMAND_LINE, (
+                f"{spec.cli_flag} belongs to {sorted(spec.applies_to)} rather "
+                "than to `ema run`, so the v2-compat RUN command cannot "
+                "restore it. Add it to _NOT_ON_THE_RUN_COMMAND_LINE with the "
+                "reason, and make sure something else guards its default."
+            )
+            continue
         text = flags.get(spec.cli_flag)
         if text is None:
             unstated.append((name, spec.cli_flag, v2_defaults[name], branch[name]))
