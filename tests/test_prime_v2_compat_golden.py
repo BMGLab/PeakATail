@@ -179,9 +179,42 @@ def _restore_variable_config():
                 setattr(_ns, k, v)
 
 
-def _run_arm(strategy: str, seq_len: int, tmp_path: Path) -> dict[str, str]:
+#: Every knob `_v2_settings` pins that is a peakAtail-prime option, i.e. every
+#: one whose SHIPPED default may differ from the v2 value pinned above.  Used
+#: by :func:`_branch_default_settings` to state the branch defaults without
+#: hand-typing a single one of them.
+_PRIME_KNOBS = (
+    "read_geometry", "read_exclude_flags", "pas_features", "pas_score",
+    "pas_score_model", "pas_score_min", "cleavage_offset",
+    "auto_cleavage_offset", "emit_inferred_cleavage", "clip_rate_sampling",
+    "ip_filter_default",
+)
+
+
+def _branch_default_settings(seq_len: int) -> None:
+    """The opposite of :func:`_v2_settings`: every prime knob at its SHIPPED default.
+
+    Only the four knobs that describe the FIXTURE BAM are set by hand; every
+    prime option is read out of ``RunConfig``'s own field defaults, so this
+    really is "what a user gets by typing nothing" and not a second hand-kept
+    list that can drift from the schema.
+    """
+    from ema.cli.config_schema import RunConfig
+
+    variable_config.seqlen = seq_len
+    variable_config.cb_len = 16
+    variable_config.barcode_tag = "CB"
+    variable_config.ignore_chro = ["MT", "mt"]
+    cfg = RunConfig()
+    for name in _PRIME_KNOBS:
+        setattr(variable_config, name, getattr(cfg, name))
+    args.ip_filter_mode = cfg.ip_filter_mode
+
+
+def _run_arm(strategy: str, seq_len: int, tmp_path: Path,
+             settings=_v2_settings) -> dict[str, str]:
     """Run both strands of the caller over the fixture; return {filename: sha256}."""
-    _v2_settings(seq_len)
+    settings(seq_len)
     index = BarcodeIndex()
     state = PeakCallingState(pasnumber=0)
     digests: dict[str, str] = {}
@@ -232,6 +265,42 @@ def test_v2_output_is_reproduced_byte_for_byte(
         "Every behavioural change on peakAtail-prime must be behind a flag whose v2 value is "
         "pinned in _v2_settings(); do NOT regenerate these goldens.\n%s"
         % (arm, ", ".join(sorted(bad)), bad)
+    )
+
+
+@pytest.mark.parametrize(("arm", "strategy", "seq_len"), ARMS, ids=[a[0] for a in ARMS])
+def test_branch_defaults_still_write_v2s_beds_and_matrix(
+    arm: str, strategy: str, seq_len: int, tmp_path: Path
+) -> None:
+    """The PR's headline property, which nothing else pinned.
+
+    The compat test above proves v2 is REACHABLE (with 14 flags).  This proves
+    the thing the PR body actually leads with: at the caller, **typing nothing**
+    already gives v2's BED and count-matrix bytes -- the internal-priming veto
+    that does move the call set lives above ``peak_calling()``, so every prime
+    default at this seam is call-set-neutral by construction, and this is the
+    test that says so instead of asserting it in prose.
+
+    ``pas_support.tsv`` is deliberately EXCLUDED and asserted to differ:
+    ``--pas-features on`` and ``--emit-inferred-cleavage on`` append sidecar
+    columns at the branch defaults.  Claiming the flagless output is
+    byte-identical to v2's *without* that exclusion is the CHANGELOG error this
+    test exists to keep out of the tree.
+    """
+    got = _run_arm(strategy, seq_len, tmp_path, settings=_branch_default_settings)
+    want = V2_GOLDEN[arm]
+    call_set = {k: v for k, v in got.items() if not k.endswith(".support.tsv")}
+    assert call_set == {k: v for k, v in want.items() if not k.endswith(".support.tsv")}, (
+        "a peakAtail-prime DEFAULT moved the call set at the caller on arm %s. "
+        "Every default this branch flips below the veto is supposed to be "
+        "call-set-neutral; one of them is not." % arm
+    )
+    sidecar = {k: v for k, v in got.items() if k.endswith(".support.tsv")}
+    assert sidecar and sidecar != {k: v for k, v in want.items()
+                                   if k.endswith(".support.tsv")}, (
+        "pas_support.tsv is byte-identical to v2's at the branch defaults, so "
+        "the CHANGELOG may say the flagless output is byte-identical without "
+        "scoping it -- but --pas-features on is supposed to append columns"
     )
 
 

@@ -806,7 +806,11 @@ def _resolve_ip_filter() -> bool:
     if _ip_filter_resolved.get("key") != key:
         _ip_filter_resolved["key"] = key
         if d["ip_filter"] and d["mode"] == "filter":
-            log.info(
+            # WARNING, not INFO: this is the only branch of the three that
+            # actually removes calls (17.09 % of them genome-wide), so it is
+            # the one a user must not be able to lose to --quiet -- and the
+            # two less consequential notices below are already warnings.
+            log.warning(
                 "internal-priming veto: ON (%s), mode=filter [%s] -- flagged "
                 "PAS are DROPPED. This is the largest measured accuracy lift "
                 "in the caller (+7.7%%-12.8%% relative recall at matched "
