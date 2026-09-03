@@ -98,12 +98,25 @@ def test_readme_lists_all_cli_commands():
 # --------------------------------------------------------------------- #
 
 def _unreleased_section() -> str:
-    """The text of CHANGELOG.md's first ``## Unreleased`` section."""
+    """Every ``## Unreleased`` section of CHANGELOG.md, concatenated.
+
+    The changelog convention in this repo is one themed section per change
+    (``## Unreleased -- <topic>``), so several sit stacked at the top at any
+    time.  Reading only the FIRST one made this helper order-dependent: the
+    next merge to prepend a section silently hid every earlier entry from the
+    coverage tests below.  Collect them all instead.
+    """
     text = CHANGELOG.read_text()
-    start = text.index("## Unreleased")
-    rest = text[start + len("## Unreleased"):]
-    nxt = rest.find("\n## ")
-    return rest if nxt == -1 else rest[:nxt]
+    parts, idx = [], text.find("## Unreleased")
+    while idx != -1:
+        rest = text[idx + len("## Unreleased"):]
+        nxt = rest.find("\n## ")
+        parts.append(rest if nxt == -1 else rest[:nxt])
+        nxt_abs = text.find("\n## ", idx + 1)
+        if nxt_abs == -1:
+            break
+        idx = text.find("## Unreleased", nxt_abs)
+    return "\n".join(parts)
 
 
 def test_reannotate_md_documents_the_duplicate_out_refusal():
