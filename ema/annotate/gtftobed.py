@@ -2,6 +2,13 @@ from collections import defaultdict
 from ema.config import directory_config as dc
 
 
+#: Base pairs appended to the 3' end of every gene record written by
+#: :func:`gtf_bed`, so that a PAS just past an annotated gene end still finds
+#: its gene.  ``find_close`` imports it to undo the shift when it needs the
+#: annotated 3' terminus itself (issue #99).
+GENE_EXTENSION_BP = 5000
+
+
 def parse_gtf_attributes(attr_string):
     """Parse GTF attribute column (col 8) into a key-value dict.
 
@@ -102,11 +109,11 @@ def gtf_bed(endbeddir=dc.endbed,
                 # Extend gene boundaries for nearby PAS detection
                 match strand:
                     case "+":
-                        end += 5000
+                        end += GENE_EXTENSION_BP
 
                     case "-":
-                        if start > 5000:
-                            start -= 5000
+                        if start > GENE_EXTENSION_BP:
+                            start -= GENE_EXTENSION_BP
                         else:
                             start = 1
 

@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased — PAS→gene assignment in overlapping loci
+
+### Fixed
+
+- **A PAS in an overlapping locus is no longer handed to the spanning /
+  readthrough model (issue #99).** `find_close` called
+  `bedtools closest -t first`. Where a readthrough model covers a neighbour's
+  3'UTR every PAS there is distance **0** from *both* models, so `-t first`
+  resolved the tie by file order — always the spanning model, because it
+  starts further upstream. On the 17-sample Laughney cohort every PAS in
+  chr17:7,579,636–7,582,386 was labelled `SENP3-EIF4A1` while lying in
+  **CD68**'s 3'UTR, and CD68 was left with **0 assigned PAS cohort-wide**
+  (same shape for PTPRCAP←CORO1B, FKBP11←AC073610.2, GPX1←RHOA, MDK←DGKZ,
+  STARD10←ARAP1, ARPC1A←AC004922.1, FCER1G←NDUFS2, KRTCAP3←NRBP1). 33 % of
+  the top-30 replicated gene switches carried the wrong gene name (21 % of
+  the top-100, 12 % of the top-500, 7 % overall), the strongest hits being
+  enriched precisely because marker genes live in such loci.
+
+  The call is now `-t all`, and `_resolve_overlapping_genes` picks one gene
+  per PAS: **a PAS is a cleavage site, so among genes tied at the minimal
+  distance it belongs to the one whose annotated 3' end it lies nearest**,
+  with the model's span and then the gene ID breaking any remaining tie
+  deterministically. `gtf_bed`'s 3'-end extension is now the named constant
+  `gtftobed.GENE_EXTENSION_BP` (unchanged at 5000) so the annotated terminus
+  can be recovered from the extended record; `find_close(gene_extension=…)`
+  overrides it for a gene BED that `gtf_bed` did not build.
+
+  **This changes gene labels.** PAS coordinates, counts and tiers are
+  untouched — only the `gene_id` a contested PAS is assigned to — but
+  `annotatedpas.bed`, `pas_gene.tsv` and every downstream gene-level result
+  differ in overlapping loci, so switch tables computed before this fix
+  should be regenerated. PAS with a single candidate gene are unaffected.
+  Regression test: `tests/test_pas_gene_overlapping_loci_i99.py`.
+
+Issue #99's second defect — the poly(A) clip-rate warning sampling only the
+head of a coordinate-sorted BAM (`ema/countmatrix/polya.py`,
+`max_reads=200_000`) — is **not** addressed here: branch `peakAtail-prime`
+(PR #100) already replaces that estimator with an exact per-pass count
+(`--clip-rate-sampling pass`), and duplicating it would collide.
+
 ## Unreleased — caller memory and CPU
 
 Peak RSS and wall time only: **every output file is byte-identical** at the
