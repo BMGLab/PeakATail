@@ -14,6 +14,9 @@ from ema.countmatrix.polya import (
     ClipSeeder, check_clip_rate, clip_read_ok, clip_site, read_umi,
 )
 from ema.config import directory_config, variable_config
+from ema.countmatrix.dynamic_threshold import (
+    DynamicThresholdGuard, validate_floor_threshold,
+)
 from ema.strategies.utils import merge_close_or_low_prominence
 from typing import TYPE_CHECKING
 
@@ -91,6 +94,9 @@ def peak_calling(
         strategy: PeakFinderStrategy instance. Defaults to 'original'.
         dynamic_threshold: When True, use window-based local lambda for threshold.
         floor_threshold: Absolute minimum threshold in dynamic mode (default: 3).
+            Must be >= 1: it is the look-back distance in
+            ``data_array[-floor_threshold]``, so 0 would silently read the
+            oldest end in the window (issue #101).
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
         lambda_window: Window size in bp for local lambda estimation (default: 5000).
         bam_threads: Number of threads for pysam BGZF block decompression (default: 4).
@@ -146,6 +152,13 @@ def peak_calling(
         # Deprecated alias: --polya-min-reads named reads but has always
         # gated on distinct molecules (see ClipSeeder.flush).
         polya_min_umis = polya_min_reads
+
+    # issue #101: `--floor-threshold 0` is not a crash but a silent wrong
+    # answer (data_array[-0] is data_array[0], the OLDEST end in the window).
+    # Checked here rather than only in Click so YAML and library callers --
+    # including every spawned tile / chromosome worker, which all re-enter
+    # through this function -- get the same refusal.
+    floor_threshold = validate_floor_threshold(floor_threshold)
 
     # --- Tile dispatch (takes precedence over pipeline) -------------------
     if use_tiles:
@@ -298,6 +311,13 @@ def peak_calling(
     # Window-based local lambda tracking (deque of recent read positions)
     # Only used when dynamic_threshold=True
     background_deque = deque()
+
+    # issue #101: the dynamic threshold can outgrow the live read window, and
+    # the look-back index then runs off the front of the list.  The guard
+    # bounds it (and counts how often it fired).  Built ONLY on the dynamic
+    # path, so a static-threshold run keeps the literal expression below and
+    # pays nothing for a bound it cannot need.
+    _dyn_guard = DynamicThresholdGuard() if dynamic_threshold else None
 
     log.debug("peak_calling: bamfile_dir=%s", bamfile_dir)
 
@@ -525,7 +545,9 @@ def peak_calling(
                 current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))
 
         if signal:
-            l_end = data_array[-current_threshold]  # it takes -N from end, where N is the active threshold
+            # it takes -N from end, where N is the active threshold
+            l_end = (data_array[-current_threshold] if _dyn_guard is None
+                     else _dyn_guard.l_end(data_array, current_threshold))
             if start1 <= l_end:  # only count if read is still within peak
                 peak.cb_counting(cb=cb)
                 peak.cb_position_counting(end1, cb)
@@ -586,6 +608,11 @@ def peak_calling(
     bedfile.close()
     if supportfile is not None:
         supportfile.close()
+
+    if _dyn_guard is not None:
+        _dyn_guard.report("%s%s strand%s" % (
+            chro if chro else "", "-" if direction else "+",
+            f", region {region[0]}:{region[1]}-{region[2]}" if region else ""))
 
     if _seeder is not None:
         log.info("clip_seeded counting (%s strand%s): %s",

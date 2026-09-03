@@ -53,7 +53,7 @@ barcode_tag: CB  # BAM tag holding the cell barcode
 min_read: 1500   # minimum reads per cell barcode (low = too few PAS)
 min_cells: 3     # minimum cells that must express a PAS to keep it
 min_pas_per_cell: 50  # minimum PAS detected per cell (post-filter)
-pas_gap: 100     # minimum bp gap between two PAS within one peak
+pas_gap: 100     # multi-dataset merge only: gap for unifying per-dataset BEDs
 
 # Optional: snap PAS to a reference atlas instead of calling de novo
 # atlas: references/polyasite_2.0_GRCh38_sorted.bed
@@ -70,9 +70,9 @@ Key field explanations pulled from `ema/cli/config_schema.py::RunConfig`:
 | `cb_len` | int | — | Cell barcode length in bp. Required. |
 | `barcode_tag` | str | `CB` | BAM tag holding the cell barcode. |
 | `min_read` | int | `1500` | Drop cells with fewer total reads. |
-| `min_cells` | int | `3` | Drop PAS expressed in fewer than this many cells. |
-| `min_pas_per_cell` | int | `50` | Drop cells with fewer PAS detected (maps to `filter_config.min_genes`). |
-| `pas_gap` | int | `100` | Minimum bp between two PAS calls within the same genomic peak. |
+| `min_cells` | int | `3` | Drop PAS expressed in fewer than this many cells **from the AnnData** (`preprocessing()`); `pasbed.bed` is unaffected. |
+| `min_pas_per_cell` | int | `50` | Drop cells with fewer PAS detected **from the AnnData** (`preprocessing()`); `pasbed.bed` is unaffected. Maps to `filter_config.min_genes`. |
+| `pas_gap` | int | `100` | Multi-dataset merge only: minimum bp between PAS when unifying per-dataset `pasbed.bed` files. No effect on a single-BAM run. |
 | `atlas` | path | `None` | When set, PAS are snapped to the reference atlas instead of de-novo coordinates. |
 | `atlas_distance` | int | `50` | Maximum snap distance in bp. |
 
