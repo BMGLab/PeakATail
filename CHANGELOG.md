@@ -66,6 +66,66 @@ head of a coordinate-sorted BAM (`ema/countmatrix/polya.py`,
 `max_reads=200_000`) — is **not** addressed here: branch `peakAtail-prime`
 (PR #100) already replaces that estimator with an exact per-pass count
 (`--clip-rate-sampling pass`), and duplicating it would collide.
+## Unreleased — `--dynamic-threshold` no longer aborts the run (issue #101)
+
+**`--dynamic-threshold --lambda-fold-change 2.0` — the parameter reference's
+own first entry under "find more PAS" — used to abort the caller with a bare
+`IndexError: list index out of range`, raised from inside a spawned
+chromosome worker with no message naming a flag, a contig or a remedy.** Both
+peak-calling loops computed the current peak's right edge as
+`l_end = data_array[-current_threshold]`
+(`ema/countmatrix/peackcalling.py`, `ema/countmatrix/peak_pipeline.py`), the
+dynamic estimator sets
+`current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))`,
+and nothing bounded it by `len(data_array)`. Found by the 2026-08 parameter
+sweep on the PBMC chr19+21 dev slice and reproduced independently on the
+GSE104556 mouse1 chr18+19 slice, so the defect is species-independent.
+
+### Fixed
+
+* **The look-back index is bounded by the live read window, by default.** The
+  rule lives in one place, `ema.countmatrix.dynamic_threshold.resolve_l_end()`,
+  and carries an identity guarantee that is tested exhaustively: for every
+  in-range threshold the bounded and unbounded branches return the *same*
+  element, so bounding can only change a run that would otherwise have
+  aborted. A run that trips the bound now logs a census of how often it fired
+  instead of dying. **No output changes for any run that did not crash** —
+  `--dynamic-threshold` is off by default, `--lambda-fold-change` is read at
+  exactly two places in the tree and both are inside `if dynamic_threshold:`,
+  and `tests/test_dynamic_threshold_bounds.py` pins byte-identity of the BED
+  and the count matrix on a dynamic run that never trips the bound.
+* **`--floor-threshold` is validated.** It was an unchecked INTEGER, and
+  `--floor-threshold 0` made `data_array[-0]` return `data_array[0]` — the
+  OLDEST end in the window rather than the peak edge. No crash, no warning,
+  a wrong peak boundary. Click now takes `IntRange(min=1)` and
+  `peak_calling()` re-checks the value, so YAML and library callers (and every
+  spawned tile / chromosome worker, which all re-enter through it) get the
+  same refusal.
+
+### Documentation
+
+Two help texts that did not match the code, both proven by the same sweep:
+
+* **`--pas-gap` does nothing on a single-BAM run.** It is consumed at exactly
+  one place, `merge_pas_beds` on the multi-dataset unified path
+  (`ema/main.py`), and `--pas-gap 25` and `200` are byte-identical to the
+  baseline on a single BAM. Its help said "minimum gap between PAS within a
+  peak"; it now says it is a multi-dataset merge parameter, and points at
+  `--min-pas-spacing` for the within-peak behaviour it was mistaken for.
+* **`--min-cells` and `--min-pas-per-cell` filter the AnnData, not the call
+  set.** Both act in `preprocessing()`, after `pasbed.bed` is written, and
+  neither changes a byte of it. Their help, `docs/cli/run.md` and the
+  quickstart now say which outputs they touch.
+
+### Note for PR #100 (`peakAtail-prime`)
+
+That branch introduced this module behind `--dynamic-threshold-clamp`,
+defaulted **off** to keep v2 byte-identical. This change keeps the module and
+its API (`resolve_l_end(data_array, current_threshold, clamp)`) so the two
+reconcile rather than compete, but on `develop` the bound is **on by
+default** — a crash is not a behaviour worth preserving, and there is no
+byte-identity contract here. Merging #100 must not restore
+`DYNAMIC_THRESHOLD_CLAMP_DEFAULT = False`.
 
 ## Unreleased — caller memory and CPU
 
