@@ -62,7 +62,7 @@ PeakATail reads sorted, indexed BAM files produced by Cell Ranger or STARsolo. E
 
 ### Peak calling
 
-`ema/countmatrix/peackcalling.py` iterates reads strand by strand. For each position where a read's 3' end falls, it increments a per-position coverage array. Peaks are detected from this coverage profile using the strategy class set by `--peak-strategy` (default `original`). Each peak emits one or more PAS coordinates (up to `max_pas` per peak, separated by at least `pas_gap` bp). Output is one BED file and one MatrixMarket sparse count matrix per strand per BAM.
+`ema/countmatrix/peackcalling.py` iterates reads strand by strand. For each position where a read's 3' end falls, it increments a per-position coverage array. Peaks are detected from this coverage profile using the strategy class set by `--peak-strategy` (default `original`). Each peak emits one or more PAS coordinates (up to `max_pas` per peak; within-peak spacing is governed by `--min-pas-spacing`, **not** by `pas_gap`, which only applies to the multi-dataset merge below). Output is one BED file and one MatrixMarket sparse count matrix per strand per BAM.
 
 ### Atlas snap vs coordinate merge
 
