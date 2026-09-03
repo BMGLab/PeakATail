@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
+
+### Breaking changes
+
+- **`ema switch diff --marker-top-n` now defaults to `0` (was `200`).** The
+  old default pre-filtered the tested PAS to the union of the top-200 marker
+  PAS per cluster, ranked by `scanpy.tl.rank_genes_groups` on the *same*
+  `--cluster-key` labels the differential test then contrasts — a label
+  double-dip — and additionally shrank the within-gene Fisher denominator
+  (the "rest of the gene" background became the same label-selected subset).
+  Under a 20-run label-permutation null on a correctly-keyed matrix:
+
+  | Configuration | Null p < 0.05 | Runs with a q < 0.05 hit |
+  |---|---|---|
+  | `fisher --count-mode reads --marker-top-n 200` | 20.3 % | 20 / 20 |
+  | `fisher --count-mode cells --marker-top-n 200` | 13.0 % | 19 / 20 |
+  | `nb_pairwise --marker-top-n 200` | 24.7 % | 19 / 20 |
+  | `fisher --count-mode cells --marker-top-n 0` | 3.0 % | 0 / 20 |
+
+  `--marker-top-n 0` was the only FDR-controlled configuration measured, so a
+  flagless `ema switch diff` is now calibrated. **A run that relied on the old
+  default tested a different (smaller, label-selected) PAS set and reported
+  anti-conservative q-values; re-run it at the new default.** The same applies
+  to the `marker_top_n` YAML key and to `ema.switch_test.runner.run_diff`,
+  whose signature default is unchanged (it is a required argument) but whose
+  callers now pass `0`.
+
+### Changed
+
+- **Any non-zero `--marker-top-n` now logs a loud warning** naming the
+  double-dip and the measured null inflation, in both
+  `ema/cli/switch_diff.py` and `ema/switch_test/runner.py::run_diff`, so the
+  library path warns too. The flag remains available as a speed shortcut /
+  ranking screen for large datasets — it is not a statistical filter.
+- `--marker-top-n` gained real `--help` text (it previously showed only
+  `[default: 200]`), and `docs/cli/switch-diff.md` gained a
+  "Why `--marker-top-n` defaults to 0" section with the permutation-null table.
+
+### Added
+
+- `tests/test_marker_top_n_double_dip_i94.py` — a label-permutation null
+  regression on a small synthetic matrix (fixed seeds, no I/O): at the default
+  settings the null p < 0.05 rate stays near nominal with zero q < 0.05 hits
+  across every seed, while `--marker-top-n 200` inflates it several-fold.
+
 ## Unreleased — caller memory and CPU
 
 Peak RSS and wall time only: **every output file is byte-identical** at the

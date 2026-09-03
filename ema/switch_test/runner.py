@@ -822,7 +822,14 @@ def run_diff(
             types/anything" is already supported by picking the column here
             and (optionally) narrowing to specific contrasts with
             ``cluster_pairs``.
-        marker_top_n: Top-N marker PAS per cluster (0 = disabled).
+        marker_top_n: Top-N marker PAS per cluster (0 = disabled, and the
+            default since issue #94).  Any non-zero value ranks markers with
+            the SAME ``cluster_key`` labels the differential test then
+            contrasts -- a label double-dip that also shrinks the within-gene
+            Fisher denominator, making the q-values anti-conservative (a
+            label-permutation null goes from 3.0% of null p<0.05 at 0 to
+            13.0-24.7% at 200, depending on strategy).  Treat it as a speed
+            shortcut / ranking screen, never as calibrated inference.
         marker_method: Marker ranking method (wilcoxon / t-test / logreg).
         strategy: Registered differential APA strategy name.
         fdr: FDR q-value threshold for significance.
@@ -928,6 +935,25 @@ def run_diff(
 
         # Marker selection
         if marker_top_n > 0:
+            # Issue #94: the markers are ranked with the SAME cluster labels
+            # the differential test then contrasts, and the restricted matrix
+            # also shrinks the within-gene Fisher denominator -- a label
+            # double-dip that makes every strategy anti-conservative. The
+            # default was flipped 200 -> 0 for that reason; this path is now
+            # an explicit, informed speed shortcut and warns loudly.
+            log.warning(
+                "run_diff: marker_top_n=%d SELECTS THE TESTED PAS WITH THE "
+                "SAME CLUSTER LABELS THE TEST THEN CONTRASTS (label "
+                "double-dip; issue #94), and shrinks the within-gene Fisher "
+                "denominator. Under a 20-run label-permutation null this "
+                "inflated the fraction of null p<0.05 from 3.0%% (top-n 0) to "
+                "20.3%% (fisher count_mode='reads'), 13.0%% (fisher "
+                "count_mode='cells') and 24.7%% (nb_pairwise), with a q<0.05 "
+                "hit in 19-20 of 20 permutations vs 0 of 20 at top-n 0. These "
+                "q-values are NOT FDR-calibrated -- ranking screen only. Use "
+                "marker_top_n=0 (the default) for calibrated inference.",
+                marker_top_n,
+            )
             log.info("run_diff: selecting top %d markers per cluster (%s)", marker_top_n, marker_method)
             markers = select_marker_pas(
                 adata,
