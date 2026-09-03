@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased — concurrent-branch safety
+
+### Fixed
+
+- **`ema reannotate` refuses to start when another live `ema reannotate`
+  already holds the same `--out` (issue #65).** Two branches pointed at one
+  output dir write the same `04_pas_gene_assignment/<ds>/pas_gene.tsv`,
+  `05_annotated_matrix/<ds>/*` and `07_clustering/<ds>/clusters.h5ad` paths,
+  so the surviving artifacts are an arbitrary interleaving of two different
+  parameter sets — that is how five sweep-grid branches sharing a
+  `branch_name` produced three different `pas_gene.tsv` row counts for
+  identical declared params, grouped by write time. `reannotate_run()` now
+  takes an exclusive `flock` on `<out>/.ema_reannotate.lock` before any work
+  begins; if the claim fails it raises `ReannotateError`, which the CLI
+  surfaces as a `click.ClickException` — **the command exits 1 having written
+  nothing**, and names the pid/host/start-time holding the directory. The
+  claim lives on the open file description, so the kernel drops it when the
+  process exits for any reason: a crashed or killed branch leaves no stale
+  lock, and `.ema_reannotate.lock` never needs deleting by hand. This is a
+  **user-visible behaviour change** — a workflow that (accidentally or
+  deliberately) ran two concurrent branches into one `--out` now gets a hard
+  error instead of silently corrupted output; give every branch its own
+  `--out`. Documented in `docs/cli/reannotate.md`.
+- **Every text artifact is written atomically (`ema/outputs.py`).** The new
+  `atomic_write()` context manager writes to a temp file in the **same**
+  directory and `os.replace()`s it onto the final path, replacing the plain
+  `open(path, "w")` / `to_csv(path)` / `write_text(path)` calls behind
+  `pas_gene.tsv`, `annotatedpas.bed`, `pasbed.bed`, the annotated-matrix
+  `pas_ids`/`barcodes` sidecars, `run_config.json`, `run_manifest.json` and
+  the per-stage `*_stats.json`. A partially written file is therefore never
+  visible at a final artifact path: a reader sees either the complete
+  previous content or the complete new one, two racing writers can only
+  produce one of the two complete files (never a byte-level mix), and a
+  write that raises leaves the previous file untouched. File **contents** are
+  unchanged — only the instant at which they become visible.
 ## Unreleased — PAS→gene assignment in overlapping loci
 
 ### Fixed

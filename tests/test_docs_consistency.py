@@ -11,6 +11,12 @@ actual behaviour of the code:
    ``--ip-filter`` / ``--genome-fasta`` rows -- those flags are wired into
    ``ema run`` (D9, ``ema/main.py::_apply_pas_filters``).
 3. The README command table must list every ``ema`` subcommand.
+4. The two user-visible behaviour changes of issue #65 -- ``ema reannotate``
+   refusing a ``--out`` that another live run holds (hard error, exit code 1)
+   and the atomic artifact write -- must be documented in
+   ``docs/cli/reannotate.md`` and in ``CHANGELOG.md``'s ``Unreleased``
+   section, since a user who suddenly hits the refusal has nowhere else to
+   look.
 """
 from __future__ import annotations
 
@@ -22,6 +28,9 @@ README = REPO_ROOT / "README.md"
 RUN_MD = REPO_ROOT / "docs" / "cli" / "run.md"
 DATA_FLOW_MD = REPO_ROOT / "docs" / "concepts" / "data-flow.md"
 READ_PY = REPO_ROOT / "ema" / "countmatrix" / "read.py"
+REANNOTATE_MD = REPO_ROOT / "docs" / "cli" / "reannotate.md"
+CHANGELOG = REPO_ROOT / "CHANGELOG.md"
+REANNOTATE_PY = REPO_ROOT / "ema" / "reannotate.py"
 
 
 def test_read_parser_does_not_read_umi_tag():
@@ -81,3 +90,52 @@ def test_readme_lists_all_cli_commands():
         "`ema wizard`",
     ):
         assert cmd in text, f"README command table is missing {cmd}"
+
+
+# --------------------------------------------------------------------- #
+# Issue #65: the duplicate-``--out`` refusal and the atomic write are both
+# user-visible behaviour changes, so both must be documented.
+# --------------------------------------------------------------------- #
+
+def _unreleased_section() -> str:
+    """The text of CHANGELOG.md's first ``## Unreleased`` section."""
+    text = CHANGELOG.read_text()
+    start = text.index("## Unreleased")
+    rest = text[start + len("## Unreleased"):]
+    nxt = rest.find("\n## ")
+    return rest if nxt == -1 else rest[:nxt]
+
+
+def test_reannotate_md_documents_the_duplicate_out_refusal():
+    """A user hitting the hard error must find it, and its exit code, here."""
+    text = REANNOTATE_MD.read_text()
+    # The lock file name is the ground truth in the code.
+    lock_name = re.search(
+        r'OUT_DIR_LOCK_NAME\s*=\s*["\']([^"\']+)["\']', REANNOTATE_PY.read_text()
+    ).group(1)
+    assert lock_name in text, (
+        f"reannotate.md never names the lock file {lock_name!r} that the "
+        "refusal points users at"
+    )
+    assert "exit code 1" in text, (
+        "reannotate.md does not state the exit code of the duplicate---out refusal"
+    )
+    assert "refuses to start" in text, (
+        "reannotate.md does not say that a duplicate --out is refused up front"
+    )
+
+
+def test_reannotate_md_documents_atomic_writes():
+    text = REANNOTATE_MD.read_text()
+    assert "os.replace" in text and "atomic" in text.lower(), (
+        "reannotate.md does not document that artifacts are written atomically"
+    )
+
+
+def test_changelog_unreleased_covers_issue_65():
+    section = _unreleased_section()
+    for phrase in ("issue #65", "--out", "exits 1", "atomic"):
+        assert phrase in section, (
+            f"CHANGELOG.md's Unreleased section is missing {phrase!r} "
+            "(CONTRIBUTING.md requires a changelog entry per change)"
+        )

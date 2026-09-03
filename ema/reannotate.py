@@ -30,9 +30,15 @@ This module is the single implementation both callers delegate to:
 """
 from __future__ import annotations
 
+import fcntl
+import functools
 import json
 import logging
+import os
 import pickle
+import socket
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -43,13 +49,96 @@ __all__ = ["ReannotateError", "reannotate_run"]
 
 class ReannotateError(RuntimeError):
     """Raised when the base run is missing a required artifact, or ``--out``
-    collides with ``--base-run``."""
+    collides with ``--base-run`` or with another live branch."""
 
 
 def _require(path: Path, what: str) -> Path:
     if not path.exists():
         raise ReannotateError(f"base run missing {what}: {path}")
     return path
+
+
+#: Whole-run exclusive lock file, at the branch's ``--out`` root.
+OUT_DIR_LOCK_NAME = ".ema_reannotate.lock"
+
+
+@contextmanager
+def _claim_out_dir(out: Path):
+    """Take an exclusive claim on ``out`` for the life of this branch.
+
+    Two ``ema reannotate`` invocations pointed at the SAME ``--out`` are
+    never a legitimate configuration -- they write the same
+    ``04_pas_gene_assignment/<ds>/pas_gene.tsv``,
+    ``05_annotated_matrix/<ds>/*`` and ``07_clustering/<ds>/clusters.h5ad``
+    paths, so whichever artifacts survive are an arbitrary interleaving of
+    two different parameter sets. That is not hypothetical: 5 branches of a
+    sweep grid that shared a ``branch_name`` (hence a ``--out``) ran
+    concurrently under Nextflow and produced 3 different ``pas_gene.tsv``
+    row counts for IDENTICAL declared params, grouped by write time.
+    Atomic writes (``ema.outputs.atomic_write``) stop a single file from
+    being torn; only this guard stops the two runs from clobbering each
+    other's artifacts wholesale. So: refuse, loudly and immediately, rather
+    than silently interleave.
+
+    The claim is an ``flock`` on ``<out>/.ema_reannotate.lock``, taken
+    before any work starts. flock is held by the open file description, so
+    the kernel drops it when this process exits for ANY reason -- a killed
+    or crashed branch never leaves a stale lock that blocks the re-run
+    (which a plain ``O_EXCL`` marker file would). It is advisory and
+    process-scoped, so it does not protect against a run that ignores it,
+    only against a second ``ema reannotate``.
+    """
+    out.mkdir(parents=True, exist_ok=True)
+    lock_path = out / OUT_DIR_LOCK_NAME
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            holder = ""
+            try:
+                holder = os.read(fd, 4096).decode("utf-8", "replace").strip()
+            except OSError:
+                pass
+            raise ReannotateError(
+                f"--out is already in use by another running `ema reannotate`: "
+                f"{out}{f' (held by {holder})' if holder else ''} — two branches "
+                "writing one output dir interleave their artifacts and silently "
+                "corrupt both. Give every branch its OWN --out; a duplicate "
+                "branch_name in a sweep grid is the usual cause. "
+                f"(Lock file: {lock_path})"
+            ) from None
+        os.ftruncate(fd, 0)
+        os.write(
+            fd,
+            f"pid={os.getpid()} host={socket.gethostname()} "
+            f"started={time.strftime('%Y-%m-%dT%H:%M:%S')}\n".encode(),
+        )
+        yield lock_path
+    finally:
+        # Closing the fd releases the flock. The (dot-prefixed, never
+        # manifested) lock file itself stays: unlinking it would race a
+        # branch that already has the same inode open.
+        os.close(fd)
+
+
+def _guard_out_dir(fn):
+    """Decorator: run ``fn`` holding an exclusive claim on its ``--out``.
+
+    Wraps :func:`reannotate_run` (keyword-only, so ``out``/``base_run`` are
+    always in ``kwargs``) instead of indenting its whole body under a
+    ``with``.
+    """
+    @functools.wraps(fn)
+    def _wrapper(**kwargs):
+        out = Path(kwargs["out"]).resolve()
+        if Path(kwargs["base_run"]).resolve() == out:
+            # Let the body raise the more specific --out == --base-run error
+            # rather than dropping a lock file into the base run dir.
+            return fn(**kwargs)
+        with _claim_out_dir(out):
+            return fn(**kwargs)
+    return _wrapper
 
 
 def _load_or_compute_atlas_match(
@@ -105,6 +194,7 @@ def _load_or_compute_atlas_match(
     }
 
 
+@_guard_out_dir
 def reannotate_run(
     *,
     base_run: str | Path,
@@ -241,8 +331,9 @@ def reannotate_run(
         and ``reconcile_summary``).
 
     Raises:
-        ReannotateError: ``out == base_run``, or a required base-run artifact
-            is missing.
+        ReannotateError: ``out == base_run``; ``out`` is already claimed by
+            another live ``ema reannotate`` (see :func:`_claim_out_dir`); or a
+            required base-run artifact is missing.
     """
     base = Path(base_run).resolve()
     out = Path(out).resolve()

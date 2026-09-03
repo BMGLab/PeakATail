@@ -22,11 +22,64 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 log = logging.getLogger(__name__)
+
+
+def _unique_write_token() -> str:
+    """A token unique enough to disambiguate concurrent atomic-write temp
+    files, whether the concurrency is across OS processes (the real-world
+    case -- two separate ``ema reannotate`` invocations) or threads within
+    one process (e.g. test harnesses). PID alone only disambiguates the
+    former; adding the thread ident closes the latter too.
+    """
+    return f"{os.getpid()}_{threading.get_ident()}"
+
+
+@contextmanager
+def atomic_write(dst: Path | str, mode: str = "w", **open_kwargs):
+    """Open a temp file next to ``dst``, then ``os.replace()`` it into place.
+
+    EVERY text artifact this module writes goes through here -- never write
+    a final artifact path directly. The temp file lives in the SAME
+    directory as ``dst`` (same filesystem, so ``os.replace()`` is a single
+    atomic rename syscall), which closes a real corruption window: two
+    pipeline invocations whose ``--out`` accidentally resolves to the same
+    run dir (e.g. a duplicate ``ema reannotate`` branch name) run
+    CONCURRENTLY, and two processes writing the same path with a plain
+    ``open(..., "w")`` can interleave, leaving a reader with a torn file --
+    the actual mechanism behind a real bug (5 A2/A3 trim/cluster branches
+    with identical params producing 3 different ``pas_gene.tsv`` row counts,
+    grouped by write time). Two atomic writers racing on the same path
+    still can't corrupt the file -- the loser's complete temp file just gets
+    rename()'d over; whichever wins is a complete, valid file, never a
+    byte-level mix of both. A reader always sees either the complete prior
+    content or the complete new content. If the body raises, the temp file
+    is removed and ``dst`` is left untouched.
+
+    (The underlying cause -- a duplicate ``--out`` -- is guarded separately
+    and up front, see ``ema.reannotate.reannotate_run``; this makes the
+    write itself safe regardless.)
+    """
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(f".{dst.name}.tmp{_unique_write_token()}")
+    try:
+        with open(tmp, mode, **open_kwargs) as fh:
+            yield fh
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 
 # MatrixMarket header written by matrixfilter and annotate.  Lives here
 # (not in variable_config) because it is a fixed constant, not a user
@@ -86,7 +139,7 @@ class OutputManager:
     def save_stats(self, stage: str, stats: dict) -> None:
         """Write the canonical ``<stage>_stats.json`` for a pipeline stage."""
         path = self.path(stage, f"{stage}_stats.json")
-        with open(path, "w") as f:
+        with atomic_write(path) as f:
             json.dump(stats, f, indent=2)
 
     def save_run_config(self, args_dict: dict) -> None:
@@ -101,7 +154,7 @@ class OutputManager:
         """
         config = {"timestamp": datetime.now().isoformat(), **args_dict}
         path = os.path.join(self.base_dir, "run_config.json")
-        with open(path, "w") as f:
+        with atomic_write(path) as f:
             json.dump(config, f, indent=2, default=str)
 
     # ------------------------------------------------------------------ #
@@ -297,7 +350,7 @@ class OutputManager:
             },
         }
         path = os.path.join(self.base_dir, "run_manifest.json")
-        with open(path, "w") as f:
+        with atomic_write(path) as f:
             json.dump(manifest, f, indent=2, default=str)
         return path
 
@@ -377,8 +430,7 @@ def _concat_beds(srcs: Iterable[Path | str], dst: Path) -> None:
     Caller decides ordering (pos-then-neg, alphabetical, etc.) — this
     function preserves it.
     """
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with open(dst, "w") as out:
+    with atomic_write(dst) as out:
         for src in srcs:
             with open(src) as f:
                 # Bulk read + filter + a single writelines() call per file
@@ -449,8 +501,7 @@ def write_filtered_cb(
     from ema.config import directory_config
 
     dst = directory_config.filtered_cb_for(dataset_id)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with open(dst, "w") as f:
+    with atomic_write(dst) as f:
         f.write(f"barcode\tmin_read={min_read}\n")
         for cb in filtered_barcodes:
             f.write(f"{cb}\n")
@@ -499,12 +550,10 @@ def write_annotated_matrix(
     mtx_path = directory_config.annotated_matrix_for(dataset_id)
     mtx_path.parent.mkdir(parents=True, exist_ok=True)
     _sci.mmwrite(str(mtx_path), sparse_matrix.astype(int), field="integer")
-    directory_config.annotated_pas_ids_for(dataset_id).write_text(
-        "pas_id\n" + "\n".join(str(p) for p in pas_ids) + "\n"
-    )
-    directory_config.annotated_cells_for(dataset_id).write_text(
-        "barcode\n" + "\n".join(cells) + "\n"
-    )
+    with atomic_write(directory_config.annotated_pas_ids_for(dataset_id)) as f:
+        f.write("pas_id\n" + "\n".join(str(p) for p in pas_ids) + "\n")
+    with atomic_write(directory_config.annotated_cells_for(dataset_id)) as f:
+        f.write("barcode\n" + "\n".join(cells) + "\n")
     log.info(
         "Persisted annotated count matrix for %r at %s (%d PAS × %d cells)",
         dataset_id, mtx_path, len(pas_ids), len(cells),
@@ -574,18 +623,6 @@ def write_per_dataset_beds(
     return pasbeds
 
 
-def _unique_write_token() -> str:
-    """A token unique enough to disambiguate concurrent atomic-write temp
-    files, whether the concurrency is across OS processes (the real-world
-    case -- two separate ``ema reannotate`` invocations) or threads within
-    one process (e.g. test harnesses). PID alone only disambiguates the
-    former; adding the thread ident closes the latter too.
-    """
-    import threading
-
-    return f"{os.getpid()}_{threading.get_ident()}"
-
-
 def write_pas_gene_artifacts(
     output_dir: Path,
     dataset_id: str,
@@ -642,7 +679,6 @@ def write_pas_gene_artifacts(
         ``(pas_gene_tsv_path, annotatedpas_bed_path)``.  The BED path
         may not exist if pasbed wasn't on disk.
     """
-    import os
     import numpy as np  # local import — heavy module
     import pandas as pd  # local import — heavy module
     from ema.config import directory_config
@@ -663,37 +699,21 @@ def write_pas_gene_artifacts(
             f"{len(gene_ids)} gene IDs — they index the same annotated rows."
         )
 
-    # Both writes below go to a temp file in the SAME directory (same
-    # filesystem, so os.replace() is a single atomic rename syscall) then
-    # get moved into place -- never write the final path directly. This
-    # closes a real corruption window: two `ema reannotate` branches whose
-    # grid rows accidentally resolve to the same --out (e.g. a duplicate
-    # branch_name) run CONCURRENTLY, and two processes writing the same
-    # path with plain `open(..., "w")` can interleave, leaving a reader
-    # with a torn file -- the actual mechanism behind a real bug (5 A2/A3
-    # trim/cluster branches with identical params producing 3 different
-    # pas_gene.tsv row counts, grouped by write time). Two atomic writers
-    # racing on the same path still can't corrupt the file -- the loser's
-    # complete temp file just gets rename()'d over, whichever wins is a
-    # complete, valid file, never a byte-level mix of both. The underlying
-    # cause (duplicate branch_name/--out) is a separate guard, at the grid
-    # loader (see experiments/laughney/main.nf) -- this fix makes the write
-    # itself safe regardless.
+    # Both writes below go through atomic_write() (temp file in the SAME
+    # directory + os.replace) -- never write the final path directly. See
+    # that helper's docstring for the corruption window this closes.
     pas_gene_tsv = directory_config.pas_gene_for(dataset_id)
-    pas_gene_tsv.parent.mkdir(parents=True, exist_ok=True)
-    _pgt_tmp = pas_gene_tsv.with_name(f".{pas_gene_tsv.name}.tmp{_unique_write_token()}")
-    pd.DataFrame({"pas_id": pas_ids, "gene_id": gene_ids}).to_csv(
-        _pgt_tmp, sep="\t", index=False,
-    )
-    os.replace(_pgt_tmp, pas_gene_tsv)
+    with atomic_write(pas_gene_tsv) as dst:
+        pd.DataFrame({"pas_id": pas_ids, "gene_id": gene_ids}).to_csv(
+            dst, sep="\t", index=False,
+        )
 
     annot_bed = directory_config.annotatedpas_for(dataset_id)
     annot_bed.parent.mkdir(parents=True, exist_ok=True)
     pasbed = directory_config.pasbed_for(dataset_id)
     if pasbed.exists():
         lookup = dict(zip([str(p) for p in pas_ids], gene_ids))
-        _annot_tmp = annot_bed.with_name(f".{annot_bed.name}.tmp{_unique_write_token()}")
-        with open(pasbed) as src, open(_annot_tmp, "w") as dst:
+        with open(pasbed) as src, atomic_write(annot_bed) as dst:
             for line in src:
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) >= 4:
@@ -704,7 +724,6 @@ def write_pas_gene_artifacts(
                     in_3utr_flag = in_3utr_of.get(pas_id, "")
                     extra = [gid, str(atlas_match), str(atlas_distance_bp), str(ip_flag), str(in_3utr_flag)]
                     dst.write("\t".join(parts + extra) + "\n")
-        os.replace(_annot_tmp, annot_bed)
     else:
         log.warning(
             "annotatedpas.bed for %r skipped — pasbed.bed not on disk at %s",
