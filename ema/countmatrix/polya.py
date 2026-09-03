@@ -33,8 +33,10 @@ uses:
 * :func:`check_clip_rate` — R2 chemistry mitigation: loud warning when the
   observed clip rate is below 0.3% of CB reads (poly(A) trimmed upstream,
   wrong chemistry, etc.), instead of silently emitting an unsupported set.
-  ``--clip-rate-sampling strided`` (the peakAtail-prime default) spreads the
-  sample across the whole BAM; ``head`` is v2's first-200k-CB-reads scan,
+  ``--clip-rate-sampling pass`` (the peakAtail-prime default) counts every
+  accepted read and qualifying clip during the peak-calling pass itself, so
+  the rate is exact and costs no extra I/O; ``strided`` spreads a sampled
+  budget across the whole BAM; ``head`` is v2's first-200k-CB-reads scan,
   which on a coordinate-sorted BAM samples the head of chr1 and reported
   2.2565 % where the truth on the same library is 0.5364 %.
 
@@ -1447,10 +1449,13 @@ def check_clip_rate(bam_path: str, min_clip: int = 6, min_purity: float = 0.8,
     the head of chr1, and on PBMC 10k v3 it returns **2.2565 %** where the
     whole-file rate on the same denominator is **0.5364 %** -- a ~4x
     over-estimate, in the direction that would MASK a genuinely destroyed
-    channel.  ``sampling="strided"`` (the peakAtail-prime default) allocates
-    the same budget across every mapped contig in proportion to its mapped
-    reads and across :data:`CLIP_RATE_STRATA` evenly spaced strata inside each
-    contig.
+    channel.  ``sampling="pass"`` (the peakAtail-prime default) does not
+    sample at all: it counts every accepted read and qualifying clip during
+    the peak-calling pass, so the rate is exact per (contig, strand).
+    ``sampling="strided"`` allocates the same budget across every mapped
+    contig in proportion to its mapped reads and across
+    :data:`CLIP_RATE_STRATA` evenly spaced strata inside each contig; it is
+    kept as the measured-unreliable obvious design.
 
     Cached per BAM per process, so tile/pipeline workers and repeat strand
     passes never rescan.
@@ -1463,7 +1468,8 @@ def check_clip_rate(bam_path: str, min_clip: int = 6, min_purity: float = 0.8,
         max_reads: CB-read budget for the sample.  ``None`` (default) means
             v2's 200,000 for ``"head"`` and :data:`CLIP_RATE_STRIDED_READS`
             for ``"strided"``, which needs more reads for the same confidence
-            because it samples clustered rare events.
+            because it samples clustered rare events.  Ignored by ``"pass"``,
+            which does not sample.
         sampling: One of :data:`CLIP_RATE_SAMPLINGS`.  ``None`` (default)
             reads ``variable_config.clip_rate_sampling``, whose legacy-global
             default is the BRANCH value; pass an explicit value to pin it.

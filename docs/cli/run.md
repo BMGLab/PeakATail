@@ -687,10 +687,13 @@ dataset it is reported against.
 
 ### Internal-priming annotation (D9)
 
-Like the atlas, the internal-priming filter is **off unless enabled** and
-**annotates rather than drops** by default — false poly(A) sites caused by the
-oligo-dT primer mis-binding genomic A-stretches get an `internal_priming` flag
-column (on the PAS ledger + `annotatedpas.bed`) so you can filter downstream.
+False poly(A) sites caused by the oligo-dT primer mis-binding genomic
+A-stretches get an `internal_priming` flag column (on the PAS ledger +
+`annotatedpas.bed`). **On peakAtail-prime the veto is no longer off by default
+and no longer annotates rather than drops**: with a readable `--genome-fasta`
+it runs (`--ip-filter-default auto`) and it drops (`--ip-filter-mode auto` →
+`filter`). Both sentences were true of v2 and of the atlas filter; neither is
+true here. See the breaking-change note below the flag table.
 
 **`annotate` mode does not change `pasbed.bed`.** It rewrites the internal
 pos/neg BEDs unchanged (keep-all, zero rows dropped) and writes the
@@ -716,8 +719,8 @@ in the `args` block, which carries the unresolved sentinel.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--ip-filter` | FLAG | off | Enable the internal-priming check explicitly: forces it ON and makes a missing `--genome-fasta` an error. On this branch it is **already the default whenever a genome FASTA is available** — see `--ip-filter-default`. |
-| `--ip-filter-default` | `off`/`auto` | **`auto`** | What `--ip-filter` does when it is not passed. `auto` runs the veto whenever a readable `--genome-fasta` is available and **warns loudly, naming the cost, when there is none**. `off` is v2. The veto is the **largest measured accuracy lift in this caller**: +7.7% to +12.8% relative recall at matched atlas precision, +17.7% to +22.9% at matched long-read precision, because it is the only stage that reads genomic sequence. It changes nothing for a run that already passed `--ip-filter`. **It decides only whether the veto RUNS, not whether it DROPS** — `--ip-filter-mode` decides that, and its default (`auto`) resolves to `filter`, so a run with the branch defaults and a readable FASTA does deliver the lift. Between those two facts the branch once shipped a default that ran the veto in `annotate` mode and dropped nothing; the resolved mode is now logged and recorded in `run_config.json`. |
+| `--ip-filter` | FLAG | off | Enable the internal-priming check explicitly: forces it ON and makes a missing `--genome-fasta` an error. It **beats `--ip-filter-default`**, so `--ip-filter --ip-filter-default off` still runs the veto. On this branch it also no longer implies v2's `annotate`: with no `--ip-filter-mode` the veto now **drops**. See the breaking-change note below. |
+| `--ip-filter-default` | `off`/`auto` | **`auto`** | What happens when `--ip-filter` is **not** passed. `auto` runs the veto whenever a readable `--genome-fasta` is available and **warns loudly, naming the cost, when there is none**. `off` is v2. The veto is the **largest measured accuracy lift in this caller**: +7.7% to +12.8% relative recall at matched atlas precision, +17.7% to +22.9% at matched long-read precision, because it is the only stage that reads genomic sequence. **It is ignored by a run that passed `--ip-filter` or `--no-ip-filter`** — so it is *not* an escape hatch for a user who typed `--ip-filter`; use `--ip-filter-mode annotate` for that. **It decides only whether the veto RUNS, not whether it DROPS** — `--ip-filter-mode` decides that, and its default (`auto`) resolves to `filter`, so a run with the branch defaults and a readable FASTA does deliver the lift. Between those two facts the branch once shipped a default that ran the veto in `annotate` mode and dropped nothing; the resolved mode is now logged and recorded in `run_config.json`. |
 | `--no-ip-filter` | FLAG | off | Force the veto off whatever `--ip-filter-default` says. |
 | `--ip-filter-mode` | `auto`/`annotate`/`filter` | **`auto`** | What the veto does with a flagged PAS. `auto` means "the mode was not named" and resolves to **`filter`** (drop) — this is the +7.7%–12.8% relative recall at matched atlas precision. `annotate` flags A-stretch PAS but keeps them; it is **v2's literal default** and is what the documented v2-compatibility flag list (`V2_COMPAT_FLAGS`) pins -- there is no `--compat` flag; the list is a command line you type. The resolved value appears in the run log and under `internal_priming` in `run_config.json` / `run_manifest.json`. |
 | `--genome-fasta` | PATH | — | Genome FASTA (`.fai` indexed) — required with `--ip-filter`; used to read the sequence downstream of each PAS. |
@@ -725,6 +728,36 @@ in the `args` block, which carries the unresolved sentinel.
 | `--ip-a-fraction` | FLOAT | 0.7 | Alternative trigger: flag when the A-fraction of the window reaches this value. |
 | `--ip-window-left` / `--ip-window-right` | INT | 10 / 30 | Window (bp) **upstream / downstream of the cleavage site in transcript orientation** examined for the A-stretch, on both strands. |
 | `--annot-filter` | FLAG | off | Enable the annotation-region filter (drops PAS that do not overlap a gene region). Requires `--gtf` or `--annotation-bed`. Distinct from `--ip-filter`; it always drops non-overlapping peaks. |
+
+!!! danger "BREAKING vs v2 — two populations lose ~17 % of their calls, with different escapes"
+    The loss is the internally-primed sites (PBMC 10k v3 full BAM:
+    402,765 → 333,920, −68,845). Nothing about either command line changes; the
+    output does.
+
+    1. **You supply `--genome-fasta` and no IP flag at all.** `--ip-filter-default
+       auto` turns the veto on; `--ip-filter-mode auto` resolves to `filter`.
+       Escape with any of `--ip-filter-default off`, `--no-ip-filter`, or
+       `--ip-filter-mode annotate`.
+    2. **You already typed `--ip-filter` and never named a mode.** In v2 that
+       meant `--ip-filter-mode annotate` — the veto ran, flagged, and dropped
+       nothing. Here the same command line drops. **`--ip-filter-default off`
+       does not help you**: `--ip-filter` beats the policy, so the veto still
+       runs, in `filter` mode. Escape with **`--ip-filter-mode annotate`**
+       (exactly v2), `--no-ip-filter` (v2's call set, but the veto no longer
+       runs so the IP annotation goes too), or the full `V2_COMPAT_FLAGS`
+       command line.
+
+    The precedence — `--no-ip-filter` > `--ip-filter` > `--ip-filter-default`,
+    with `--ip-filter-mode` deciding drop-vs-annotate independently of all three
+    — is deliberate. Making an explicit `--ip-filter` imply `annotate` would
+    rebuild the trap this branch removed: two flags silently disagreeing about
+    whether anything is dropped.
+
+    **With no readable `--genome-fasta`** the veto cannot run, so the flagless
+    call set is v2's: the derived BEDs and the count matrix are byte-identical.
+    `pas_support.tsv` is **not** — `--pas-features on` and
+    `--emit-inferred-cleavage on` append sidecar columns regardless; pass both
+    as `off` (they are in `V2_COMPAT_FLAGS`) to restore that file too.
 
 **Strand handling.** Internal priming comes from a genome-encoded A-stretch
 *downstream* of the cleavage site in the direction of transcription, so the

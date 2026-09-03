@@ -60,17 +60,46 @@ number published for that change was measured on a run that also passed
 
 ### BREAKING — the flagless call set changes
 
-**A flagless v2 user who supplies `--genome-fasta` silently loses 17.09 % of
-their calls** — the internally-primed ones (PBMC 10k v3 full BAM:
+**TWO populations lose 17.09 % of their calls, and they do not have the same
+escape.** The loss is the internally-primed sites (PBMC 10k v3 full BAM:
 402,765 → 333,920, −68,845; `results/prime_bench/fourway_headline.txt` §3).
-Nothing about their command line changes; the output does. That is the
+Nothing about either command line changes; the output does. That is the
 intended behaviour of the default flip, and it is the definition of a breaking
-default change. Escapes, in increasing strictness: `--ip-filter-mode annotate`
-(the veto still runs but drops nothing — flags are recorded);
-`--ip-filter-default off` or `--no-ip-filter` (v2's call set); the full
-14-pair `V2_COMPAT_FLAGS` command line (v2 byte-for-byte, every file). With no
-readable `--genome-fasta` the veto cannot run and the flagless output stays
-byte-identical to v2's.
+default change.
+
+1. **The flagless user who supplies `--genome-fasta` and no IP flag at all.**
+   `--ip-filter-default auto` turns the veto ON for them and the new
+   `--ip-filter-mode auto` resolves it to `filter`. Escapes:
+   `--ip-filter-default off`, `--no-ip-filter`, or `--ip-filter-mode annotate`.
+2. **The user who already typed `--ip-filter` and never named a mode.** In v2
+   that command line meant `--ip-filter-mode annotate`: the veto ran, flagged,
+   and dropped nothing. On this branch the *same* command line resolves the
+   mode to `filter` and drops the same ~17 %. **`--ip-filter-default off` does
+   NOT rescue this user** — `ema.main._ip_filter_decision()` gives an explicit
+   `--ip-filter` precedence over the `ip_filter_default` policy, so the veto
+   still runs, in `filter` mode. Their escapes are **`--ip-filter-mode
+   annotate`** (exactly v2: the veto runs, the flag is recorded, nothing is
+   dropped), `--no-ip-filter` (v2's call set, but the veto no longer runs so
+   the IP annotation goes too), or the full 14-pair `V2_COMPAT_FLAGS` command
+   line (v2 byte-for-byte, every file).
+
+That precedence is deliberate and is not changing: `--ip-filter` means "run the
+veto", `--ip-filter-default` only decides what happens when nobody said, and
+`--ip-filter-mode` is the single flag that decides whether the veto DROPS.
+Making an explicit `--ip-filter` imply `annotate` would rebuild the exact trap
+this branch removed — two flags silently disagreeing about whether anything is
+dropped. `ema.main._ip_filter_decision()` is the one copy of the rule, it is
+logged, it is written to `run_config.json`, and
+`tests/test_prime_ip_default_mode.py` pins it.
+
+**With no readable `--genome-fasta` the veto cannot run**, so the flagless
+*call set* is v2's: the derived BEDs (`pas.bed`, `pas_tier1.bed`,
+`pas_tier2.bed`, `pasbed.bed`) and the count matrix are byte-identical to v2's.
+**`pas_support.tsv` is NOT** — `--pas-features on` and
+`--emit-inferred-cleavage on` are branch defaults and append sidecar columns
+whatever the FASTA situation is. `--pas-features off
+--emit-inferred-cleavage off` (both in `V2_COMPAT_FLAGS`) restores that file
+too.
 
 ### The literal
 
@@ -117,9 +146,22 @@ worktree on both dev slices.
   `default="annotate"` makes it fail with `filtered == 0` and the flagged row
   still present.
 * **`tests/test_prime_compat_flags.py::test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line`**
-  diffs RunConfig **defaults** against the frozen v2 worktree, not just field
-  names. The old completeness check only asked "which fields are NEW?", which
-  is precisely why a moved default on an existing v2 field went unnoticed.
+  diffs RunConfig **defaults** against v2's, not just field names. The old
+  completeness check only asked "which fields are NEW?", which is precisely why
+  a moved default on an existing v2 field went unnoticed. Both completeness
+  checks used to read v2 from one absolute path on one machine behind a
+  `skipif`, so **they skipped everywhere else, CI included** — the branch's
+  strongest guarantee behind a green checkmark that had never run it. v2's
+  defaults are now read from `tests/fixtures/v2_runconfig_defaults.json` (a
+  committed dump of v2's `RunConfig`, so the checks run unconditionally) or,
+  when `PEAKATAIL_V2_WORKTREE` names a real v2 checkout, live from it — and a
+  third test asserts the two agree whenever both are available, so the frozen
+  copy cannot go quietly stale.
+* **`tests/test_prime_v2_compat_golden.py::test_branch_defaults_still_write_v2s_beds_and_matrix`**
+  pins the headline property directly: at the caller, **typing nothing** writes
+  v2's BED and count-matrix bytes (the veto that moves the call set lives above
+  `peak_calling()`), while `pas_support.tsv` is asserted to DIFFER — so the
+  "byte-identical" claim in this file can never again be written unscoped.
 * `_v2_settings()` now pins `args.ip_filter_mode`, and
   `test_prime_compat_flags.py` reads pins from `args` as well as
   `variable_config`, closing the structural gap that file already declared.

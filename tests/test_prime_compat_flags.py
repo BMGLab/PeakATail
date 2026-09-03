@@ -283,20 +283,77 @@ def test_the_changelog_prose_matches_the_tuple():
 
 
 # ---------------------------------------------------------------------------
-# completeness, checked against the frozen v2 worktree rather than a list
+# completeness, checked against v2's RunConfig rather than a hand-kept list
+#
+# THE DEFECT THIS SECTION USED TO HAVE.  v2's defaults were read only from a
+# worktree at one absolute path on one machine, behind a ``skipif``, so the two
+# completeness checks below -- the branch's strongest guarantee -- SKIPPED
+# everywhere else, CI included: a green checkmark that had never run them.
+#
+# So there are now two sources, in this order:
+#
+# * a live v2 worktree, when there is one (``PEAKATAIL_V2_WORKTREE``, or the
+#   author's historical path); and
+# * :data:`V2_DEFAULTS_SNAPSHOT`, a committed JSON dump of the same thing,
+#   which makes the checks run unconditionally.
+#
+# The snapshot is a CACHE, never the authority: whenever a live worktree IS
+# present, ``test_the_frozen_v2_snapshot_still_matches_the_v2_worktree`` asserts
+# the two agree, so a stale snapshot is a failure rather than a quiet fiction.
 # ---------------------------------------------------------------------------
-V2_WORKTREE = Path("/mnt/ssd1/Projects/PeakATail_wd/tools/pa-polya-run-9dfdefb3")
+#: Environment variable naming a checkout of v2 (commit ``9dfdefb``).  Set it
+#: to re-derive v2's defaults live instead of trusting the snapshot.
+V2_WORKTREE_ENV = "PEAKATAIL_V2_WORKTREE"
+
+#: Where the frozen v2 worktree lives on the author's machine.  Used only when
+#: it happens to exist; nothing depends on it any more.
+V2_WORKTREE_FALLBACK = Path("/mnt/ssd1/Projects/PeakATail_wd/tools/pa-polya-run-9dfdefb3")
+
+#: The committed dump of v2's ``RunConfig`` defaults.  Regeneration command is
+#: inside the file, under ``_how_to_regenerate``.
+V2_DEFAULTS_SNAPSHOT = Path(__file__).parent / "fixtures" / "v2_runconfig_defaults.json"
 
 
-def _v2_field_defaults() -> dict:
-    """``{field_name: default}`` for RunConfig as it stands in the frozen v2 tree."""
+def _v2_worktree() -> Path | None:
+    """A checkout of v2 to read defaults out of, or ``None`` to use the snapshot.
+
+    Raises:
+        AssertionError: if ``PEAKATAIL_V2_WORKTREE`` is set but does not point
+            at a tree containing ``ema/cli/config_schema.py``.  Someone who
+            asked for the live check must not silently get the cached one.
+    """
+    import os
+
+    raw = os.environ.get(V2_WORKTREE_ENV)
+    root = Path(raw) if raw else V2_WORKTREE_FALLBACK
+    ok = (root / "ema" / "cli" / "config_schema.py").exists()
+    assert ok or not raw, (
+        f"{V2_WORKTREE_ENV}={raw!r} does not contain ema/cli/config_schema.py; "
+        "unset it to fall back to tests/fixtures/v2_runconfig_defaults.json"
+    )
+    return root if ok else None
+
+
+def _snapshot() -> dict:
+    import json
+
+    assert V2_DEFAULTS_SNAPSHOT.exists(), (
+        f"{V2_DEFAULTS_SNAPSHOT} is missing -- without it the completeness "
+        "checks below silently stop running anywhere without a v2 worktree, "
+        "which is the exact failure they were added to end"
+    )
+    return json.loads(V2_DEFAULTS_SNAPSHOT.read_text())
+
+
+def _v2_field_defaults_from_worktree(root: Path) -> dict:
+    """``{field_name: default}`` for RunConfig as it stands in a v2 checkout."""
     import json
     import subprocess
     import sys
 
     out = subprocess.run(
         [sys.executable, "-c",
-         f"import sys; sys.path.insert(0, {str(V2_WORKTREE)!r}); "
+         f"import sys; sys.path.insert(0, {str(root)!r}); "
          "import dataclasses, json; from ema.cli.config_schema import RunConfig; "
          "print(json.dumps({f.name: f.default for f in dataclasses.fields(RunConfig)}, "
          "default=str))"],
@@ -308,8 +365,58 @@ def _v2_field_defaults() -> dict:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-@pytest.mark.skipif(not (V2_WORKTREE / "ema" / "cli" / "config_schema.py").exists(),
-                    reason="the frozen v2 worktree is not on this machine")
+def _v2_field_defaults() -> dict:
+    """``{field_name: default}`` for v2's RunConfig -- live tree if any, else snapshot."""
+    root = _v2_worktree()
+    if root is None:
+        return _snapshot()["fields"]
+    return _v2_field_defaults_from_worktree(root)
+
+
+def test_the_frozen_v2_snapshot_is_the_v2_this_branch_claims_to_reproduce():
+    """The snapshot must name the commit the goldens were made from, and be real.
+
+    A cache nobody can trace back to a commit is worse than no cache: it would
+    let the completeness checks below pass against whatever happened to be
+    dumped into it.
+    """
+    from tests.test_prime_v2_compat_golden import V2_COMMIT
+
+    snap = _snapshot()
+    assert snap["v2_commit"] == V2_COMMIT, (
+        "the frozen defaults were dumped from %r but the compat goldens are "
+        "v2 = %r" % (snap["v2_commit"], V2_COMMIT)
+    )
+    fields = snap["fields"]
+    assert len(fields) > 50, f"only {len(fields)} fields -- that is not v2's RunConfig"
+    # The one field whose moved default IS the branch's behavioural change.
+    # If this ever reads "auto", the snapshot was dumped from prime, not v2.
+    assert fields["ip_filter_mode"] == "annotate", fields["ip_filter_mode"]
+    # ...and the prime-only fields must be ABSENT, or the dump came from prime.
+    assert "ip_filter_default" not in fields
+    assert "pas_features" not in fields
+
+
+def test_the_frozen_v2_snapshot_still_matches_the_v2_worktree():
+    """Where a real v2 checkout exists, the cache must agree with it.
+
+    Skipped (and only skipped) on a machine that has no v2 tree -- which is
+    precisely why the two checks below no longer are.
+    """
+    root = _v2_worktree()
+    if root is None:
+        pytest.skip(
+            f"no v2 worktree (set {V2_WORKTREE_ENV}); the frozen snapshot is "
+            "used instead and the completeness checks still run"
+        )
+    live = _v2_field_defaults_from_worktree(root)
+    frozen = _snapshot()["fields"]
+    assert {k: str(v) for k, v in frozen.items()} == {k: str(v) for k, v in live.items()}, (
+        f"{V2_DEFAULTS_SNAPSHOT} has drifted from {root}; regenerate it with "
+        "the command in the file's _how_to_regenerate key"
+    )
+
+
 def test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line():
     """The check that would have caught the no-op default.
 
@@ -369,8 +476,6 @@ def test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line(
     )
 
 
-@pytest.mark.skipif(not (V2_WORKTREE / "ema" / "cli" / "config_schema.py").exists(),
-                    reason="the frozen v2 worktree is not on this machine")
 def test_every_option_this_branch_adds_is_on_the_compat_command_line():
     """Self-maintaining completeness: diff RunConfig against v2's.
 
@@ -381,23 +486,9 @@ def test_every_option_this_branch_adds_is_on_the_compat_command_line():
     "do not pass it").  A thirteenth prime option cannot then be added without
     someone stating its v2 value.
     """
-    import json
-    import subprocess
-    import sys
-
     from ema.cli.config_schema import V2_COMPAT_OMITTED_FLAGS
 
-    out = subprocess.run(
-        [sys.executable, "-c",
-         f"import sys; sys.path.insert(0, {str(V2_WORKTREE)!r}); "
-         "import dataclasses, json; from ema.cli.config_schema import RunConfig; "
-         "print(json.dumps([f.name for f in dataclasses.fields(RunConfig)]))"],
-        capture_output=True, text=True,
-        env={"PYTHONDONTWRITEBYTECODE": "1", "PATH": "/usr/bin:/bin",
-             "HOME": str(Path.home())},
-    )
-    assert out.returncode == 0, out.stderr[-2000:]
-    v2_fields = set(json.loads(out.stdout.strip().splitlines()[-1]))
+    v2_fields = set(_v2_field_defaults())
 
     specs = field_specs(RunConfig)
     listed = set(_flag_pairs()) | set(V2_COMPAT_OMITTED_FLAGS)
