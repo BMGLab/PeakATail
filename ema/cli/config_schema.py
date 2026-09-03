@@ -445,7 +445,16 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--floor-threshold", yaml_key="floor_threshold",
             legacy_args_attr="floor_threshold",
-            description="Minimum peak height (clamps dynamic threshold).",
+            # IntRange, not plain INT: the value is used as the look-back
+            # distance data_array[-floor_threshold], so 0 silently returns the
+            # OLDEST end in the window instead of the peak edge and a negative
+            # value indexes from the wrong end (issue #101).  peak_calling()
+            # re-checks it for YAML and library callers.
+            click_type=click.IntRange(min=1),
+            description=(
+                "Minimum peak height in dynamic mode (--dynamic-threshold); "
+                "floors the per-window threshold.  Must be >= 1."
+            ),
         ),
     )
     pas_gap: int = field(
@@ -453,7 +462,16 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--pas-gap", yaml_key="pas_gap",
             legacy_args_attr="pas_gap",
-            description="Minimum gap between PAS within a peak (bp).",
+            # issue #101: this is read at exactly one place in the tree,
+            # merge_pas_beds() on the multi-dataset unified path.  It has
+            # never had any effect on a single-BAM run, whatever its old help
+            # text ("minimum gap between PAS within a peak") implied.
+            description=(
+                "MULTI-DATASET MERGE ONLY: minimum gap (bp) between PAS when "
+                "unifying per-dataset pasbed.bed files.  Has NO effect on a "
+                "single-BAM run -- it does not split or merge PAS within a "
+                "peak."
+            ),
         ),
     )
     min_pas_spacing: int = field(
@@ -762,7 +780,13 @@ class RunConfig:
             cli_flag="--min-pas-per-cell", yaml_key="min_pas_per_cell",
             legacy_alias="min_genes",
             legacy_dataclass_attr="filter_config.min_pas_per_cell",
-            description="Minimum PAS per cell (also bridges to filter_config.min_genes).",
+            # issue #101: an AnnData filter, applied in preprocessing() AFTER
+            # pasbed.bed is written -- not a call-set filter.
+            description=(
+                "Minimum PAS per cell.  Filters the AnnData in preprocessing "
+                "only; pasbed.bed is already written and is unaffected. "
+                "(Also bridges to filter_config.min_genes.)"
+            ),
         ),
     )
     min_read: int = field(
@@ -778,7 +802,13 @@ class RunConfig:
         metadata=_spec(
             cli_flag="--min-cells", yaml_key="min_cells",
             legacy_dataclass_attr="filter_config.min_cells",
-            description="Minimum cells expressing a PAS.",
+            # issue #101: as above -- this drops columns from the AnnData, it
+            # does not drop PAS from the call set.
+            description=(
+                "Minimum cells expressing a PAS.  Filters the AnnData in "
+                "preprocessing only; pasbed.bed is already written and is "
+                "unaffected."
+            ),
         ),
     )
 
