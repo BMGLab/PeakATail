@@ -31,6 +31,7 @@ def run_one_pair(
     min_cells_per_group: int = 10,
     pas_gene_map: dict[str, str] | None = None,
     count_mode: str = "cells",
+    full_count_matrix: pd.DataFrame | None = None,
 ) -> tuple[str, str, pd.DataFrame]:
     """Run a single cluster-pair differential APA test.
 
@@ -49,6 +50,10 @@ def run_one_pair(
             fits.  Controlled by ``ResourceManager.split_jobs()`` to avoid
             over-subscription.
         min_cells_per_group: Minimum cells per group to include a PAS.
+        full_count_matrix: Unrestricted count matrix used ONLY for the
+            within-gene denominator when ``diff_df`` has been column-restricted
+            by ``--marker-top-n`` pre-selection (issue #94).  ``None`` when no
+            restriction is active.
 
     Returns:
         Tuple of ``(c1, c2, result_df)`` so callers can reconstruct the
@@ -62,6 +67,11 @@ def run_one_pair(
     # only when the caller supplied one so strategies that ignore it (NB)
     # don't see an unexpected None in their **kwargs path.
     extra: dict = {"pas_gene_map": pas_gene_map} if pas_gene_map is not None else {}
+    # Issue #94: only fisher consumes full_count_matrix (the NB strategies
+    # accept-and-drop via **_ignored), and it is only ever set when the caller
+    # restricted the tested PAS -- so forward it only when it exists.
+    if full_count_matrix is not None:
+        extra["full_count_matrix"] = full_count_matrix
     # count_mode is a fisher-specific knob (reads vs de-pseudoreplicated
     # cells); the NB strategies accept-and-drop it via **_ignored.
     result_df = strategy.test(

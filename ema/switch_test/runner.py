@@ -675,6 +675,7 @@ def _dispatch_pair(
     min_cells_per_group: int = 10,
     pas_gene_map: dict[str, str] | None = None,
     count_mode: str = "cells",
+    full_count_matrix: pd.DataFrame | None = None,
 ) -> tuple[str, str, pd.DataFrame]:
     """Top-level wrapper for ``run_one_pair`` suitable for ``Pool.imap_unordered``.
 
@@ -692,6 +693,8 @@ def _dispatch_pair(
         cluster_labels: Cell-to-cluster assignment Series.
         n_jobs_inner: Inner worker budget from ``ResourceManager.split_jobs()``.
         min_cells_per_group: Minimum cells per group for a PAS to enter testing.
+        full_count_matrix: Unrestricted matrix for the within-gene denominator
+            when ``diff_df`` is marker-restricted (issue #94); else ``None``.
 
     Returns:
         Forwarded ``(c1, c2, result_df)`` from :func:`run_one_pair`.
@@ -707,6 +710,7 @@ def _dispatch_pair(
         min_cells_per_group=min_cells_per_group,
         pas_gene_map=pas_gene_map,
         count_mode=count_mode,
+        full_count_matrix=full_count_matrix,
     )
 
 
@@ -824,6 +828,7 @@ def run_diff(
     counts_layer: str | None = None,
     allow_non_count_matrix: bool = False,
     progress_manager=None,
+    warn_marker_top_n: bool = True,
 ) -> dict[tuple[str, str], pd.DataFrame]:
     """Library-level entry point for differential APA testing.
 
@@ -845,8 +850,20 @@ def run_diff(
             types/anything" is already supported by picking the column here
             and (optionally) narrowing to specific contrasts with
             ``cluster_pairs``.
-        marker_top_n: Top-N marker PAS per cluster (0 = disabled).
+        marker_top_n: Top-N marker PAS per cluster (0 = disabled, and the
+            default since issue #94).  Any non-zero value ranks markers with
+            the SAME ``cluster_key`` labels the differential test then
+            contrasts -- a label double-dip that also shrinks the within-gene
+            Fisher denominator, making the q-values anti-conservative (a
+            label-permutation null goes from 3.0% of null p<0.05 at 0 to
+            13.0-24.7% at 200, depending on strategy).  Treat it as a speed
+            shortcut / ranking screen, never as calibrated inference.
         marker_method: Marker ranking method (wilcoxon / t-test / logreg).
+        warn_marker_top_n: Emit the issue #94 double-dip warning when
+            ``marker_top_n > 0``.  Set to ``False`` by callers that have
+            already warned in their own vocabulary (``ema switch diff`` warns
+            with the ``--marker-top-n`` spelling before calling in), so the
+            user does not read the same ten lines twice.
         strategy: Registered differential APA strategy name.
         fdr: FDR q-value threshold for significance.
         threads: Max parallel workers ceiling (or None for auto).
@@ -951,6 +968,31 @@ def run_diff(
 
         # Marker selection
         if marker_top_n > 0:
+            # Issue #94: the markers are ranked with the SAME cluster labels
+            # the differential test then contrasts, and the restricted matrix
+            # also shrinks the within-gene Fisher denominator -- a label
+            # double-dip that makes every strategy anti-conservative. The
+            # default was flipped 200 -> 0 for that reason; this path is now
+            # an explicit, informed speed shortcut and warns loudly.
+            if warn_marker_top_n:
+                log.warning(
+                    "run_diff: marker_top_n=%d SELECTS THE TESTED PAS WITH THE "
+                    "SAME CLUSTER LABELS THE TEST THEN CONTRASTS (label "
+                    "double-dip; issue #94). Under a 20-run label-permutation "
+                    "null this inflated the fraction of null p<0.05 from 3.0%% "
+                    "(top-n 0) to 20.3%% (fisher count_mode='reads'), 13.0%% "
+                    "(fisher count_mode='cells') and 24.7%% (nb_pairwise), "
+                    "with a q<0.05 hit in 19-20 of 20 permutations vs 0 of 20 "
+                    "at top-n 0; the SELECTION ALONE accounts for 17.4%%. The "
+                    "second half of #94 -- a within-gene Fisher denominator "
+                    "computed over only the selected PAS -- is fixed (the "
+                    "denominator now comes from the full matrix, so p-values "
+                    "match the unrestricted run), but the selection bias "
+                    "remains: these q-values are NOT FDR-calibrated -- ranking "
+                    "screen only. Use marker_top_n=0 (the default) for "
+                    "calibrated inference.",
+                    marker_top_n,
+                )
             log.info("run_diff: selecting top %d markers per cluster (%s)", marker_top_n, marker_method)
             markers = select_marker_pas(
                 adata,
@@ -975,8 +1017,18 @@ def run_diff(
             marker_set = set(markers)
             diff_df = restrict_count_matrix(diff_df_full, list(marker_set), axis="cols")
             log.info("run_diff: count matrix restricted to %d PAS", diff_df.shape[1])
+            # Issue #94, second defect: restricting the matrix must restrict
+            # only WHICH PAS are tested -- never the within-gene denominator.
+            # Fisher's "reads/cells at the OTHER PAS of this gene" cell has to
+            # stay "all other PAS of the gene", so the unrestricted matrix is
+            # handed to the strategy alongside the restricted one.  Without
+            # this, opting into a speed filter also (silently) changed the
+            # statistic: the same PAS scored n_reads_gene 1,746 restricted vs
+            # 5,289 unrestricted, and only 629/6,453 p-values matched.
+            diff_df_denom: pd.DataFrame | None = diff_df_full
         else:
             diff_df = diff_df_full
+            diff_df_denom = None
 
         cluster_labels = pd.Series(adata.obs[cluster_key].values, index=adata.obs_names)
         unique_clusters = sorted(cluster_labels.unique().astype(str).tolist())
@@ -1020,6 +1072,25 @@ def run_diff(
                     "run_diff: isoform_agg=%s: %d group(s) built for differential testing",
                     _isoform_agg, len(_isoform_groups),
                 )
+
+        # Issue #94: the per_gene path repairs the denominator by handing
+        # fisher the unrestricted matrix, but under within_utr/between_utr the
+        # denominator IS the group's ``bg_cols``, built above from the (already
+        # marker-restricted) matrix -- and for between_utr the columns are
+        # UTRs, not PAS, so the marker set cannot be mapped back onto them.
+        # That combination therefore still narrows the background; say so
+        # instead of failing silently.  Checked AFTER the per_gene fallbacks
+        # above, so a run that fell back does not get a warning about a scope
+        # it is no longer using.
+        if _isoform_agg != "per_gene" and diff_df_denom is not None:
+            log.warning(
+                "run_diff: --marker-top-n %d combined with --isoform-agg=%s "
+                "still narrows the within-group denominator to the "
+                "marker-selected columns (issue #94; only the default "
+                "--isoform-agg per_gene restores the full denominator). Use "
+                "--marker-top-n 0 with --isoform-agg=%s.",
+                marker_top_n, _isoform_agg, _isoform_agg,
+            )
 
         if diff_strat.supports_multi_condition:
             log.info("run_diff: running %s omnibus across %d clusters", strategy, len(unique_clusters))
@@ -1117,6 +1188,7 @@ def run_diff(
                         min_cells_per_group=min_cells_per_group,
                         pas_gene_map=pas_gene_map,
                         count_mode=count_mode,
+                        full_count_matrix=diff_df_denom,
                     )
                     pair_results[(c1, c2)] = df
                     if _pair_client is not None:
@@ -1131,6 +1203,7 @@ def run_diff(
                     min_cells_per_group=min_cells_per_group,
                     pas_gene_map=pas_gene_map,
                     count_mode=count_mode,
+                    full_count_matrix=diff_df_denom,
                 )
                 ctx = multiprocessing.get_context("spawn")
                 with ctx.Pool(n_outer) as pool:

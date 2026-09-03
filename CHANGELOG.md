@@ -1,5 +1,84 @@
 # Changelog
 
+## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
+
+### Breaking changes
+
+- **`ema switch diff --marker-top-n` now defaults to `0` (was `200`).** The
+  old default pre-filtered the tested PAS to the union of the top-200 marker
+  PAS per cluster, ranked by `scanpy.tl.rank_genes_groups` on the *same*
+  `--cluster-key` labels the differential test then contrasts — a label
+  double-dip — and additionally shrank the within-gene Fisher denominator
+  (the "rest of the gene" background became the same label-selected subset).
+  Under a 20-run label-permutation null on a correctly-keyed matrix:
+
+  | Configuration | Null p < 0.05 | Runs with a q < 0.05 hit |
+  |---|---|---|
+  | `fisher --count-mode reads --marker-top-n 200` | 20.3 % | 20 / 20 |
+  | `fisher --count-mode cells --marker-top-n 200` | 13.0 % | 19 / 20 |
+  | `nb_pairwise --marker-top-n 200` | 24.7 % | 19 / 20 |
+  | `fisher --count-mode cells --marker-top-n 0` | 3.0 % | 0 / 20 |
+
+  `--marker-top-n 0` was the only FDR-controlled configuration measured, so a
+  flagless `ema switch diff` is now calibrated. **A run that relied on the old
+  default tested a different (smaller, label-selected) PAS set and reported
+  anti-conservative q-values; re-run it at the new default.** The same applies
+  to the `marker_top_n` YAML key and to `ema.switch_test.runner.run_diff`,
+  whose signature default is unchanged (it is a required argument) but whose
+  callers now pass `0`.
+
+### Fixed
+
+- **The within-gene Fisher denominator no longer changes when the tested PAS
+  are restricted.** `FisherStrategy` computed each gene's "reads / cells at
+  the OTHER PAS of this gene" total from the matrix it was handed, so a
+  `--marker-top-n N` run silently redefined a gene total as "the
+  marker-selected PAS of this gene" — the same PAS scored an `n_reads_gene` of
+  1,746 restricted vs 5,289 unrestricted, and only 629 of 6,453 p-values
+  agreed between a marker-on and a marker-off run of the same input.
+  `run_diff` now hands `fisher` the unrestricted matrix alongside the
+  restricted one (new `full_count_matrix` argument, threaded through
+  `run_one_pair` / `_dispatch_pair`), so `--marker-top-n N` decides only
+  *which* PAS are tested and reported and every reported p-value is identical
+  to the unrestricted run's. Genes whose selected PAS number fewer than two
+  are now tested too, since the gene itself still has a background.
+  The remaining (unfixable-by-code) half of issue #94 is the label double-dip
+  in the selection itself, which is why the default stays `0`.
+  Exception: under `--isoform-agg within_utr|between_utr` the denominator *is*
+  the group's own columns by design, so combining it with `--marker-top-n > 0`
+  still narrows the background — that combination now warns.
+
+### Changed
+
+- **Any non-zero `--marker-top-n` now logs a loud warning** naming the
+  double-dip and the measured null inflation, from
+  `ema/switch_test/runner.py::run_diff` so the library path warns too, and
+  from `ema/cli/switch_diff.py` in `--marker-top-n` vocabulary. `run_diff`
+  gained `warn_marker_top_n` (default `True`) which the CLI sets to `False`,
+  so a CLI user reads the warning once rather than twice. The flag remains
+  available as a speed shortcut / ranking screen for large datasets — it is
+  not a statistical filter.
+- `--marker-top-n` gained real `--help` text (it previously showed only
+  `[default: 200]`), and `docs/cli/switch-diff.md` gained a
+  "Why `--marker-top-n` defaults to 0" section with the permutation-null table.
+- Docs no longer promise a `markers.tsv` from a flagless run: the quickstart
+  output listing, `docs/concepts/output-files.md` and
+  `docs/concepts/data-flow.md` now say it appears only with
+  `--marker-top-n > 0`.
+
+### Added
+
+- `tests/test_marker_top_n_double_dip_i94.py` — a label-permutation null
+  regression on a small synthetic matrix (fixed seeds, no I/O): at the default
+  settings the null p < 0.05 rate stays near nominal with zero q < 0.05 hits
+  across every seed, while `--marker-top-n 200` inflates it several-fold.
+  Plus denominator regressions: a hand-built sparse two-gene fixture whose
+  non-selected PAS carry counts (asserting the gene totals, p-value,
+  `odds_ratio`, `delta_proportion` and `log2fc` of a restricted run match the
+  unrestricted run in both `--count-mode` values, with a guard test proving
+  the fixture really does expose the defect), and an end-to-end `run_diff`
+  comparison of a `--marker-top-n 200` run against a `--marker-top-n 0` run of
+  the same input over the 400 PAS they share.
 ## Unreleased — switch length: degenerate proximal==distal pairs
 
 ### Fixed

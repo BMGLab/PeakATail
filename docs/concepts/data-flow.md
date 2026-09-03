@@ -24,7 +24,7 @@ flowchart TD
     MATCH["Cross-dataset cluster matching\nema/clustering/cross_dataset/\n→ cross_dataset/canonical_cluster_map.tsv\n(only when >1 dataset)"]
     VIZ["Post-pipeline visualisation\nema/viz/pipeline_hooks.py\n→ figures/umap_*.png\n   figures/clusters_*.png\n   figures/peak_qc_*.png\n   figures/resource_timeline.png\n   figures/run_report.html"]
 
-    DIFF["ema switch diff\nFisher exact / NB regression\n→ switch_diff_<ts>/\n  differential/fisher_A_vs_B.tsv\n  markers.tsv\n  figures/volcano_*.png\n  figures/figures_INDEX.md"]
+    DIFF["ema switch diff\nFisher exact / NB regression\n→ switch_diff_<ts>/\n  differential/fisher_A_vs_B.tsv\n  markers.tsv (only if --marker-top-n > 0)\n  figures/volcano_*.png\n  figures/figures_INDEX.md"]
     LENGTH["ema switch length\nPDUI / proportion / entropy\n→ switch_length_<ts>/\n  pdui_classic.tsv\n  pdui_proportion.tsv\n  entropy_shannon.tsv\n  figures/pdui_distribution.png"]
     GENEVIEW["ema switch geneview\nPer-gene coverage tracks\n→ switch_geneview_<ts>/\n  figures/gene_<id>.png\n  figures/figures_INDEX.md"]
 

@@ -905,12 +905,22 @@ class RunConfig:
     # so the YAML loader recognises them (they appear in _LIVE_KEYS) and so
     # defaults are schema-derived instead of duplicated in _SUBCOMMAND_DEFAULTS.
     # skip_legacy_bridge=True keeps them out of the `ema run` legacy bridge.
+    # Issue #94: the default was 200, which pre-selected the tested PAS with
+    # the SAME cluster labels the test then contrasts (a label double-dip) and
+    # additionally shrank the within-gene Fisher denominator.  Under a
+    # label-permutation null that made EVERY strategy anti-conservative
+    # (fisher/reads 20.3% of null p<0.05, fisher/cells 13.0%, nb_pairwise
+    # 24.7%, with a q<0.05 "hit" in 19-20 of 20 permutations).  0 (no
+    # pre-selection) was the only FDR-controlled configuration measured
+    # (3.0%, 0/20), so it is now the default.
     marker_top_n: int = field(
-        default=200,
+        default=0,
         metadata=_spec(
             cli_flag="--marker-top-n", yaml_key="marker_top_n",
             skip_legacy_bridge=True,
-            description="Top-N markers per cluster for differential APA.",
+            description="Top-N markers per cluster for differential APA "
+                        "(0 = disabled, the FDR-controlled default; any "
+                        "non-zero value double-dips on the cluster labels).",
             applies_to=frozenset({"switch_diff"}),
         ),
     )

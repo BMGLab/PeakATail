@@ -231,7 +231,7 @@ Produced by `ema switch diff`. The subdirectory is created inside the run direct
 
 | File | Contents |
 |------|----------|
-| `markers.tsv` | Top-N marker PAS per cluster, used to subset testing. Columns: `cluster`, `pas_id`, `score` |
+| `markers.tsv` | **Only written when `--marker-top-n N` is passed with `N > 0`** (the default is `0`, so a flagless run produces no `markers.tsv`). Top-N marker PAS per cluster, used to subset testing. Columns: `cluster`, `pas_id`, `score`. Marker pre-selection ranks PAS with the same cluster labels the test then contrasts, so it is a speed shortcut, not calibrated inference — see [issue #94](https://github.com/BMGLab/PeakATail/issues/94) |
 | `differential/<strategy>_<c1>_vs_<c2>.tsv` | Per-pair differential results. See [Tutorial 04 — switch analysis](../tutorials/04-switch-analysis.md) for column definitions |
 | `figures/volcano_<c1>_vs_<c2>.png/.svg/.html` | Volcano plot for one cluster pair |
 | `figures/figures_INDEX.md` | Human-readable index of all figures with per-pair statistics |
