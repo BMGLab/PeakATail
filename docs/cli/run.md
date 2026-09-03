@@ -109,10 +109,16 @@ Options:
   --min-prominence FLOAT          scipy.signal.find_peaks prominence
                                   threshold.  [default: 5.0]
   --dynamic-threshold             Use a per-window dynamic peak threshold.
-  --floor-threshold INTEGER       Minimum peak height (clamps dynamic
-                                  threshold).  [default: 3]
-  --pas-gap INTEGER               Minimum gap between PAS within a peak (bp).
-                                  [default: 100]
+  --floor-threshold INTEGER RANGE
+                                  Minimum peak height in dynamic mode
+                                  (--dynamic-threshold); floors the per-window
+                                  threshold.  Must be >= 1.  [default: 3;
+                                  x>=1]
+  --pas-gap INTEGER               MULTI-DATASET MERGE ONLY: minimum gap (bp)
+                                  between PAS when unifying per-dataset
+                                  pasbed.bed files.  Has NO effect on a
+                                  single-BAM run -- it does not split or merge
+                                  PAS within a peak.  [default: 100]
   --min-pas-spacing INTEGER       Tier-1 (distance) of the post-detection PAS
                                   merger.  Adjacent PAS within one peak whose
                                   gap is below this value are merged uncon-
@@ -143,12 +149,16 @@ Options:
   --ip-a-stretch INTEGER          Min consecutive genomic A's downstream of a
                                   PAS to flag it as internal priming.
                                   [default: 6]
-  --min-pas-per-cell INTEGER      Minimum PAS per cell (also bridges to
-                                  filter_config.min_genes).  [default: 50]
+  --min-pas-per-cell INTEGER      Minimum PAS per cell.  Filters the AnnData
+                                  in preprocessing only; pasbed.bed is already
+                                  written and is unaffected.  (Also bridges to
+                                  filter_config.min_genes.)  [default: 50]
   --min-read INTEGER              Minimum reads per cell barcode.  [default:
                                   1500]
-  --min-cells INTEGER             Minimum cells expressing a PAS.  [default:
-                                  3]
+  --min-cells INTEGER             Minimum cells expressing a PAS.  Filters
+                                  the AnnData in preprocessing only;
+                                  pasbed.bed is already written and is
+                                  unaffected.  [default: 3]
   --max-gene-distance INTEGER     Max distance for gene-end annotation (bp).
                                   [default: 5000]
   --utr-multiplier FLOAT          3'UTR length multiplier for extended-3'
@@ -245,8 +255,8 @@ Options:
 | `--smoothing-window` | INT | 50 | Gaussian smoothing window in bp applied to per-strand coverage before peak finding. Larger values suppress noise at the cost of resolution. |
 | `--min-prominence` | FLOAT | 5.0 | `scipy.signal.find_peaks` prominence threshold. Lower to 2.0 to rescue low-coverage PAS; raise to 10.0 to keep only prominent peaks. |
 | `--dynamic-threshold` | FLAG | off | Use a per-window dynamic peak height threshold rather than a fixed cutoff. Useful for samples with highly variable library depth across chromosomes. |
-| `--floor-threshold` | INT | 3 | When `--dynamic-threshold` is on, this is the minimum peak height. Prevents the dynamic threshold from falling so low that noise is called. |
-| `--pas-gap` | INT | 100 | Minimum bp gap between two PAS within the same peak. Increase to merge closely-spaced PAS that likely represent the same site. |
+| `--floor-threshold` | INT (>=1) | 3 | When `--dynamic-threshold` is on, this is the minimum peak height. Prevents the dynamic threshold from falling so low that noise is called. Must be >= 1: the value is used as the look-back distance `data_array[-floor_threshold]`, so `0` would silently read the oldest read end in the window instead of the peak edge (issue #101). |
+| `--pas-gap` | INT | 100 | **Multi-dataset merge only.** Minimum bp gap between PAS when `merge_pas_beds` unifies per-dataset `pasbed.bed` files. It has **no effect on a single-BAM run** and does not split or merge PAS within a peak — use `--min-pas-spacing` for that (issue #101). |
 | `--min-pas-spacing` | INT | `-1` | Tier-1 (distance) of the post-detection PAS merger. Adjacent PAS within one peak whose gap < this value are merged unconditionally. `-1` auto-detects the median read length per BAM (e.g. ~98 bp for 10x v2, ~150 bp for v3). `0` disables Tier 1. See [Post-Detection PAS Merger](../strategies/pas-merger.md). |
 | `--min-pas-prominence` | FLOAT | `5.0` | Tier-2 (valley depth) of the post-detection PAS merger. Lambda strategies (`lambda_poisson`, `lambda_gradient`) **ignore** this value and use their own `compute_lambda(heights)` instead — fully dynamic. Non-lambda strategies (`original`, `sierra_iterative`) treat this as a static coverage-depth threshold. Negative disables Tier 2. |
 | `--cleavage-offset` | INT | `0` | **3' cleavage-site offset correction** (issue #72). Called peak 3' ends stop ~90–105 nt short of the true cleavage site because 10x R2 coverage runs out before the poly(A) junction. When `> 0`, the reported PAS 3' end is shifted **downstream** (strand-aware) by this many bp after peak calling, so tight-cutoff benchmarks and atlas annotation score the inferred cleavage position rather than the coverage edge. A sane data-driven constant is ~90–100 (try `95`). `0` (default) preserves legacy behaviour (no shift). See [3' cleavage offset](#3-cleavage-site-offset-issue-72) below. |
@@ -280,9 +290,9 @@ constant `DEFAULT_CLEAVAGE_OFFSET = 95` as the current fallback (see the
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--min-pas-per-cell` | INT | 50 | Minimum number of distinct PAS detected per cell barcode. Cells below this threshold are excluded. Also bridges to `filter_config.min_genes` in the legacy interface. |
+| `--min-pas-per-cell` | INT | 50 | Minimum number of distinct PAS detected per cell barcode. Cells below this threshold are excluded **from the AnnData**, in `preprocessing()` — `pasbed.bed` has already been written and is not affected (issue #101). Also bridges to `filter_config.min_genes` in the legacy interface. |
 | `--min-read` | INT | 1500 | Minimum total read count per cell barcode. Cells below this are discarded before count matrix construction. Reduce to 500 for low-depth protocols. |
-| `--min-cells` | INT | 3 | Minimum number of cells a PAS must be expressed in to survive preprocessing. |
+| `--min-cells` | INT | 3 | Minimum number of cells a PAS must be expressed in to survive preprocessing. It filters **the AnnData only**, in `preprocessing()`; the call set in `pasbed.bed` is written earlier and is not affected (issue #101). |
 
 ### Poly(A) read evidence
 

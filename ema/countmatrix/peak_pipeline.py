@@ -225,7 +225,8 @@ def finder_loop(
             Used here to confirm the strategy is importable; the finder does
             not call strategy methods — that happens in the writer.
         dynamic_threshold: Enable window-based dynamic threshold.
-        floor_threshold: Minimum threshold in dynamic mode.
+        floor_threshold: Minimum threshold in dynamic mode.  Must be >= 1
+            (issue #101) -- validated by the caller, :func:`peak_calling`.
         lambda_fold_change: Multiplier on local lambda for dynamic threshold.
         lambda_window: Window size in bp for local lambda estimation.
     """
@@ -233,11 +234,17 @@ def finder_loop(
 
     from sortedcontainers import SortedList
 
+    from ema.countmatrix.dynamic_threshold import DynamicThresholdGuard
     from ema.countmatrix.peak import Peak
     from ema.countmatrix.polya import ClipStream
 
     current_threshold = default_threshold
     background_deque: deque[int] = deque()
+
+    # issue #101: same bound as the monolithic loop, and for the same reason
+    # -- the dynamic threshold can outgrow the live read window.  Built only
+    # on the dynamic path so the static one keeps the literal expression.
+    dyn_guard = DynamicThresholdGuard() if dynamic_threshold else None
 
     data_array: SortedList = SortedList()
     signal = False
@@ -310,7 +317,9 @@ def finder_loop(
 
                 # --- peak accumulation logic (mirrors monolithic exactly) ---
                 if signal:
-                    l_end = data_array[-current_threshold]
+                    l_end = (data_array[-current_threshold]
+                             if dyn_guard is None
+                             else dyn_guard.l_end(data_array, current_threshold))
                     if start1 <= l_end:
                         peak.cb_counting(cb=cb)
                         peak.cb_position_counting(end1, cb)
@@ -360,6 +369,10 @@ def finder_loop(
             out_queue.put((chro, peak))
         if clip_accum is not None:
             out_queue.put(("__polya_clips__", chro, clip_accum))
+
+        if dyn_guard is not None:
+            dyn_guard.report("%s strand (pipeline finder)"
+                             % ("-" if direction else "+"))
 
     finally:
         out_queue.put(None)

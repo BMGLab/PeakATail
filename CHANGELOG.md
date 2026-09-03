@@ -52,6 +52,167 @@
   proximal and distal on DIFFERENT strands.` The guard still **fails** the
   run on a degenerate row — it is a real defect, just not a strand one — and
   the message now says so.
+## Unreleased — concurrent-branch safety
+
+### Fixed
+
+- **`ema reannotate` refuses to start when another live `ema reannotate`
+  already holds the same `--out` (issue #65).** Two branches pointed at one
+  output dir write the same `04_pas_gene_assignment/<ds>/pas_gene.tsv`,
+  `05_annotated_matrix/<ds>/*` and `07_clustering/<ds>/clusters.h5ad` paths,
+  so the surviving artifacts are an arbitrary interleaving of two different
+  parameter sets — that is how five sweep-grid branches sharing a
+  `branch_name` produced three different `pas_gene.tsv` row counts for
+  identical declared params, grouped by write time. `reannotate_run()` now
+  takes an exclusive `flock` on `<out>/.ema_reannotate.lock` before any work
+  begins; if the claim fails it raises `ReannotateError`, which the CLI
+  surfaces as a `click.ClickException` — **the command exits 1 having written
+  nothing**, and names the pid/host/start-time holding the directory. The
+  claim lives on the open file description, so the kernel drops it when the
+  process exits for any reason: a crashed or killed branch leaves no stale
+  lock, and `.ema_reannotate.lock` never needs deleting by hand. This is a
+  **user-visible behaviour change** — a workflow that (accidentally or
+  deliberately) ran two concurrent branches into one `--out` now gets a hard
+  error instead of silently corrupted output; give every branch its own
+  `--out`. Documented in `docs/cli/reannotate.md`.
+- **Every text artifact is written atomically (`ema/outputs.py`).** The new
+  `atomic_write()` context manager writes to a temp file in the **same**
+  directory and `os.replace()`s it onto the final path, replacing the plain
+  `open(path, "w")` / `to_csv(path)` / `write_text(path)` calls behind
+  `pas_gene.tsv`, `annotatedpas.bed`, `pasbed.bed`, the annotated-matrix
+  `pas_ids`/`barcodes` sidecars, `run_config.json`, `run_manifest.json` and
+  the per-stage `*_stats.json`. A partially written file is therefore never
+  visible at a final artifact path: a reader sees either the complete
+  previous content or the complete new one, two racing writers can only
+  produce one of the two complete files (never a byte-level mix), and a
+  write that raises leaves the previous file untouched. File **contents** are
+  unchanged — only the instant at which they become visible.
+## Unreleased — PAS→gene assignment in overlapping loci
+
+### Fixed
+
+- **A PAS in an overlapping locus is no longer handed to the spanning /
+  readthrough model (issue #99).** `find_close` called
+  `bedtools closest -t first`. Where a readthrough model covers a neighbour's
+  3'UTR every PAS there is distance **0** from *both* models, so `-t first`
+  resolved the tie by file order — always the spanning model, because it
+  starts further upstream. On the 17-sample Laughney cohort every PAS in
+  chr17:7,579,636–7,582,386 was labelled `SENP3-EIF4A1` while lying in
+  **CD68**'s 3'UTR, and CD68 was left with **0 assigned PAS cohort-wide**
+  (same shape for PTPRCAP←CORO1B, FKBP11←AC073610.2, GPX1←RHOA, MDK←DGKZ,
+  STARD10←ARAP1, ARPC1A←AC004922.1, FCER1G←NDUFS2, KRTCAP3←NRBP1). 33 % of
+  the top-30 replicated gene switches carried the wrong gene name (21 % of
+  the top-100, 12 % of the top-500, 7 % overall), the strongest hits being
+  enriched precisely because marker genes live in such loci.
+
+  The call is now `-t all`, and `_resolve_overlapping_genes` picks one gene
+  per PAS from **what the annotation says**, not from proximity alone.
+  Nearest-annotated-3'-terminus is not safe on its own: the nearest terminus
+  in such a locus is very often a nested miRNA/snRNA/pseudogene or a lncRNA
+  with no `three_prime_utr` record at all (MIR33B and MIR6777 inside SREBF1,
+  RNU6-862P inside NCOR1, MIR1288 inside PIGL, MIR6778 inside SHMT1,
+  AC016876.3 over CD68). Handing the PAS to one of those grades it TIER_3 —
+  `utr_lengths` has no entry — and the default tier filter then **deletes**
+  the PAS from `annotatedpas.bed` and from the count matrix, which is worse
+  than a wrong label. Candidates are therefore ranked, best first:
+
+  0. the candidate does not turn a kept PAS into a filtered-out one;
+  1. the candidate has a `three_prime_utr` record — **hard rule: a gene
+     without one never wins a tie against a gene with one**;
+  2. the PAS lies inside the candidate's annotated 3'UTR footprint;
+  3. the PAS lies inside the candidate's *unextended* gene body;
+  4. distance to the candidate's annotated 3' terminus;
+  5. the candidate's annotated span, then its gene ID, for determinism.
+
+  `gtf_bed`'s 3'-end extension is now the named constant
+  `gtftobed.GENE_EXTENSION_BP` (unchanged at 5000) so the annotated gene body
+  and terminus can be recovered from the extended record;
+  `find_close(gene_extension=…)` overrides it for a gene BED that `gtf_bed`
+  did not build. A minus-strand record clamped at a contig start (where
+  `gtf_bed` writes `start=1` instead of subtracting the extension) has no
+  recoverable terminus, so it now gets a terminus *range* and the widest
+  possible body rather than an invented point thousands of bp from the real
+  one.
+
+  Measured on GRCh38.99 chr17 with all 7,801 annotated 3'UTR termini as the
+  PAS set: **7,801/7,801 assigned (was 7,716) and 97.0 % assigned to a gene
+  that really has a 3'UTR record ending there (was 94.1 %)**. Both CD68 PAS
+  in chr17:7,579,636–7,582,386 now go to CD68.
+
+  **This changes gene labels.** PAS coordinates, counts and tiers are
+  untouched — only the `gene_id` a contested PAS is assigned to — but
+  `annotatedpas.bed`, `pas_gene.tsv` and every downstream gene-level result
+  differ in overlapping loci, so switch tables computed before this fix
+  should be regenerated. PAS with a single candidate gene are unaffected.
+  Regression tests: `tests/test_pas_gene_overlapping_loci_i99.py`, including
+  a committed slice of the real GRCh38.99 chr17 annotation
+  (`tests/data/GRCh38.99_chr17_overlapping_loci.gtf`).
+
+Issue #99's second defect — the poly(A) clip-rate warning sampling only the
+head of a coordinate-sorted BAM (`ema/countmatrix/polya.py`,
+`max_reads=200_000`) — is **not** addressed here: branch `peakAtail-prime`
+(PR #100) already replaces that estimator with an exact per-pass count
+(`--clip-rate-sampling pass`), and duplicating it would collide.
+## Unreleased — `--dynamic-threshold` no longer aborts the run (issue #101)
+
+**`--dynamic-threshold --lambda-fold-change 2.0` — the parameter reference's
+own first entry under "find more PAS" — used to abort the caller with a bare
+`IndexError: list index out of range`, raised from inside a spawned
+chromosome worker with no message naming a flag, a contig or a remedy.** Both
+peak-calling loops computed the current peak's right edge as
+`l_end = data_array[-current_threshold]`
+(`ema/countmatrix/peackcalling.py`, `ema/countmatrix/peak_pipeline.py`), the
+dynamic estimator sets
+`current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))`,
+and nothing bounded it by `len(data_array)`. Found by the 2026-08 parameter
+sweep on the PBMC chr19+21 dev slice and reproduced independently on the
+GSE104556 mouse1 chr18+19 slice, so the defect is species-independent.
+
+### Fixed
+
+* **The look-back index is bounded by the live read window, by default.** The
+  rule lives in one place, `ema.countmatrix.dynamic_threshold.resolve_l_end()`,
+  and carries an identity guarantee that is tested exhaustively: for every
+  in-range threshold the bounded and unbounded branches return the *same*
+  element, so bounding can only change a run that would otherwise have
+  aborted. A run that trips the bound now logs a census of how often it fired
+  instead of dying. **No output changes for any run that did not crash** —
+  `--dynamic-threshold` is off by default, `--lambda-fold-change` is read at
+  exactly two places in the tree and both are inside `if dynamic_threshold:`,
+  and `tests/test_dynamic_threshold_bounds.py` pins byte-identity of the BED
+  and the count matrix on a dynamic run that never trips the bound.
+* **`--floor-threshold` is validated.** It was an unchecked INTEGER, and
+  `--floor-threshold 0` made `data_array[-0]` return `data_array[0]` — the
+  OLDEST end in the window rather than the peak edge. No crash, no warning,
+  a wrong peak boundary. Click now takes `IntRange(min=1)` and
+  `peak_calling()` re-checks the value, so YAML and library callers (and every
+  spawned tile / chromosome worker, which all re-enter through it) get the
+  same refusal.
+
+### Documentation
+
+Two help texts that did not match the code, both proven by the same sweep:
+
+* **`--pas-gap` does nothing on a single-BAM run.** It is consumed at exactly
+  one place, `merge_pas_beds` on the multi-dataset unified path
+  (`ema/main.py`), and `--pas-gap 25` and `200` are byte-identical to the
+  baseline on a single BAM. Its help said "minimum gap between PAS within a
+  peak"; it now says it is a multi-dataset merge parameter, and points at
+  `--min-pas-spacing` for the within-peak behaviour it was mistaken for.
+* **`--min-cells` and `--min-pas-per-cell` filter the AnnData, not the call
+  set.** Both act in `preprocessing()`, after `pasbed.bed` is written, and
+  neither changes a byte of it. Their help, `docs/cli/run.md` and the
+  quickstart now say which outputs they touch.
+
+### Note for PR #100 (`peakAtail-prime`)
+
+That branch introduced this module behind `--dynamic-threshold-clamp`,
+defaulted **off** to keep v2 byte-identical. This change keeps the module and
+its API (`resolve_l_end(data_array, current_threshold, clamp)`) so the two
+reconcile rather than compete, but on `develop` the bound is **on by
+default** — a crash is not a behaviour worth preserving, and there is no
+byte-identity contract here. Merging #100 must not restore
+`DYNAMIC_THRESHOLD_CLAMP_DEFAULT = False`.
 
 ## Unreleased — caller memory and CPU
 
