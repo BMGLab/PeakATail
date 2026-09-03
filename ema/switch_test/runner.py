@@ -358,13 +358,20 @@ def _assert_pdui_strand_convention(df: pd.DataFrame, source: str) -> None:
     one pass per written table, so it runs on every write instead of waiting
     for the next review.
 
+    Three distinct failures are counted and named separately: ``INVERTED``
+    (the ordering is backwards for the row's strand), ``DIFFERENT strands``
+    (proximal and distal disagree on strand) and ``DEGENERATE``
+    (proximal == distal -- same PAS id or same start, so the pair has no
+    length axis and its PDUI is 0.5 by construction).  Equality used to fall
+    into the inverted bucket and mis-blame strand selection (issue #98).
+
     Args:
         df: an augmented PDUI table (post ``_augment_pdui_df``).
         source: label used in the error message (usually the output path).
 
     Raises:
-        RuntimeError: at least one row is inverted or has a proximal/distal
-            strand disagreement.
+        RuntimeError: at least one row is inverted, degenerate, or has a
+            proximal/distal strand disagreement.
     """
     needed = {"proximal_start", "distal_start", "proximal_strand", "distal_strand"}
     if df is None or df.empty or not needed.issubset(df.columns):
@@ -378,11 +385,23 @@ def _assert_pdui_strand_convention(df: pd.DataFrame, source: str) -> None:
     stranded = have_coords & p_strand.isin(("+", "-")) & d_strand.isin(("+", "-"))
     mismatch = stranded & (p_strand != d_strand)
     same = stranded & (p_strand == d_strand)
+    # DEGENERATE is not an inversion.  proximal == distal (same PAS, or two
+    # PAS sharing a start) says nothing about strand: the pair simply has no
+    # length axis and its PDUI is 0.5 by construction.  The old
+    # ``~(prox < dist)`` put equality in the inverted bucket, so the error
+    # blamed strand selection for 18,116 rows that were really single-PAS
+    # per-isoform units (issue #98).  Classify and report it separately.
+    degenerate = same & (prox == dist)
+    if {"proximal_pas_id", "distal_pas_id"}.issubset(df.columns):
+        degenerate = degenerate | (
+            same
+            & (df["proximal_pas_id"].astype(str) == df["distal_pas_id"].astype(str))
+        )
     inverted = (
-        (same & (p_strand == "+") & ~(prox < dist))
-        | (same & (p_strand == "-") & ~(prox > dist))
-    )
-    bad = mismatch | inverted
+        (same & (p_strand == "+") & (prox > dist))
+        | (same & (p_strand == "-") & (prox < dist))
+    ) & ~degenerate
+    bad = mismatch | inverted | degenerate
     n_bad = int(bad.sum())
     if not n_bad:
         return
@@ -396,12 +415,16 @@ def _assert_pdui_strand_convention(df: pd.DataFrame, source: str) -> None:
     )
     raise RuntimeError(
         f"{source}: strand/proximal-distal convention violated on {n_bad} of "
-        f"{int(stranded.sum())} coordinate-bearing rows ({genes} gene(s)); "
-        f"{int(mismatch.sum())} of those have proximal and distal on "
-        "DIFFERENT strands. Required: strand '+' => proximal_start < "
-        "distal_start, strand '-' => proximal_start > distal_start. A "
-        "violation means proximal and distal were selected without strand, "
-        "which turns every shortening call into a lengthening call. First "
+        f"{int(stranded.sum())} coordinate-bearing rows ({genes} gene(s)): "
+        f"{int(inverted.sum())} INVERTED, {int(mismatch.sum())} with "
+        f"proximal and distal on DIFFERENT strands, {int(degenerate.sum())} "
+        "DEGENERATE. Required: strand '+' => proximal_start < distal_start, "
+        "strand '-' => proximal_start > distal_start. An INVERTED row means "
+        "proximal and distal were selected without strand, which turns every "
+        "shortening call into a lengthening call. A DEGENERATE row has "
+        "proximal == distal (same PAS id, or the same start): that pair has "
+        "no length axis at all and its PDUI is 0.5 by construction, so it is "
+        "a single-PAS/duplicate-mapping problem, NOT a strand problem. First "
         f"offending rows:\n{df.loc[bad, cols].head(3).to_string(index=False)}"
     )
 

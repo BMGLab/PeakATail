@@ -148,7 +148,17 @@ PDUI = distal_reads / (proximal_reads + distal_reads + pseudocount)
 
 For genes with more than 2 PAS, proximal is the first and distal is the last
 in transcription order (strand-aware). Genes with fewer than 2 PAS are
-excluded. Source: `ema/quantification/strategies/classic.py`.
+excluded.
+
+With `--isoform-agg=per_isoform` the same rule is applied per transcript, and
+it counts **distinct** PAS: transcripts with fewer than 2 **distinct** PAS are
+excluded. The same PAS can be listed more than once for a transcript — one
+entry per UTR exon it intersects — and those repeats are collapsed on `pas_id`
+before the endpoints are chosen. A transcript left with a single usable PAS
+would otherwise be emitted as a degenerate `proximal == distal` pair whose
+`pdui` is `0.5` by construction, carrying no length information; it is dropped
+instead, and a `WARNING` names the gene and the number of transcripts dropped
+(issue #98). Source: `ema/quantification/strategies/classic.py`.
 
 **Columns:**
 
@@ -156,7 +166,7 @@ excluded. Source: `ema/quantification/strategies/classic.py`.
 |---|---|---|
 | `gene_id` | str | Gene identifier. |
 | `transcript_id` | str | `"_gene_"` sentinel when `--isoform-agg=per_gene`; actual transcript ID when `per_isoform`. |
-| `proximal_pas_id` | int | PAS ID of the proximal site used. |
+| `proximal_pas_id` | int | PAS ID of the proximal site used. Never equal to `distal_pas_id` — degenerate pairs are dropped, not written (see above). |
 | `distal_pas_id` | int | PAS ID of the distal site used. |
 | `cell` | str | Cell barcode. |
 | `pdui` | float64 | PDUI in [0, 1]. `NaN` when `proximal_reads + distal_reads = 0` and `pseudocount = 0.0`. |
@@ -242,3 +252,29 @@ for uniform distribution across N PAS (maximally dispersed usage).
 **Breaking change:** runs that previously "worked" by silently using TF-IDF-normalised `.X` and
 plus-strand ordering now fail fast with an actionable message. This is deliberate: those runs produced
 inverted PDUI for 100% of minus-strand genes.
+
+## Degenerate `proximal == distal` pairs are dropped (2026-09, issue #98)
+
+Before this fix, `--isoform-agg=per_isoform` could select the **same PAS** as
+both the proximal and the distal endpoint of a transcript, because a PAS is
+listed once per UTR exon it intersects and those repeats were ranked as if
+they were separate sites. The resulting rows have
+`proximal_pas_id == distal_pas_id`, `proximal_reads == distal_reads` and
+`pdui` exactly `0.5` — a value forced by the arithmetic, not measured from the
+data.
+
+**What changed for you:**
+
+- `pdui_classic.tsv` written with `--isoform-agg=per_isoform` now has **fewer
+  rows** than a pre-fix run. On the GSE104556 testis runs reported in the
+  issue, 18,116 of 13,709,930 rows (7 genes) disappear on mouse1 and 15,004
+  (8 genes) on mouse2. Every dropped row had `pdui == 0.5`, so no real PDUI
+  value is lost — but row counts, transcript counts and the `0.5` bin of a
+  per-isoform PDUI histogram will not match a pre-fix run.
+- `--isoform-agg=per_gene` output is unchanged: it never produced such a pair.
+- The strand/proximal-distal guard now reports three separate counts —
+  `I INVERTED, X with proximal and distal on DIFFERENT strands, D DEGENERATE`
+  — instead of folding `proximal_start == distal_start` into the inverted
+  count and blaming strand-blind selection for it. A `DEGENERATE` row is still
+  a hard error, but it points at single-PAS / duplicate UTR-exon mapping, not
+  at strand.

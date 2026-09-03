@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased — switch length: degenerate proximal==distal pairs
+
+### Fixed
+
+- **`ema switch length --strategy classic --isoform-agg per_isoform` no
+  longer emits pairs whose proximal and distal endpoints are the SAME PAS
+  (`ema/quantification/strategies/classic.py`, issue #98).** The
+  `transcript_id -> [(pas_id, rank), ...]` map carries **one entry per UTR
+  exon a PAS intersects**, so a transcript with a single usable PAS still
+  arrived at the `len(...) < 2` guard holding two or more entries; ranking
+  those duplicates then picked that one PAS as *both* endpoints. Such a row
+  has `proximal_pas_id == distal_pas_id`, `proximal_reads == distal_reads`
+  and `pdui` exactly `0.5` by construction — no length information at all —
+  and it was broadcast to every cell. Repeated PAS are now collapsed on
+  `pas_id` (keeping each site's most proximal rank) *before* the endpoints
+  are chosen, and a transcript left with a single **distinct** PAS is
+  excluded exactly like any other `<2` PAS transcript. A `WARNING` names the
+  gene and how many transcripts were dropped.
+
+  **User-visible output change — `pdui_classic.tsv` now has FEWER ROWS.** On
+  the GSE104556 testis runs reported in the issue this removes 18,116 of
+  13,709,930 rows on mouse1 (7 genes; 14 `(gene, transcript)` units ×
+  1,294 cells) and 15,004 rows on mouse2 (8 genes). Every removed row
+  carried `pdui == 0.5`, so no real PDUI value is lost — but any tally of
+  rows, of transcripts, or of the `0.5` bin will differ from a pre-fix run,
+  and per-isoform PDUI histograms lose a spike at 0.5 that was an artefact,
+  not biology. `--isoform-agg per_gene` is **unaffected**: it selects its
+  endpoints from the deduplicated PAS coordinate table and never produced
+  such a pair.
+
+- **The proximal/distal strand guard no longer blames strand selection for a
+  degenerate pair (`ema/switch_test/runner.py::_assert_pdui_strand_convention`).**
+  The test was `~(proximal_start < distal_start)` on `+` (and its mirror on
+  `-`), so `proximal_start == distal_start` fell into the *inverted* bucket
+  and the `RuntimeError` reported strand-blind selection — the wrong cause
+  for all 18,116 rows above, which had zero true inversions and zero
+  different-strand rows. Equality is now its own class: a pair is
+  `DEGENERATE` when the two PAS ids are equal or the two starts are equal.
+
+  **User-visible message change** — anything grepping this `RuntimeError`
+  must be updated. It now reads:
+
+  ```
+  <source>: strand/proximal-distal convention violated on N of M
+  coordinate-bearing rows (G gene(s)): I INVERTED, X with proximal and
+  distal on DIFFERENT strands, D DEGENERATE. ...
+  ```
+
+  where the previous text was `... rows (G gene(s)); X of those have
+  proximal and distal on DIFFERENT strands.` The guard still **fails** the
+  run on a degenerate row — it is a real defect, just not a strand one — and
+  the message now says so.
 ## Unreleased — concurrent-branch safety
 
 ### Fixed
