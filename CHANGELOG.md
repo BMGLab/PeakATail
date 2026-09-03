@@ -27,16 +27,44 @@
   whose signature default is unchanged (it is a required argument) but whose
   callers now pass `0`.
 
+### Fixed
+
+- **The within-gene Fisher denominator no longer changes when the tested PAS
+  are restricted.** `FisherStrategy` computed each gene's "reads / cells at
+  the OTHER PAS of this gene" total from the matrix it was handed, so a
+  `--marker-top-n N` run silently redefined a gene total as "the
+  marker-selected PAS of this gene" — the same PAS scored an `n_reads_gene` of
+  1,746 restricted vs 5,289 unrestricted, and only 629 of 6,453 p-values
+  agreed between a marker-on and a marker-off run of the same input.
+  `run_diff` now hands `fisher` the unrestricted matrix alongside the
+  restricted one (new `full_count_matrix` argument, threaded through
+  `run_one_pair` / `_dispatch_pair`), so `--marker-top-n N` decides only
+  *which* PAS are tested and reported and every reported p-value is identical
+  to the unrestricted run's. Genes whose selected PAS number fewer than two
+  are now tested too, since the gene itself still has a background.
+  The remaining (unfixable-by-code) half of issue #94 is the label double-dip
+  in the selection itself, which is why the default stays `0`.
+  Exception: under `--isoform-agg within_utr|between_utr` the denominator *is*
+  the group's own columns by design, so combining it with `--marker-top-n > 0`
+  still narrows the background — that combination now warns.
+
 ### Changed
 
 - **Any non-zero `--marker-top-n` now logs a loud warning** naming the
-  double-dip and the measured null inflation, in both
-  `ema/cli/switch_diff.py` and `ema/switch_test/runner.py::run_diff`, so the
-  library path warns too. The flag remains available as a speed shortcut /
-  ranking screen for large datasets — it is not a statistical filter.
+  double-dip and the measured null inflation, from
+  `ema/switch_test/runner.py::run_diff` so the library path warns too, and
+  from `ema/cli/switch_diff.py` in `--marker-top-n` vocabulary. `run_diff`
+  gained `warn_marker_top_n` (default `True`) which the CLI sets to `False`,
+  so a CLI user reads the warning once rather than twice. The flag remains
+  available as a speed shortcut / ranking screen for large datasets — it is
+  not a statistical filter.
 - `--marker-top-n` gained real `--help` text (it previously showed only
   `[default: 200]`), and `docs/cli/switch-diff.md` gained a
   "Why `--marker-top-n` defaults to 0" section with the permutation-null table.
+- Docs no longer promise a `markers.tsv` from a flagless run: the quickstart
+  output listing, `docs/concepts/output-files.md` and
+  `docs/concepts/data-flow.md` now say it appears only with
+  `--marker-top-n > 0`.
 
 ### Added
 
@@ -44,6 +72,13 @@
   regression on a small synthetic matrix (fixed seeds, no I/O): at the default
   settings the null p < 0.05 rate stays near nominal with zero q < 0.05 hits
   across every seed, while `--marker-top-n 200` inflates it several-fold.
+  Plus denominator regressions: a hand-built sparse two-gene fixture whose
+  non-selected PAS carry counts (asserting the gene totals, p-value,
+  `odds_ratio`, `delta_proportion` and `log2fc` of a restricted run match the
+  unrestricted run in both `--count-mode` values, with a guard test proving
+  the fixture really does expose the defect), and an end-to-end `run_diff`
+  comparison of a `--marker-top-n 200` run against a `--marker-top-n 0` run of
+  the same input over the 400 PAS they share.
 
 ## Unreleased — caller memory and CPU
 

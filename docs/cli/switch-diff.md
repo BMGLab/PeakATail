@@ -90,10 +90,12 @@ Options:
                                   controlled setting (issue #94): markers are
                                   ranked with the SAME cluster labels the
                                   differential test then contrasts, so any non-
-                                  zero value double-dips on the labels (and
-                                  shrinks the within-gene Fisher denominator),
-                                  making every strategy anti-conservative.
-                                  Speed-only; not a statistical filter.
+                                  zero value double-dips on the labels, making
+                                  every strategy anti-conservative. The
+                                  restriction no longer changes the within-gene
+                                  Fisher denominator (that is computed from the
+                                  full matrix), but it still selects what is
+                                  tested. Speed-only; not a statistical filter.
                                   [default: 0]
   --marker-method TEXT            [default: wilcoxon]
   -s, --strategy TEXT             Differential APA strategy (run --list-
@@ -124,7 +126,7 @@ Options:
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--strategy` / `-s` | TEXT | `fisher` | Differential APA strategy. Run `ema switch diff --list-strategies` to see registered names. `fisher` applies a within-gene Fisher exact test (see Within-gene Fisher framing below). |
-| `--marker-top-n` | INT | `0` (disabled) | **Speed shortcut, not a statistical filter — leave it at 0.** Pre-filters the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Any non-zero value ranks those markers with the **same cluster labels** the differential test then contrasts (a label double-dip) and shrinks the within-gene Fisher denominator, so the reported q-values are **not FDR-calibrated** — see [Why `--marker-top-n` defaults to 0](#why---marker-top-n-defaults-to-0). When set, the markers TSV is saved to `markers.tsv` for inspection. |
+| `--marker-top-n` | INT | `0` (disabled) | **Speed shortcut, not a statistical filter — leave it at 0.** Pre-filters the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Any non-zero value ranks those markers with the **same cluster labels** the differential test then contrasts (a label double-dip), so the reported q-values are **not FDR-calibrated** — see [Why `--marker-top-n` defaults to 0](#why---marker-top-n-defaults-to-0). When set, the markers TSV is saved to `markers.tsv` for inspection. |
 | `--marker-method` | TEXT | `wilcoxon` | Marker ranking method passed to `scanpy.tl.rank_genes_groups`. Options include `wilcoxon`, `t-test`, `logreg`. |
 | `--min-cells-per-group` | INT | 10 | Minimum number of cells (with non-zero counts for NB strategies) in each cluster group for a PAS to be included in differential testing. PAS failing this filter in either cluster of a pair are dropped. Source: `ema/cli/config_schema.py`, `ema/switch_test/runner.py::run_diff`. |
 
@@ -155,9 +157,18 @@ restricted to the union of the top-200 marker PAS per cluster, ranked by
 `scanpy.tl.rank_genes_groups` on `--cluster-key`. That is a **label
 double-dip** — the markers are chosen with the *same* labels the differential
 test then contrasts, so the PAS that enter the test are exactly the ones that
-already look cluster-associated by chance. Restricting the matrix also shrinks
-the within-gene Fisher denominator, because the "rest of the gene" background
-is now the same label-selected subset.
+already look cluster-associated by chance. Restricting the p-value *set* this
+way alone put 17.4 % of null p-values below 0.05 (nominal 5 %).
+
+Restricting the matrix used to also shrink the within-gene Fisher denominator,
+because the "rest of the gene" background became the same label-selected
+subset — the same PAS scored an `n_reads_gene` of 1,746 restricted vs 5,289
+unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
+marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
+unrestricted matrix for the denominator, so `--marker-top-n N` changes only
+*which* PAS are tested and reported, and each reported p-value is bit-identical
+to the one the unrestricted run produces. The numbers in the table below were
+measured before that fix; the label double-dip they are driven by is unchanged.
 
 Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
 (cluster labels shuffled, so there is nothing true to find; issue #94):
@@ -217,8 +228,8 @@ One TSV per cluster pair. Columns (in order):
 | `strand` | str | `+` or `-`. |
 | `cluster1` | str | First cluster label of this pair. |
 | `cluster2` | str | Second cluster label of this pair. |
-| `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). |
-| `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2. |
+| `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). Summed over **all** PAS of the gene, including any excluded by `--marker-top-n`. |
+| `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2, on the same basis. |
 | `statistic` | float | Test statistic (odds ratio for Fisher). |
 | `pvalue` | float | Raw p-value. |
 | `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR). |

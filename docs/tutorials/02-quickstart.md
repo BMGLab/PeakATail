@@ -165,7 +165,6 @@ peakatail_runs/emaout_<timestamp>/switch_diff_<timestamp>/
     fisher_0_vs_1.tsv
     fisher_0_vs_2.tsv
     ...   (one TSV per cluster pair)
-  markers.tsv               # top-N marker PAS per cluster used to filter tests
   figures/
     volcano_0_vs_1.png
     volcano_0_vs_1.html
@@ -173,6 +172,13 @@ peakatail_runs/emaout_<timestamp>/switch_diff_<timestamp>/
     figures_INDEX.md        # human-readable index of all figures
     figures_INDEX.json      # machine-readable manifest
 ```
+
+There is no `markers.tsv`: it is written only when you pass `--marker-top-n N`
+with `N > 0`, and the command above uses the default `0`. That default is
+deliberate — marker pre-selection ranks PAS with the same cluster labels the
+test then contrasts, so it is a speed shortcut rather than calibrated
+inference. See
+[Why `--marker-top-n` defaults to 0](../cli/switch-diff.md#why---marker-top-n-defaults-to-0).
 
 ---
 

@@ -90,10 +90,11 @@ def _list_strategies_callback(ctx, param, value):
                    "pre-selection and is the only FDR-controlled setting "
                    "(issue #94): markers are ranked with the SAME cluster "
                    "labels the differential test then contrasts, so any "
-                   "non-zero value double-dips on the labels (and shrinks "
-                   "the within-gene Fisher denominator), making every "
-                   "strategy anti-conservative. Speed-only; not a "
-                   "statistical filter.")
+                   "non-zero value double-dips on the labels, making every "
+                   "strategy anti-conservative. The restriction no longer "
+                   "changes the within-gene Fisher denominator (that is "
+                   "computed from the full matrix), but it still selects "
+                   "what is tested. Speed-only; not a statistical filter.")
 @click.option("--marker-method", "marker_method", type=str, default=DEFAULTS["marker-method"])
 @click.option("--strategy", "-s", "strategy", type=str, default="fisher",
               show_default=True,
@@ -178,19 +179,22 @@ def diff(ctx: click.Context, **kwargs) -> None:
         # Issue #94: marker pre-selection is a label double-dip. Same remedy
         # shape as #74 above -- the safe value (0 = no pre-selection) is the
         # default, and the unsafe path stays reachable but warns loudly.
-        if kwargs["marker_top_n"] and kwargs["marker_top_n"] > 0:
+        if kwargs["marker_top_n"] > 0:
             log.warning(
                 "--marker-top-n %d SELECTS THE TESTED PAS WITH THE SAME "
                 "CLUSTER LABELS THE TEST THEN CONTRASTS (label double-dip; "
-                "issue #94). It also shrinks the within-gene Fisher "
-                "denominator. Under a 20-run label-permutation null this "
+                "issue #94). Under a 20-run label-permutation null this "
                 "inflated the fraction of null p<0.05 from 3.0%% (top-n 0) to "
                 "20.3%% (fisher --count-mode reads), 13.0%% (fisher "
                 "--count-mode cells) and 24.7%% (nb_pairwise), with a q<0.05 "
-                "hit in 19-20 of 20 permutations vs 0 of 20 at top-n 0. The "
-                "resulting q-values are NOT FDR-calibrated -- use as a speed "
-                "shortcut / ranking screen only. Pass --marker-top-n 0 (the "
-                "default) for calibrated inference.",
+                "hit in 19-20 of 20 permutations vs 0 of 20 at top-n 0; the "
+                "SELECTION ALONE accounts for 17.4%%. The other half of #94 -- "
+                "a within-gene Fisher denominator computed over only the "
+                "selected PAS -- is fixed (the denominator now comes from the "
+                "full matrix, so p-values match the unrestricted run), but the "
+                "selection bias remains: these q-values are NOT FDR-calibrated "
+                "-- use as a speed shortcut / ranking screen only. Pass "
+                "--marker-top-n 0 (the default) for calibrated inference.",
                 kwargs["marker_top_n"],
             )
         from ema.switch_test.runner import run_diff
@@ -219,6 +223,9 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 counts_layer=kwargs["counts_layer"],
                 allow_non_count_matrix=kwargs["allow_non_count_matrix"],
                 progress_manager=pm,
+                # The CLI has just warned in --marker-top-n vocabulary above;
+                # run_diff would otherwise repeat the same ten lines verbatim.
+                warn_marker_top_n=False,
             )
             render_switch_diff_outputs(
                 out_dir=out_dir,
