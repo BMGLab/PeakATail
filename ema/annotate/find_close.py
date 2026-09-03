@@ -1,9 +1,11 @@
 import logging
 
+import numpy as np
+import pandas as pd
+import pybedtools
+
 from ema.annotate.gtftobed import GENE_EXTENSION_BP
 from ema.config import directory_config
-import pybedtools
-import pandas as pd
 
 log = logging.getLogger(__name__)
 
@@ -62,35 +64,73 @@ def assign_tier(distance, utr_length, utr_multiplier=2.0, max_distance=5000):
     return INTERGENIC
 
 
-def _three_prime_offset(frame, gene_extension):
-    """Distance from each PAS to its candidate gene's annotated 3' terminus.
+def assign_tiers(distances, utr_lengths, utr_multiplier=2.0, max_distance=5000):
+    """Vectorised :func:`assign_tier` over two aligned Series.
+
+    Args:
+        distances: Signed PAS->gene distances (bp).
+        utr_lengths: Known 3'UTR length per row (0 where unknown).
+        utr_multiplier: Multiplier for UTR length to define TIER_2 boundary.
+        max_distance: Maximum distance for any assignment (TIER_3 boundary).
+
+    Returns:
+        pd.Series: tier label per row.
+    """
+    abs_dist = distances.abs()
+    has_utr = utr_lengths > 0
+    conditions = [
+        has_utr & (abs_dist <= utr_lengths),
+        has_utr & (abs_dist <= utr_lengths * utr_multiplier),
+        abs_dist <= max_distance,
+    ]
+    return pd.Series(
+        np.select(conditions, [TIER_1, TIER_2, TIER_3], default=INTERGENIC),
+        index=distances.index,
+    )
+
+
+def _gene_geometry(frame, gene_extension):
+    """Recover each candidate gene's annotated geometry from the extended BED.
 
     ``gtf_bed`` pushes every gene record's 3' end out by ``gene_extension`` bp,
-    so the record end is NOT the annotated gene end.  Undo that shift (clamped
-    inside the record, which is what the ``-`` strand near a contig start gets)
-    and measure from there.
+    so a record's coordinates are NOT the annotated gene's.  Undo that shift.
+
+    The one lossy case is a ``-`` strand gene whose start is within
+    ``gene_extension`` bp of the contig start: ``gtf_bed`` clamps it to 1
+    instead of subtracting, so the annotated 3' terminus is unrecoverable --
+    all that is known is that it lies somewhere in
+    ``[gene_start, gene_start + gene_extension]``.  Those rows therefore get a
+    terminus *interval* rather than a point, and the widest possible gene body,
+    so the clamp can never make a candidate look falsely bad.
 
     Args:
         frame: bedtools ``closest`` output frame (positional schema above).
         gene_extension: bp ``gtf_bed`` added to each record's 3' end.
 
     Returns:
-        pd.Series: absolute bp between the PAS midpoint and the gene 3' end.
+        tuple: ``(terminus_lo, terminus_hi, body_start, body_end, minus)`` --
+        the first four int64 Series, the last a boolean strand mask.
+        ``terminus_lo == terminus_hi`` except on contig-start-clamped rows.
     """
     gene_start = frame.iloc[:, GENE_START_COL].astype("int64")
     gene_end = frame.iloc[:, GENE_END_COL].astype("int64")
-    strand = frame.iloc[:, GENE_STRAND_COL].astype(str)
+    minus = frame.iloc[:, GENE_STRAND_COL].astype(str).eq("-")
+
+    clamped = minus & gene_start.le(1)
 
     plus_terminus = (gene_end - gene_extension).clip(lower=gene_start)
-    minus_terminus = (gene_start + gene_extension).clip(upper=gene_end)
-    terminus = plus_terminus.where(strand != "-", minus_terminus)
+    minus_terminus_hi = (gene_start + gene_extension).clip(upper=gene_end)
+    minus_terminus_lo = minus_terminus_hi.where(~clamped, gene_start)
 
-    pas_mid = (frame.iloc[:, PAS_START_COL].astype("int64")
-               + frame.iloc[:, PAS_END_COL].astype("int64")) // 2
-    return (pas_mid - terminus).abs()
+    terminus_lo = plus_terminus.where(~minus, minus_terminus_lo)
+    terminus_hi = plus_terminus.where(~minus, minus_terminus_hi)
+    body_start = gene_start.where(~minus, terminus_lo)
+    body_end = plus_terminus.where(~minus, gene_end)
+
+    return terminus_lo, terminus_hi, body_start, body_end, minus
 
 
-def _resolve_overlapping_genes(frame, gene_extension):
+def _resolve_overlapping_genes(frame, gene_extension, utr_lengths, keep_tiers):
     """Pick one gene per PAS out of ``closest -t all`` ties (issue #99).
 
     In an overlapping locus a readthrough/spanning model covers its
@@ -100,33 +140,82 @@ def _resolve_overlapping_genes(frame, gene_extension):
     in CD68's 3'UTR ended up labelled SENP3-EIF4A1, leaving CD68 with zero
     assigned PAS cohort-wide.
 
-    A PAS is a cleavage site, so among genes tied at the minimal distance the
-    owner is the one whose annotated 3' end the PAS sits nearest; the span of
-    the model and then the gene ID break any remaining tie deterministically.
+    Nearest-annotated-3'-terminus is NOT a safe rule on its own: the nearest
+    terminus in such a locus is very often a nested miRNA/snRNA/pseudogene or
+    a lncRNA that carries no ``three_prime_utr`` record at all (MIR33B inside
+    SREBF1, RNU6-862P inside NCOR1, AC016876.3 over CD68).  Handing the PAS to
+    one of those genes grades it TIER_3 -- because ``utr_lengths`` has no entry
+    -- and the default tier filter then deletes the PAS from
+    ``annotatedpas.bed`` and from the count matrix.  Silently losing a PAS is
+    worse than mislabelling it, so the candidates are ranked by what the
+    annotation actually says, in this order (all ascending, best first):
+
+    0. the candidate does not turn a kept PAS into a filtered-out one;
+    1. the candidate has a ``three_prime_utr`` record (hard rule: a gene
+       without one never wins a tie against a gene with one);
+    2. the PAS lies inside the candidate's annotated 3'UTR footprint;
+    3. the PAS lies inside the candidate's UNEXTENDED gene body;
+    4. distance to the candidate's annotated 3' terminus;
+    5. the candidate's annotated span, then its gene ID, for determinism.
+
+    The 3'UTR footprint is the ``utr_lengths[gene]`` bp immediately 5' of the
+    annotated 3' terminus -- the longest annotated 3'UTR of the gene, anchored
+    at the gene end.  ``utr_lengths`` is the only UTR geometry ``find_close``
+    is given, and it is the same number ``assign_tier`` already trusts.
 
     Args:
-        frame: bedtools ``closest`` output frame, no-hit rows already dropped.
+        frame: bedtools ``closest`` output frame, no-hit rows dropped, with a
+            per-candidate ``"tier"`` column already assigned.
         gene_extension: bp ``gtf_bed`` added to each record's 3' end.
+        utr_lengths: Dict mapping gene_id -> max annotated 3'UTR length (bp).
+        keep_tiers: The tiers ``find_close`` will keep; a candidate whose tier
+            is outside it would delete the PAS.
 
     Returns:
-        tuple: (one row per PAS, number of PAS that had more than one
-        candidate gene).
+        tuple: ``(one row per PAS, n_contested, n_dropped_candidates)`` where
+        ``n_contested`` is the number of PAS that had more than one candidate
+        gene at the minimal distance.
     """
     work = frame.copy()
-    work["_abs_distance"] = work.iloc[:, DISTANCE_COL].astype("int64").abs()
-    work["_three_prime_offset"] = _three_prime_offset(work, gene_extension)
-    work["_gene_span"] = (work.iloc[:, GENE_END_COL].astype("int64")
-                          - work.iloc[:, GENE_START_COL].astype("int64"))
-    work["_gene_id"] = work.iloc[:, GENE_ID_COL].astype(str)
 
-    rank_cols = ["_abs_distance", "_three_prime_offset", "_gene_span", "_gene_id"]
+    gene_id = work.iloc[:, GENE_ID_COL].astype(str)
+    utr_len = gene_id.map(utr_lengths).fillna(0).astype("int64")
+    terminus_lo, terminus_hi, body_start, body_end, minus = _gene_geometry(
+        work, gene_extension)
+
+    pas_mid = (work.iloc[:, PAS_START_COL].astype("int64")
+               + work.iloc[:, PAS_END_COL].astype("int64")) // 2
+
+    # Point-to-interval distance; the interval is a point unless the record was
+    # clamped at a contig start, where the smallest consistent offset is used.
+    terminus_offset = ((terminus_lo - pas_mid).clip(lower=0)
+                       + (pas_mid - terminus_hi).clip(lower=0))
+
+    utr_lo = (terminus_lo - utr_len).where(~minus, terminus_lo)
+    utr_hi = terminus_hi.where(~minus, terminus_hi + utr_len)
+    in_utr = utr_len.gt(0) & pas_mid.ge(utr_lo) & pas_mid.le(utr_hi)
+    in_body = pas_mid.ge(body_start) & pas_mid.le(body_end)
+
+    work["_abs_distance"] = work.iloc[:, DISTANCE_COL].astype("int64").abs()
+    work["_would_drop_pas"] = (~work["tier"].isin(keep_tiers)).astype("int8")
+    work["_no_utr_record"] = (~utr_len.gt(0)).astype("int8")
+    work["_not_in_utr"] = (~in_utr).astype("int8")
+    work["_not_in_body"] = (~in_body).astype("int8")
+    work["_terminus_offset"] = terminus_offset
+    work["_gene_span"] = body_end - body_start
+    work["_gene_id"] = gene_id
+
+    rank_cols = ["_abs_distance", "_would_drop_pas", "_no_utr_record",
+                 "_not_in_utr", "_not_in_body", "_terminus_offset",
+                 "_gene_span", "_gene_id"]
     work = work.sort_values(by=PAS_KEY_COLS + rank_cols, kind="mergesort")
 
+    contested = work.duplicated(subset=PAS_KEY_COLS, keep=False)
     n_candidates = len(work)
     work = work.drop_duplicates(subset=PAS_KEY_COLS, keep="first")
-    n_ambiguous = n_candidates - len(work)
+    n_contested = int(contested.loc[work.index].sum())
 
-    return work.drop(columns=rank_cols), n_ambiguous
+    return work.drop(columns=rank_cols), n_contested, n_candidates - len(work)
 
 
 def find_close(posbed_dir=None,
@@ -158,10 +247,11 @@ def find_close(posbed_dir=None,
         utr_multiplier: Multiplier for UTR length to define TIER_2.
         include_extended: If True, also keep TIER_3 PAS (default: TIER_1 + TIER_2 only).
         gene_extension: bp that ``gtf_bed`` appended to the 3' end of every
-            record in ``genomebed_dir``; used to recover the annotated 3'
-            terminus when resolving overlapping-loci ties. ``None`` (default)
-            uses ``gtftobed.GENE_EXTENSION_BP``. Pass ``0`` for a gene BED that
-            was not built by ``gtf_bed`` and so carries no extension.
+            record in ``genomebed_dir``; used to recover the annotated gene
+            body and 3' terminus when resolving overlapping-loci ties.
+            ``None`` (default) uses ``gtftobed.GENE_EXTENSION_BP``. Pass ``0``
+            for a gene BED that was not built by ``gtf_bed`` and so carries no
+            extension.
 
     Returns:
         pd.DataFrame: DataFrame with PAS IDs as index and gene_id as values,
@@ -211,27 +301,29 @@ def find_close(posbed_dir=None,
     if annotated_frame.empty:
         return pd.DataFrame(columns=["gene_id", "tier"])
 
-    # Collapse the closest -t all ties back to one gene per PAS (issue #99).
-    annotated_frame, n_ambiguous = _resolve_overlapping_genes(
-        annotated_frame, gene_extension)
-    if n_ambiguous:
-        log.info("overlapping loci: %d candidate gene(s) beyond the first "
-                 "dropped across %d PAS; kept the gene whose annotated 3' end "
-                 "the PAS lies nearest", n_ambiguous, len(annotated_frame))
-
-    # Assign confidence tiers based on distance and UTR length
-    def _get_tier(row):
-        gene_id = row.iloc[GENE_ID_COL]
-        distance = row.iloc[DISTANCE_COL]
-        utr_len = utr_lengths.get(gene_id, 0)
-        return assign_tier(distance, utr_len, utr_multiplier, max_distance)
-
-    annotated_frame["tier"] = annotated_frame.apply(_get_tier, axis=1)
-
-    # Filter by tier: keep TIER_1 + TIER_2 by default, optionally TIER_3
+    # Tier every CANDIDATE, not just the winner: the tie-break in
+    # _resolve_overlapping_genes needs to know which candidates would survive
+    # the tier filter, so that resolving a tie can never delete a PAS.
     keep_tiers = {TIER_1, TIER_2}
     if include_extended:
         keep_tiers.add(TIER_3)
+
+    candidate_utr_len = (annotated_frame.iloc[:, GENE_ID_COL].astype(str)
+                         .map(utr_lengths).fillna(0).astype("int64"))
+    annotated_frame["tier"] = assign_tiers(
+        annotated_frame.iloc[:, DISTANCE_COL].astype("int64"),
+        candidate_utr_len, utr_multiplier, max_distance)
+
+    # Collapse the closest -t all ties back to one gene per PAS (issue #99).
+    annotated_frame, n_contested, n_dropped = _resolve_overlapping_genes(
+        annotated_frame, gene_extension, utr_lengths, keep_tiers)
+    if n_contested:
+        log.info("overlapping loci: %d of %d PAS had more than one candidate "
+                 "gene at the minimal distance (%d rival candidate rows "
+                 "discarded); kept the candidate the annotation supports",
+                 n_contested, len(annotated_frame), n_dropped)
+
+    # Filter by tier: keep TIER_1 + TIER_2 by default, optionally TIER_3
     annotated_frame = annotated_frame[annotated_frame["tier"].isin(keep_tiers)]
 
     # Save the full annotated BED (dropping internal columns for cleanliness)

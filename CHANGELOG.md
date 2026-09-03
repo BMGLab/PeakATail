@@ -19,20 +19,47 @@
   enriched precisely because marker genes live in such loci.
 
   The call is now `-t all`, and `_resolve_overlapping_genes` picks one gene
-  per PAS: **a PAS is a cleavage site, so among genes tied at the minimal
-  distance it belongs to the one whose annotated 3' end it lies nearest**,
-  with the model's span and then the gene ID breaking any remaining tie
-  deterministically. `gtf_bed`'s 3'-end extension is now the named constant
-  `gtftobed.GENE_EXTENSION_BP` (unchanged at 5000) so the annotated terminus
-  can be recovered from the extended record; `find_close(gene_extension=…)`
-  overrides it for a gene BED that `gtf_bed` did not build.
+  per PAS from **what the annotation says**, not from proximity alone.
+  Nearest-annotated-3'-terminus is not safe on its own: the nearest terminus
+  in such a locus is very often a nested miRNA/snRNA/pseudogene or a lncRNA
+  with no `three_prime_utr` record at all (MIR33B and MIR6777 inside SREBF1,
+  RNU6-862P inside NCOR1, MIR1288 inside PIGL, MIR6778 inside SHMT1,
+  AC016876.3 over CD68). Handing the PAS to one of those grades it TIER_3 —
+  `utr_lengths` has no entry — and the default tier filter then **deletes**
+  the PAS from `annotatedpas.bed` and from the count matrix, which is worse
+  than a wrong label. Candidates are therefore ranked, best first:
+
+  0. the candidate does not turn a kept PAS into a filtered-out one;
+  1. the candidate has a `three_prime_utr` record — **hard rule: a gene
+     without one never wins a tie against a gene with one**;
+  2. the PAS lies inside the candidate's annotated 3'UTR footprint;
+  3. the PAS lies inside the candidate's *unextended* gene body;
+  4. distance to the candidate's annotated 3' terminus;
+  5. the candidate's annotated span, then its gene ID, for determinism.
+
+  `gtf_bed`'s 3'-end extension is now the named constant
+  `gtftobed.GENE_EXTENSION_BP` (unchanged at 5000) so the annotated gene body
+  and terminus can be recovered from the extended record;
+  `find_close(gene_extension=…)` overrides it for a gene BED that `gtf_bed`
+  did not build. A minus-strand record clamped at a contig start (where
+  `gtf_bed` writes `start=1` instead of subtracting the extension) has no
+  recoverable terminus, so it now gets a terminus *range* and the widest
+  possible body rather than an invented point thousands of bp from the real
+  one.
+
+  Measured on GRCh38.99 chr17 with all 7,801 annotated 3'UTR termini as the
+  PAS set: **7,801/7,801 assigned (was 7,716) and 97.0 % assigned to a gene
+  that really has a 3'UTR record ending there (was 94.1 %)**. Both CD68 PAS
+  in chr17:7,579,636–7,582,386 now go to CD68.
 
   **This changes gene labels.** PAS coordinates, counts and tiers are
   untouched — only the `gene_id` a contested PAS is assigned to — but
   `annotatedpas.bed`, `pas_gene.tsv` and every downstream gene-level result
   differ in overlapping loci, so switch tables computed before this fix
   should be regenerated. PAS with a single candidate gene are unaffected.
-  Regression test: `tests/test_pas_gene_overlapping_loci_i99.py`.
+  Regression tests: `tests/test_pas_gene_overlapping_loci_i99.py`, including
+  a committed slice of the real GRCh38.99 chr17 annotation
+  (`tests/data/GRCh38.99_chr17_overlapping_loci.gtf`).
 
 Issue #99's second defect — the poly(A) clip-rate warning sampling only the
 head of a coordinate-sorted BAM (`ema/countmatrix/polya.py`,
