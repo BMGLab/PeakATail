@@ -6,6 +6,14 @@ against a verbatim copy of the pre-change implementation over an exhaustive
 grid of read shapes: wrong strand, unmapped, CIGAR-less, ignored contig,
 too-long / too-short spans, missing or GEM-suffixed barcodes, missing RG,
 and underscore-bearing RGs.
+
+peakAtail-prime: ``_reference_read_check`` is v2's body, so every call here
+passes ``geometry="fixed"`` explicitly.  These tests keep doing exactly what
+they were written to do -- pin the v2 semantics -- and the NON-v2 geometries
+(``--read-geometry keep`` / ``true``; the shipped default is ``fixed``, which
+the measurement did not move) are covered by ``tests/test_read_geometry.py``
+instead.  Do NOT "fix" a failure here by relaxing the reference body: this
+module is one of the places the v2-compatibility guarantee is enforced.
 """
 from __future__ import annotations
 
@@ -100,9 +108,12 @@ def test_matches_reference_implementation_on_every_shape(direction):
     seen_accepted = 0
     for cb, chrom, (start, end), is_reverse, rg, is_unmapped in _GRID:
         read = _Read(cb, chrom, start, end, is_reverse, rg, is_unmapped)
-        kwargs = dict(barcode="CB", barcode_len=16, seq_len=SEQ_LEN, ignore_chro=IGNORE)
+        kwargs = dict(barcode="CB", barcode_len=16, seq_len=SEQ_LEN,
+                      ignore_chro=IGNORE, geometry="fixed")
         got = read_check(read, direction=direction, sample_id="ds", **kwargs)
-        want = _reference_read_check(read, direction, sample_id="ds", **kwargs)
+        want = _reference_read_check(
+            read, direction, sample_id="ds",
+            **{k: v for k, v in kwargs.items() if k != "geometry"})
         assert got == want, (cb, chrom, start, end, is_reverse, rg, is_unmapped)
         seen_accepted += got[0] != 0
     assert seen_accepted, "the grid never produced an accepted read"
@@ -112,7 +123,7 @@ def test_gem_suffix_and_short_span_padding_survive():
     read = _Read(BARCODE + "-1", "chr1", 100, 200, False, "s1", False)
     chro, start, end, strand, cb = read_check(
         read, direction=False, barcode="CB", barcode_len=16,
-        seq_len=SEQ_LEN, ignore_chro=(),
+        seq_len=SEQ_LEN, ignore_chro=(), geometry="fixed",
     )
     assert (chro, start, end, strand) == ("chr1", 100, 250, False)
     assert cb == f"s1_{BARCODE}"
@@ -122,12 +133,13 @@ def test_composite_is_interned_per_rg_cb_pair():
     """One string object per cell, not one per read (the memory point)."""
     reads = [_Read(BARCODE, "chr1", 100 + i, 250 + i, False, "s1", False) for i in range(5)]
     cbs = [read_check(r, direction=False, barcode="CB", barcode_len=16,
-                      seq_len=SEQ_LEN, ignore_chro=())[4] for r in reads]
+                      seq_len=SEQ_LEN, ignore_chro=(), geometry="fixed")[4]
+           for r in reads]
     assert all(c == cbs[0] for c in cbs)
     assert all(c is cbs[0] for c in cbs)
     other = read_check(_Read(BARCODE, "chr1", 100, 250, False, "s2", False),
                        direction=False, barcode="CB", barcode_len=16,
-                       seq_len=SEQ_LEN, ignore_chro=())[4]
+                       seq_len=SEQ_LEN, ignore_chro=(), geometry="fixed")[4]
     assert other == f"s2_{BARCODE}" and other is not cbs[0]
     reset_composite_cache()
     again = read_check(reads[0], direction=False, barcode="CB", barcode_len=16,
@@ -137,7 +149,8 @@ def test_composite_is_interned_per_rg_cb_pair():
 
 def test_sample_id_fallback_still_applies_without_rg(monkeypatch):
     read = _Read(BARCODE, "chr1", 100, 250, False, None, False)
-    kwargs = dict(barcode="CB", barcode_len=16, seq_len=SEQ_LEN, ignore_chro=())
+    kwargs = dict(barcode="CB", barcode_len=16, seq_len=SEQ_LEN,
+                  ignore_chro=(), geometry="fixed")
     assert read_check(read, direction=False, sample_id="explicit", **kwargs)[4] == \
         f"explicit_{BARCODE}"
     reset_composite_cache()

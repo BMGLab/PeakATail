@@ -1,5 +1,12 @@
 # Changelog
 
+> **Next release: 0.3.0 (minor, not patch).** The `Unreleased` entries below
+> change the flagless call set — the internal-priming veto now runs by default
+> when a genome FASTA is present (~17% fewer calls) — so under SemVer at 0.x this
+> is a minor bump, never a patch. `pyproject.toml`, `CITATION.cff` and the
+> bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
+> `## 0.3.0` at tag time.
+
 ## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
 
 ### Breaking changes
@@ -232,6 +239,23 @@ head of a coordinate-sorted BAM (`ema/countmatrix/polya.py`,
 `max_reads=200_000`) — is **not** addressed here: branch `peakAtail-prime`
 (PR #100) already replaces that estimator with an exact per-pass count
 (`--clip-rate-sampling pass`), and duplicating it would collide.
+
+### How this composes with `--pas-gene-rescue` (PR #100 merge)
+
+Both land in `find_close`. They do different jobs and now run in a fixed
+order: **the precedence above decides WHICH gene owns a PAS; only then does
+`--pas-gene-rescue inside` re-grade the PAS it was given.** The rescue is
+applied to the surviving row, after `_resolve_overlapping_genes` and before
+the tier filter — deliberately never to the candidate rows. Rank 0
+(`_would_drop_pas`) outranks rank 1 (`_no_utr_record`), so re-grading
+candidates first would let a nested miRNA's row survive the tier filter while
+its protein-coding host's did not, and the miRNA would take the PAS — exactly
+the hard rule this section exists to enforce, and the one whose absence
+silently deleted 124 chr17 PAS in an earlier draft. `--pas-gene-rescue` keeps
+its `off` default, so nothing changes unless it is asked for. Pinned by
+`test_the_rescue_cannot_hand_a_pas_to_a_gene_with_no_utr_record` and
+`test_the_rescue_does_not_change_which_gene_owns_a_pas` in
+`tests/test_pas_gene_overlapping_loci_i99.py`.
 ## Unreleased — `--dynamic-threshold` no longer aborts the run (issue #101)
 
 **`--dynamic-threshold --lambda-fold-change 2.0` — the parameter reference's
@@ -283,15 +307,781 @@ Two help texts that did not match the code, both proven by the same sweep:
   neither changes a byte of it. Their help, `docs/cli/run.md` and the
   quickstart now say which outputs they touch.
 
-### Note for PR #100 (`peakAtail-prime`)
+### Note for PR #100 (`peakAtail-prime`) — RESOLVED IN THE MERGE
 
-That branch introduced this module behind `--dynamic-threshold-clamp`,
-defaulted **off** to keep v2 byte-identical. This change keeps the module and
-its API (`resolve_l_end(data_array, current_threshold, clamp)`) so the two
-reconcile rather than compete, but on `develop` the bound is **on by
-default** — a crash is not a behaviour worth preserving, and there is no
-byte-identity contract here. Merging #100 must not restore
-`DYNAMIC_THRESHOLD_CLAMP_DEFAULT = False`.
+That branch introduced the same module behind `--dynamic-threshold-clamp`,
+defaulted **off** to keep v2 byte-identical. Merging `develop` into
+`peakAtail-prime` consolidated the two on THIS implementation, as this note
+required: `DYNAMIC_THRESHOLD_CLAMP_DEFAULT` stays `True`, the bound is
+unconditional on every production path, and no command line, YAML key or
+library keyword can turn it back off.
+
+`--dynamic-threshold-clamp` survives only as an **accepted no-op**, so that
+the branch's documented v2-compat command line and every existing config keep
+parsing; both of its values now mean "bounded", as does the
+`dynamic_threshold_clamp=` keyword the peak loops still accept. The branch's
+byte-for-byte v2 promise is unharmed, and exactly because of the identity
+guarantee: every v2 run that *produced output* produces the same output here.
+The only runs that differ are the ones v2 aborted, and those emitted nothing
+to be identical to. `resolve_l_end(data_array, current_threshold, clamp)`
+keeps its `clamp` argument for the unit tests that pin that guarantee — they
+have to be able to evaluate the unbounded branch to prove the bounded one
+agrees with it — and no production caller passes it.
+
+## Unreleased (branch `peakAtail-prime`) — the dynamic-threshold crash guard
+
+**`--dynamic-threshold` at its documented companion setting
+(`--lambda-fold-change 2.0`, the parameter reference's first entry under "find
+more PAS") aborts the caller with a bare `IndexError`.** Both peak-calling
+loops compute the current peak's right edge as
+`l_end = data_array[-current_threshold]`
+(`ema/countmatrix/peackcalling.py`, `ema/countmatrix/peak_pipeline.py`), the
+dynamic estimator sets
+`current_threshold = max(floor_threshold, int(local_lambda * lambda_fold_change))`,
+and nothing bounds it by `len(data_array)`: when the threshold outgrows the
+live read window the index runs off the front of the list. Found by the
+2026-08 parameter sweep (`results/paramsweep/VERDICTS.md` §5) on the PBMC
+chr19+21 dev slice; the sweep's accuracy verifier reproduced the same abort on
+the GSE104556 mouse1 chr18+19 slice
+(`results/paramsweep/VERIFY/rerun_identity.tsv`), so the defect is
+species-independent. It is a v2 (`9dfdefb`) defect, reachable **only** with
+`--dynamic-threshold` (off by default): `--lambda-fold-change` is read at
+exactly two places in the tree, both inside `if dynamic_threshold:`, so no
+published PeakATail number is affected.
+
+### Added
+
+> **SUPERSEDED BY THE MERGE WITH `develop` (issue #102/#101).** The bound
+> below is now **on unconditionally** and `--dynamic-threshold-clamp` is an
+> accepted no-op kept for compatibility: neither value can restore the
+> `IndexError`. Everything this section says about the *mechanism* still
+> holds; only the default, and the ability to choose, are gone. See
+> "`--dynamic-threshold` no longer aborts the run (issue #101)" above.
+
+* **`--dynamic-threshold-clamp {off,on}`, default `off`** *(historical — see
+  the note above; the flag is now a no-op)*. `off` was v2 to the
+  character — the same expression, the same `IndexError`, the same abort —
+  because the branch's cardinal rule is that v2 stays reproducible
+  byte-for-byte and a fix that changes what a run emits would have to clear
+  `manuscript/28` §2 first. On the default path the loops evaluate v2's own
+  literal expression with nothing wrapped around it — same expression, same
+  cost, same bare `IndexError` (which cost the sweep a whole arm before
+  anyone read the source; the flag that stops it is now named in this file,
+  in the issue, and in the module docstring).
+  `on` bounds the look-back index to the live window (returning the oldest
+  end still in it) and logs how often it fired. The single copy of the rule
+  is `ema.countmatrix.dynamic_threshold.resolve_l_end()`, and its identity
+  guarantee — for every in-range threshold both settings return the same
+  element, so `on` can only change a run that would otherwise have aborted —
+  is tested exhaustively in `tests/test_prime_dynamic_threshold_clamp.py`,
+  which also reproduces the crash itself on a 14-read synthetic BAM through
+  the monolithic and pipeline paths.
+* The flag is threaded through all four dispatch paths (monolithic,
+  per-chromosome parallel, 3-stage pipeline, tiled — including the
+  single-tile short-circuit), and `V2_COMPAT_FLAGS` gains
+  `--dynamic-threshold-clamp off` (14 flag/value pairs), so the documented
+  compat command stays the complete list.
+
+## Unreleased (branch `peakAtail-prime`) — the default that was a no-op
+
+**`--ip-filter-mode`'s default was v2's `annotate`, so the branch's one
+behavioural default dropped nothing.** `--ip-filter-default auto` turned the
+internal-priming veto ON; `--ip-filter-mode annotate` kept every flagged site.
+Two flags, two questions, and nothing checked the pair — so a prime run at its
+defaults flagged 5,015 of 32,752 candidates on the PBMC chr19+21 slice, dropped
+**0**, and emitted v2's exact call set (`pas 18,865`) while this file
+advertised "+7.7 %–12.8 % relative recall at matched atlas precision". Every
+number published for that change was measured on a run that also passed
+`--ip-filter-mode filter` explicitly.
+
+### BREAKING — the flagless call set changes
+
+**TWO populations lose 17.09 % of their calls, and they do not have the same
+escape.** The loss is the internally-primed sites (PBMC 10k v3 full BAM:
+402,765 → 333,920, −68,845; `results/prime_bench/fourway_headline.txt` §3).
+Nothing about either command line changes; the output does. That is the
+intended behaviour of the default flip, and it is the definition of a breaking
+default change.
+
+1. **The flagless user who supplies `--genome-fasta` and no IP flag at all.**
+   `--ip-filter-default auto` turns the veto ON for them and the new
+   `--ip-filter-mode auto` resolves it to `filter`. Escapes:
+   `--ip-filter-default off`, `--no-ip-filter`, or `--ip-filter-mode annotate`.
+2. **The user who already typed `--ip-filter` and never named a mode.** In v2
+   that command line meant `--ip-filter-mode annotate`: the veto ran, flagged,
+   and dropped nothing. On this branch the *same* command line resolves the
+   mode to `filter` and drops the same ~17 %. **`--ip-filter-default off` does
+   NOT rescue this user** — `ema.main._ip_filter_decision()` gives an explicit
+   `--ip-filter` precedence over the `ip_filter_default` policy, so the veto
+   still runs, in `filter` mode. Their escapes are **`--ip-filter-mode
+   annotate`** (exactly v2: the veto runs, the flag is recorded, nothing is
+   dropped), `--no-ip-filter` (v2's call set, but the veto no longer runs so
+   the IP annotation goes too), or the full 14-pair `V2_COMPAT_FLAGS` command
+   line (v2 byte-for-byte, every file).
+
+That precedence is deliberate and is not changing: `--ip-filter` means "run the
+veto", `--ip-filter-default` only decides what happens when nobody said, and
+`--ip-filter-mode` is the single flag that decides whether the veto DROPS.
+Making an explicit `--ip-filter` imply `annotate` would rebuild the exact trap
+this branch removed — two flags silently disagreeing about whether anything is
+dropped. `ema.main._ip_filter_decision()` is the one copy of the rule, it is
+logged, it is written to `run_config.json`, and
+`tests/test_prime_ip_default_mode.py` pins it.
+
+**With no readable `--genome-fasta` the veto cannot run**, so the flagless
+*call set* is v2's: the derived BEDs (`pas.bed`, `pas_tier1.bed`,
+`pas_tier2.bed`, `pasbed.bed`) and the count matrix are byte-identical to v2's.
+**`pas_support.tsv` is NOT** — `--pas-features on` and
+`--emit-inferred-cleavage on` are branch defaults and append sidecar columns
+whatever the FASTA situation is. `--pas-features off
+--emit-inferred-cleavage off` (both in `V2_COMPAT_FLAGS`) restores that file
+too.
+
+### The literal
+
+`ema/cli/config_schema.py`, field `ip_filter_mode`:
+`default="annotate"` → `default="auto"`, with
+`choice=("auto", "annotate", "filter")`. `"auto"` is a **sentinel meaning "the
+user did not name a mode"**, not a mode:
+`ema.cli.config_schema.resolve_ip_filter_mode()` turns it into `"filter"`, and
+`ema.experimental.internal_priming.filter_internal_priming` still refuses any
+value outside `{annotate, filter}`, so an unresolved sentinel raises rather
+than being guessed at. An explicit `--ip-filter-mode annotate` is honoured
+verbatim — the D9 behaviour (an internally-primed peak is candidate
+alternative-PAS signal, not noise) is one flag away, not gone.
+
+**PRIME_PLAN.md said v2's default here was `filter`. It is `annotate`** — read
+off the frozen worktree `tools/pa-polya-run-9dfdefb3`. That one wrong word is
+the whole defect; the plan is corrected in place.
+
+### v2 compatibility
+
+`V2_COMPAT_FLAGS` gains **`--ip-filter-mode annotate`** (13 flag/value pairs).
+It was previously complete only by accident: the list pins
+`--ip-filter-default off`, which stops the veto running at all, so the mode
+never mattered. It matters the moment anyone types `--ip-filter`, so it is
+stated. The compat runs are re-verified byte-for-byte against the frozen v2
+worktree on both dev slices.
+
+### So this class of defect cannot hide again
+
+* **The resolved mode is in the run log.** `_resolve_ip_filter()` logs
+  `internal-priming veto: ON (<why>), mode=<mode> [<how the mode was decided>]`
+  and still says `NOTHING IS DROPPED` when the mode is `annotate`.
+* **The resolved mode is in the run record.** `run_config.json` and
+  `run_manifest.json` gain an `internal_priming` block:
+  `ip_filter`, `ip_filter_why`, `ip_filter_mode_requested` (the raw value,
+  sentinel and all), `ip_filter_mode_resolved` (`null` when the veto does not
+  run), `ip_filter_mode_why`, `genome_fasta`. The `args` block cannot show
+  this — it carries the unresolved sentinel, which is the surface the defect
+  hid on for a whole verification pass.
+* **`tests/test_prime_ip_default_mode.py`** drives the real seam
+  (`ema.main._apply_pas_filters`) with `args` seeded from the schema exactly as
+  a no-flag `ema run` seeds it, plus a genome FASTA and nothing else, and
+  asserts a flagged site is GONE from the BED on disk. Restoring
+  `default="annotate"` makes it fail with `filtered == 0` and the flagged row
+  still present.
+* **`tests/test_prime_compat_flags.py::test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line`**
+  diffs RunConfig **defaults** against v2's, not just field names. The old
+  completeness check only asked "which fields are NEW?", which is precisely why
+  a moved default on an existing v2 field went unnoticed. Both completeness
+  checks used to read v2 from one absolute path on one machine behind a
+  `skipif`, so **they skipped everywhere else, CI included** — the branch's
+  strongest guarantee behind a green checkmark that had never run it. v2's
+  defaults are now read from `tests/fixtures/v2_runconfig_defaults.json` (a
+  committed dump of v2's `RunConfig`, so the checks run unconditionally) or,
+  when `PEAKATAIL_V2_WORKTREE` names a real v2 checkout, live from it — and a
+  third test asserts the two agree whenever both are available, so the frozen
+  copy cannot go quietly stale.
+* **`tests/test_prime_v2_compat_golden.py::test_branch_defaults_still_write_v2s_beds_and_matrix`**
+  pins the headline property directly: at the caller, **typing nothing** writes
+  v2's BED and count-matrix bytes (the veto that moves the call set lives above
+  `peak_calling()`), while `pas_support.tsv` is asserted to DIFFER — so the
+  "byte-identical" claim in this file can never again be written unscoped.
+* `_v2_settings()` now pins `args.ip_filter_mode`, and
+  `test_prime_compat_flags.py` reads pins from `args` as well as
+  `variable_config`, closing the structural gap that file already declared.
+
+### Measured, default vs default
+
+See `results/prime_bench/` for the re-validation: the v2 compatibility pin is
+still byte-for-byte v2 on both slices, and the branch default now differs from
+v2 in exactly the expected way (fewer, more precise calls).
+
+## Unreleased (branch `peakAtail-prime`) — the cleavage-offset column, the QC that stopped lying, and the seam that drops lncRNAs
+
+Four small, separately-measured changes (TASK E). **One of them is a genuine
+accuracy default (`--ip-filter` turns itself on), one replaces an estimator
+that was 4.2x wrong with an exact count, one ships a column and leaves the
+coordinate alone, and one is a defect I found, measured, and then shipped
+DEFAULTED OFF because the measurement said it costs precision.**
+
+### 1. `--ip-filter` runs by default when a genome FASTA is available
+
+The internal-priming veto is the largest measured accuracy lift in this caller
+— **+7.7 % to +12.8 % relative recall at matched atlas precision, +17.7 % to
++22.9 % at matched long-read precision** (`results/algo_headroom/VERIFY/tables/
+v8_ipveto_value.tsv`) — bigger than every detector change tested put together,
+because it is the only stage that reads genomic sequence. It was an opt-in
+flag, so every benchmark arm in the manuscript ran with it and every user who
+did not read the flag list did not.
+
+`--ip-filter-default auto` (the new default) turns it on whenever a readable
+`--genome-fasta` is present, and **warns loudly, naming the cost, when there is
+none**. `--no-ip-filter` forces it off; `--ip-filter-default off` restores v2.
+
+Measured, default-vs-default on two dev slices: a prime run with **no
+`--ip-filter` flag** reproduces the v2 `--ip-filter` run *exactly* —
+PBMC chr19+21 `pas 15,925 | tier1 8,524 | tier2 7,401 | tier1>=2mol 2,883` and
+P@100 0.7392 / R_det@100 0.2080 / Kinnex t5 P@25 0.7839 on both; GSE104556
+mouse 1 chr18+19 `pas 4,141 | tier1 3,006 | tier2 1,135 | tier1>=2mol 1,549` on
+both. It changes nothing for anyone who already passed the flag, which is the
+point: it changes what a user gets who does not.
+
+> **CORRECTION (adversarial verification pass, 2026-08-22), then FIXED the
+> same day — see "the default that was a no-op" at the top of this file.** The
+> paragraph above was measured with `--ip-filter-mode filter` supplied on BOTH
+> sides. At the time it was **not** what the branch default alone did:
+> `--ip-filter-mode` defaulted to `annotate` and `--ip-filter-default auto`
+> decides only whether the veto **runs**, not whether it **drops**.
+> Re-measured on the PBMC chr19+21 slice with those branch defaults, a genome
+> FASTA and no other flag: `peak_filters_stats.json` reported mode `annotate`,
+> **flagged 5,015, filtered 0**, and the run wrote
+> `pas 18,865 | tier1 10,886 | tier2 7,979 | tier1>=2mol 3,643` — v2's call
+> set to the row, not 15,925. `--ip-filter-mode`'s default is now the sentinel
+> `auto`, which resolves to `filter`, so the paragraph above IS the branch
+> default; v2's `annotate` is one explicit flag away and is pinned in
+> `V2_COMPAT_FLAGS`.
+
+### 2. The poly(A) clip-rate QC: an exact count instead of a 4.2x estimate
+
+`check_clip_rate` read the **first 200,000 CB reads** of the file. On a
+coordinate-sorted BAM that is the head of the first contig, and on PBMC 10k v3
+it returns **2.2565 %** where the whole-file rate on the same denominator is
+**0.5364 %** — a 4.2x over-estimate, reproduced here from the tool's own code
+path. Over-estimating is the dangerous direction: this estimator exists to
+shout when the poly(A) evidence channel has been destroyed, and 4.2x high would
+MASK exactly that.
+
+`--clip-rate-sampling {head,strided,pass}`, **default `pass`**:
+
+* **`pass`** — do not estimate. **Count**, during the peak-calling pass the run
+  performs anyway, every read the caller accepts and every qualifying clip
+  among them, and report the EXACT rate per (contig, strand). Zero extra I/O:
+  `clip_site` is already called on each of those reads.
+* `strided` — the "sample across the BAM" design: coordinate-uniform windows,
+  every read whose start falls in one. **Shipped, and measured to be
+  unreliable**: on the full PBMC BAM against the 0.5364 % truth it returns
+  1.5258 % (200k reads) and 1.8068 % (1M) — more reads did not help, because
+  clips are rare AND concentrated at the 3' ends of expressed genes, so the
+  estimate is dominated by which windows happen to hit one. Kept because it is
+  the obvious design and its failure is worth being able to reproduce.
+* `head` — v2, **byte-for-byte including its log line**.
+
+A first `strided` implementation gave each stratum an equal READ quota; it was
+biased, and the bias moved with the stratum count (0.9111 % at 25 strata,
+0.1853 % at 2,500, against a 0.6169 % slice truth). A second took 100 % of MT
+and of every scaffold — 36.2 M reads for a 200,000-read budget. Both are
+recorded in `results/prime/taskE/clip_rate_estimators.tsv`; the shipped window
+sampler is unbiased in construction and still not good enough, which is why the
+default is the exact count.
+
+**The docstring constant is corrected.** `ema/countmatrix/polya.py` stated that
+**1.152 %** of CB reads carry a poly(A) clip. The genome-wide truth is
+**0.5730 %** on the caller's accepted-read denominator (3,195,067 / 557,564,408)
+and **0.5364 %** on `check_clip_rate`'s, 0.3669 % (chr21) to 0.8179 % (chr19)
+per chromosome.
+
+### 3. `inferred_cleavage`: report the offset, do not move the coordinate
+
+Long-read termini sit a few bp UPSTREAM of the clip-seeded caller's reported
+cleavage base. TASK E asked whether that offset can be estimated per library
+from the clip-anchored subset. **It cannot, and that is the result.**
+
+* **The caller's own clip evidence says the offset is zero.** With
+  `--pas-features on` every tier-1 PAS now carries `clip_offset_mean`: the
+  read-weighted mean of (clip position − reported base) over its own cluster,
+  in transcript orientation. Aggregated per library that is **−0.334 bp** over
+  267,520 clip reads in 16,338 clusters (PBMC chr19+21; **76.10 %** of clip
+  reads sit *exactly* on the reported base) and **+0.214 bp** over 124,308
+  reads in 8,722 clusters (mouse 1 chr18+19). Both round to **zero**, so
+  `--cleavage-offset auto` is a measured no-op on both libraries.
+* **The external truths say −1 bp, and only at base-pair resolution.** On the
+  PBMC default arm the exact-match optimum is **−1 bp against the atlas**
+  (P@1 0.3926 → 0.4346) and **−2 bp against Kinnex long reads** (t5 P@1
+  0.2844 → 0.3698); on mouse 1, −1 bp against the atlas (0.3919 → 0.4274).
+  **Nothing at W >= 25 responds**: P@100 moves by 0.0028 over the whole
+  −8…+8 sweep, and the two truths disagree about the optimum at every
+  intermediate window (atlas P@10 wants +5, Kinnex t5 P@10 wants −4). The
+  optimum is otherwise stable — −1 on both strands, both chromosomes and every
+  support bin except the 1-molecule tier. Full sweeps in
+  `results/prime/taskE/offset_sweep_*.tsv`.
+
+So: **`--cleavage-offset {none,auto,<int>}`, default `none`.** The estimate is
+computed and reported regardless (`01_peak_calling/cleavage_offset_stats.json`,
+`run_manifest.json`), and `--emit-inferred-cleavage on` (default) appends
+`inferred_cleavage` to `pas_support.tsv` — the coordinate the offset implies —
+**without moving a byte of `pasbed.bed`**.
+
+A signed offset now works: v2 accepted only positive values and silently
+ignored negative ones. **The sign decides which tier moves**, and that is
+measured, not stylistic: a POSITIVE offset is the coverage correction
+(issue #72, ~+95 bp) and under `clip_seeded` must not touch the clip-anchored
+tier — v2's `skip_supported` rule, and applying +95 there costs 46 points of
+P@10 — while a NEGATIVE offset is the base-pair correction and belongs to that
+tier, tier 2's own P@1 being 0.0016 and flat.
+
+**`--auto-cleavage-offset` is now refused under `--peak-strategy clip_seeded`**
+rather than warned about. It searches a 60–120 bp band for a genomic A-fraction
+crest, so it *cannot* return anything but a large positive number, and the +95
+it estimates is destructive here. The `"A sane data-driven constant is ~90-100
+(try 95)"` advice is removed from `--cleavage-offset`'s help and from
+`docs/cli/run.md`.
+
+**Applying an offset is not free, and the measurement says so.** The shift lands
+before the internal-priming veto and gene assignment, so `--cleavage-offset -1`
+also changes the call set: PBMC slice 15,925 → 15,823 PAS, ΔP@100 +0.0038,
+ΔR_det −0.0009, ΔF1 −0.0007, ΔKinnex t5 P@25 +0.0096, with atlas P@1
+0.3926 → 0.4379. A base-pair-resolution gain, a call-set change, and no
+movement at the windows the manuscript reports — one more reason `none` is the
+default.
+
+**Also measured, and reported rather than fixed:** `cluster_clip_sites` breaks
+read-count ties toward the LOWEST COORDINATE on both strands, which is not
+transcript-oriented. **27.6 %** of multi-position clusters on chr21 have a tied
+top read count, and flipping the tie-break flips the sign of the within-cluster
+asymmetry on both strands (+1.504 → −2.400 on `+`, −1.159 → +1.510 on `−`).
+Changing it would move every tier-1 coordinate, so it is documented here and
+left alone.
+
+### 4. The gene-assignment seam drops PAS in lncRNAs, and no rescue is free
+
+**31–33 % of tier-1 clip clusters never reach `pasbed.bed`.** Decomposed on the
+PBMC chr19+21 slice (16,338 tier-1 clusters): 23.3 % dropped by the
+internal-priming veto, **20.4 % by the gene-assignment tier gate**, 4.1 % for
+having no counts left after the `--min-read` cell filter, 52.2 % kept.
+
+The gene gate is the interesting one, and the mechanism is an **annotation gap,
+not a distance judgement**. `assign_tier` can only award TIER_1/TIER_2 when the
+assigned gene has an annotated 3'UTR **length**, so a PAS at distance 0 — INSIDE
+its gene body — falls through to TIER_3 and is dropped whenever that gene has no
+UTR record. **1,762 of the 3,338 tier-1 clusters the gate drops (52.8 %) are
+inside a gene body**, hosted by 514 genes of which **469 are lncRNA**, 20 miRNA,
+7 snRNA and 18 protein-coding. PeakATail cannot report a PAS in a non-coding
+gene, however much clip evidence backs it. On mouse 1 chr18+19 the same gate
+drops 29.8 % of tier-1 clusters, 25.7 % of them inside a gene body.
+
+`--pas-gene-rescue {off,inside}` (+ `--pas-gene-rescue-min-mol N`) grades those
+TIER_2. **It ships `off`, because it is measured to cost precision:**
+
+| slice | arm | n | P@100 | R_det@100 | F1 | Kinnex t5 P@25 |
+|---|---:|---:|---:|---:|---:|---:|
+| PBMC chr19+21 | default (v2) | 2,883 | **0.7392** | 0.2080 | 0.3246 | **0.7839** |
+| | `inside` | 3,590 | 0.6646 | 0.2132 | 0.3228 | 0.7253 |
+| | `inside`, >=10 molecules | 3,080 | 0.7166 | 0.2102 | 0.3250 | 0.7662 |
+| mouse 1 chr18+19 | default (v2) | 1,549 | **0.7650** | 0.1979 | 0.3144 | — |
+| | `inside` | 1,882 | 0.7428 | 0.1994 | 0.3143 | — |
+| | `inside`, >=10 molecules | 1,805 | 0.7607 | 0.1984 | 0.3147 | — |
+
+The dropped set is genuinely worse (P@100 0.3607 and Kinnex t5 P@25 0.4866 for
+the inside-gene drops, against 0.7392 / 0.7839 for what is kept), and **no
+support floor makes the rescue free**: even the >=10-molecule casualties reach
+only P@100 0.4138 / Kinnex t5 0.5655. `manuscript/24` §3.1 fails on (i) and
+(ii) for every setting on both slices. The recall column also cannot reward it
+— these PAS are, by construction, in genes the detected-gene denominator does
+not contain — so the seam is documented, the flag exists, and the default does
+not move.
+
+### Flags
+
+| flag | values | default | v2 |
+|---|---|---|---|
+| `--ip-filter-default` | `off`, `auto` | **`auto`** | `off` |
+| `--no-ip-filter` | flag | off | (n/a; `--ip-filter` absent) |
+| `--clip-rate-sampling` | `head`, `strided`, `pass` | **`pass`** | `head` |
+| `--cleavage-offset` | `none`, `auto`, signed int | `none` | `0` / `none` |
+| `--emit-inferred-cleavage` | `off`, `on` | **`on`** | `off` |
+| `--pas-gene-rescue` | `off`, `inside` | `off` | `off` |
+| `--pas-gene-rescue-min-mol` | int | `0` | `0` |
+
+`--pas-features on` gains a **25th** column, `clip_offset_mean` (TASK C shipped
+24); `--emit-inferred-cleavage on` appends `inferred_cleavage` after it. Both
+groups stay header-addressed, and `--pas-features off` is still v2 exactly.
+
+### Compatibility
+
+All 50 data files of a PBMC chr19+21 slice run with the v2 pins
+(`--read-geometry fixed --read-exclude-flags 0 --pas-features off --pas-score
+none --pas-score-model prime1 --pas-score-min -1 --cleavage-offset none
+--emit-inferred-cleavage off --clip-rate-sampling head --ip-filter-default off
+--ip-filter-mode annotate --pas-gene-rescue off --pas-gene-rescue-min-mol 0
+--dynamic-threshold-clamp off` — the canonical copy of this list is
+`ema.cli.config_schema.V2_COMPAT_FLAGS`, and `tests/test_prime_compat_flags.py`
+checks this paragraph against it) are **byte-identical to the v2 reference run**,
+including its clip-rate log line; only `run_config.json` / `run_manifest.json`
+differ, by the keys that record the new options.
+`tests/test_prime_v2_compat_golden.py::_v2_settings()` pins all five new knobs.
+
+## Unreleased (branch `peakAtail-prime`) — the calibrated per-site score
+
+**One new capability, three flags, and it is OFF by default because the
+pre-registered criterion said so.**
+
+The measurement programme found exactly one change that *lifts* this caller's
+precision/recall curve rather than sliding along it: a calibrated per-site score
+used as a **re-ranker inside the existing tier-1 and internal-priming gates**,
+replacing only the `>= 2 clip molecules` threshold. This release implements it,
+and reports the two things that matter about it.
+
+**It transfers.** The model is fitted on GSE104556 testis mouse 1 alone and
+applied **unchanged** to PBMC 10k v3 — a different species, chemistry and
+aligner — and to testis mouse 2. At matched call count it is up-and-right
+against the current default on **both** held-out datasets:
+
+| dataset | arm | n | P@10 | P@100 | R_det@100 |
+|---|---:|---:|---:|---:|---:|
+| PBMC 10k v3 | current default | 46,524 | 0.5209 | 0.7062 | 0.1754 |
+| | score, matched n | 46,524 | **0.6020** | **0.7538** | **0.1809** |
+| testis mouse 2 | current default | 26,526 | 0.5945 | 0.7572 | 0.2080 |
+| | score, matched n | 26,526 | **0.6570** | **0.8043** | **0.2195** |
+
+At matched precision that is **+11.7 % (PBMC) / +16.4 % (mouse 2) / +20.9 %
+(mouse 1) relative recall**. Ranking the same candidates by molecule count
+instead — the incumbent ordering — gives −0.0007 / −0.0002 on PBMC, so this is
+re-ranking and not a rename.
+
+**The default still does not move.** The adoption criterion is *default vs
+default* at the threshold the model actually ships with, and it needs
+`dP@100 >= -0.005`, `dR_det@100 >= +0.010` and `dF1 > 0` on all three datasets.
+The shipped threshold — the calibrated decision boundary `p >= 0.50`, fixed on
+mouse 1 without reading any metric — lands at a precision-first operating point
+and **fails criterion (ii) on all three** (PBMC: dP **+0.0673**, dR **−0.0048**).
+Two other threshold rules, also fixed on mouse 1, fail differently: matching the
+incumbent's call count still gives dR +0.0058 on PBMC, and matching the
+incumbent's precision on mouse 1 costs 0.047 of precision on PBMC. **No fixed
+probability clears the criterion everywhere**, because 33 % of mouse candidates
+are atlas-positive against 13.9 % of PBMC's: **the probability transfers as a
+ranking, not as an absolute scale.** So the flag ships OFF, and the probability
+ships as a column regardless.
+
+### Added
+
+- **`--pas-score {none,calibrated,select}`** (`pas_score`), **default `none`**
+  (= previous behaviour).
+  - `calibrated` appends one column, `pas_score`, to `pas_support.tsv`. It
+    **adds, drops and moves no PAS**.
+  - `select` additionally uses the score **in place of** the molecule-count
+    threshold. **Tier-1 membership and the internal-priming veto stay hard
+    gates in front of it**: the score runs at the same seam, immediately after
+    the veto, on the BEDs the veto has already rewritten, so it can only ever
+    *remove* a tier-1 candidate — never promote a coverage-only one, never
+    rescue a vetoed one. A test pins that by giving an internally-primed
+    candidate a `0.0` threshold and asserting it stays dropped.
+- **`--pas-score-model NAME|PATH`** (`pas_score_model`), default `prime1` — a
+  model shipped with the package, or a JSON produced offline.
+- **`--pas-score-min FLOAT`** (`pas_score_min`), default `-1` = "the threshold
+  the model was shipped with".
+- `run_config.json` records all three under `variables`.
+- `ema/countmatrix/models/pas_score_model_prime1.json` — 161 trees, 9,821 nodes,
+  0.46 MB of constants. Fitted offline by `scripts/prime/taskD_fit_model.py`;
+  the fit is deterministic (re-running reproduces the file byte-for-byte).
+
+### Engineering notes for the reviewer
+
+- **scikit-learn never enters the run-time path.** `ema/countmatrix/pas_score.py`
+  evaluates node arrays with numpy; the offline exporter refuses to write a
+  model whose numpy evaluation differs from scikit-learn's by more than 1e-9 on
+  any training row (the shipped one agrees to **2.2e-16**), and a subprocess
+  test asserts that loading a model and scoring with it imports no `sklearn`.
+- **Every one of the 21 features is a `pas_support.tsv` column, verbatim**
+  (`tier`, not a derived indicator), so the offline fitter and the tool are one
+  computation and any `pas_score` can be recomputed from the row beside it. On a
+  real run the tool's column and an independent offline recomputation agree to
+  **5.0e-7** — half of the last printed digit.
+- **One pass, not two.** The score rides the pass `--ip-filter` already makes and
+  reuses the feature collector's rows through a lazy `ScoredFeatures` view, so
+  the sidecar is still appended to once and a genome-wide run never holds two
+  copies of 650 k rows.
+- **`seq_ok == 0` means `NA`, not zero.** A candidate whose sequence window could
+  not be read is exempt from `select` rather than silently dropped.
+- **Cost.** PBMC chr19+21 slice at 8 threads with `--pas-score calibrated`:
+  6 m 26.5 s / 1.169 GB against the reference 6 m 35.4 s / 1.164 GB — 1.00x wall,
+  1.004x peak RSS. Genome-wide the score step is **24.4 s for PBMC's 652,665
+  candidates** (18.9 s of that is the 161-tree traversal), about 1 % of that
+  run's wall time, with no extra pass over the BAM, the FASTA or the BED.
+
+### Measured on all three full BAMs
+
+Full transcript, every threshold rule, the calibration curves and the
+reproduction commands: `results/prime/TASK_D_pas_score.md`.
+
+**A score inherits the truth that trained it — record this one.** Trained on a
+curated atlas, the score buys atlas agreement and *loses* long-read agreement:
+on PBMC at the shipped cut, Kinnex x3p t5 P@25 falls **0.7647 -> 0.7294** (t20
+0.5584 -> 0.5061) while the internal-priming decoy rate falls **0.1300 ->
+0.0650**. An otherwise identical model trained on the Kinnex long reads instead
+*raises* t5 P@25 to 0.7904. On separating long-read termini from decoys the
+shipped score reaches AUC 0.7185 against **0.7790 for the tool's own inverted
+`ip_tool_afrac`** — i.e. it does not beat one covariate the caller already
+computes on that axis, and no atlas-trained variant does. Calibration says the
+same thing twice: expected calibration error 0.0210 on mouse 2 against the
+training label, 0.0399 on PBMC against the same label, and **0.1300 on PBMC
+against long reads**.
+
+**The development slice reverses the sign of that read-out.** On chr19+21 the
+same comparison gives Kinnex t5 **+0.0129**; on the other 22 contigs it is
+**−0.0380**. Any atlas-independent claim from this branch has to be genome-wide.
+
+## Unreleased (branch `peakAtail-prime`) — per-site scoring features
+
+**One new flag. It appends columns to a sidecar and changes nothing else.**
+
+The one measured-positive algorithmic change left for this caller is a
+calibrated per-site score used as a **re-ranker inside the existing tier-1 and
+internal-priming gates**, replacing only the `>= 2 clip molecules` threshold.
+Fitted on long-read termini and evaluated on a curated atlas it had never
+seen, it is worth **+6.6 % relative recall together with +7.0 precision
+points at matched call count and matched expression**, or **+14.3 % relative
+recall at matched precision**. That score has to be fitted offline, and to be
+fitted at all it needs per-site covariates written at call time. This release
+writes them; it does not score anything.
+
+### Added
+
+- **`--pas-features {off,on}`** (`pas_features`), **default `on`** —
+  append 24 columns to `pas_support.tsv`. `off` is the previous behaviour,
+  byte-for-byte.
+
+  It **adds, drops and moves no PAS**. `pasbed.bed` stays BED6, the count
+  matrix is untouched, and every pre-existing sidecar column keeps its name,
+  its position and its value — columns are only ever appended. It is a flag
+  and not unconditional because the sidecar's *bytes* change, and on this
+  branch previous output must stay reachable exactly.
+
+  | group | columns |
+  |---|---|
+  | written by the caller | `clip_positions` `clip_span` |
+  | genomic sequence | `seq_ok` `ip_tool_flag` `ip_tool_afrac` `ip_tool_arun` `a_count_d18` `a_frac_d18` `a_run_d18` `a_frac_d30` `a_run_d30` `kin_ip_flag` `hex_strong` `hex_any12` `hex_n_types` `hex_best_off` `hex_strong_off` |
+  | local candidate context | `d_prev_cand` `d_next_cand` `n_cand_100` `n_cand_500` `mol_500_sum` `is_local_mol_max` `mol_frac_local` |
+
+  Every column is documented in `docs/cli/run.md`.
+
+- `run_config.json` records `pas_features` under `variables`, so a run tree
+  states which sidecar schema produced it.
+
+- Multi-BAM runs, whose PAS ids are re-keyed at merge time and which therefore
+  have no run-root `pas_support.tsv` to extend, get a standalone
+  `<run>/pas_features.tsv` in the merged id space instead.
+
+### Measured on two development slices
+
+Full transcript and reproduction commands: `results/prime/TASK_C_pas_features.md`.
+
+**The call set does not move.** `pas.bed` has the same md5 in every arm — v2, prime with the
+features on, and prime with them off — on PBMC chr19+21 (`bb65b0e0…`, n 15,925 | tier1 8,524 |
+tier2 7,401 | tier1≥2mol 2,883) and on GSE104556 mouse1 chr18+19 (`57b86628…`, n 4,141), with
+and without `--ip-filter`.
+
+**Previous output stays reachable.** `--pas-features off` against a run of the pre-branch code:
+**51 / 51 data files byte-identical** on both slices, `pas_support.tsv` included. The only
+differences in either tree are the keys `read_geometry`, `read_exclude_flags` and `pas_features`
+now recorded under `variables` in `run_config.json` / `run_manifest.json`.
+
+**Cost.** Whole-run peak RSS **+0.28 %** (PBMC) and **+0.55 %** (mouse1). The whole-run wall
+delta is not usable — the `off` arm, which does strictly less work, was the slowest PBMC run in
+the set, so the box's run-to-run spread (30 s on a 6-minute run) exceeds the effect. Measured
+directly instead, one arm per process over the real caller BEDs and the real genome:
+
+| slice | candidates | internal-priming pass alone | + all 22 seam columns, appended |
+|---|---:|---:|---:|
+| PBMC chr19+21 | 32,752 | 0.286 s / 17.0 MB | **1.319 s / 39.6 MB** |
+| mouse1 chr18+19 | 11,444 | 0.109 s / 16.1 MB | **0.485 s / 24.2 MB** |
+
+**+1.03 s and +22.6 MB** (PBMC), **+0.38 s and +8.1 MB** (mouse1) — 32 µs and ~0.49 kB per
+candidate. Projected onto a genome-wide PBMC run's 651,957 PAS: ≈ 21 s and ≈ 320 MB held while
+the seam runs.
+
+**The values are the offline analysis's, verified twice.** Joined on
+`(contig, cleavage, strand)`: every sequence column agrees **exactly** with the stored offline
+feature table on all **15,925** coordinates the two runs share, and with a fresh run of that
+analysis's own script over `bedtools getfasta -s` windows on **3,000** sampled sites. The
+context columns agree on 95.4–99.9 %, and every disagreement is the expected consequence of the
+two runs having different candidate sets (32,752 here against 19,242 in the genome-wide table on
+the same two contigs) — anyone fitting a model must recompute the context block from the tool's
+own output rather than reusing the offline one.
+
+**Internal consistency.** `ip_tool_flag == 1` on exactly the 5,015 sites the internal-priming
+veto dropped on the PBMC slice — the covariate and the gate agree on every site, which is the
+point of taking it from the string the veto tested.
+
+### Cost: no extra pass over anything
+
+`clip_positions` / `clip_span` come from numbers the caller already has —
+tier 1 from the single-linkage cluster's own member list, tier 2 from the same
+`±--polya-window` slice its four clip counts already come from.
+
+The 22 sequence and context columns are computed at the internal-priming
+stage, **inside the pass that already walks the PAS BED with the genome
+open**: one extra 71 nt slice per PAS from a contig record already in hand.
+The genome is opened exactly as many times with the features on as with them
+off, and that is asserted by a test rather than argued. When `--genome-fasta`
+is supplied but `--ip-filter` is not, the feature scan *is* that single pass
+(it drops nothing and writes no BED). With no FASTA at all the sequence
+columns are `NA` — announced by a warning, never silently — and the context
+columns are still real.
+
+### Strand
+
+Every window is transcript-relative around the cleavage base (BED `end - 1` on
+`+`, BED `start` on `-`) and is reverse-complemented on `-`, the same
+convention the internal-priming window was corrected to. The first base's
+offset is derived from the bases *actually returned*, so clamping at a contig
+start and truncation at a contig end are accounted for rather than assumed
+away: a window that does not fully cover `r in [-40, +30]` reports `seq_ok 0`
+and `NA`, never a silently short denominator. `seq_ok` is `NA` rather than `0`
+when no genome was supplied, so "no genome" stays distinguishable from
+"contig edge".
+
+### `ip_tool_afrac` is the veto's own window
+
+On separating genuine long-read 3' termini from internal-priming decoys, the
+tool's own A-fraction over its internal-priming window — **inverted** — is a
+stronger discriminator (AUC 0.7790) than the entire 49-feature model that
+motivated this column set (0.7655). It is therefore taken from the very string
+the veto tests, so it tracks `--ip-window-left` / `--ip-window-right` exactly
+and cannot drift from the rule it summarises.
+
+`ip_tool_flag` is emitted **in addition to** the internal-priming veto and
+never as a replacement for it: every configuration in which a score was
+allowed to override that veto looked excellent against a curated atlas and no
+better than the plain rule against long reads. The veto stays a hard gate.
+
+### Not emitted, on purpose
+
+* A second BAM pass for per-cell clip counts, top-cell share, end counts at
+  ±5/25/100, pileup sharpness or end-position entropy: **0.000–0.002** held-out
+  AUC.
+* Any molecule-end pileup statistic: after matching on local read depth, a
+  molecule-end pileup at a true missed site is as likely as at a random
+  position of the same depth (0.95–1.01×), against 11.4× for the clip channel.
+* Anything needing a sequence window wider than `r in [-40, +30]`.
+
+---
+
+## Unreleased (branch `peakAtail-prime`) — read acceptance geometry
+
+**Two new flags. Both default to the previous behaviour, and one of them
+does so because the measurement said to.**
+
+`ema/countmatrix/read.py` normalised every accepted read to exactly
+`--seq-len` bp of *reference* span: a read whose span was longer was
+**discarded**, a shorter one had its end rewritten to `start + seq_len`. A
+spliced alignment's reference span includes its introns, so the discard fell
+almost entirely on spliced reads — **before the poly(A) clip detector and
+before the count matrix**.
+
+Census on the PBMC 10k v3 chr19+21 dev slice (50,898,456 records,
+`--seq-len 91`) and a GSE104556 mouse1 chr18+19 slice (11,580,142 records,
+`--seq-len 98`):
+
+| | PBMC slice | mouse1 slice |
+|---|---:|---:|
+| valid-CB reads reaching the rule | 48,647,964 | 11,343,946 |
+| **discarded**, reference span > `--seq-len` | 11,768,752 (24.19 %) | 2,263,738 (19.96 %) |
+| …spliced | 98.08 % | 98.72 % |
+| **end rewritten**, span < `--seq-len` | 4,752,308 (9.77 %) | 2,462,026 (21.70 %) |
+| mean fabricated 3'-end shift, downstream | 13.53 bp | 25.17 bp |
+| qualifying poly(A) clip reads lost | 12,427 (+4.65 %) | 1,913 (+1.54 %) |
+| secondary alignments among valid-CB reads | 10.42 % | 12.09 % |
+
+Genome-wide the discard is 13.74 % of valid-CB reads, 96 % of them spliced —
+**88.8 M reads on the full PBMC BAM**. The slices are spliced-richer than
+average, so every slice figure here over-states the genome-wide effect.
+
+`keep` and `true` recover **11,526,534** of those reads on the PBMC slice
+(23.69 % of valid-CB reads, 97.94 % of what was discarded) and **2,227,952**
+on the mouse slice (19.64 % / 98.42 %) — **100 % of them spliced**, by
+construction: only an intron can shrink a read's footprint below its span, so
+an unspliced read the old rule rejected is still rejected. Scaling onto the
+genome-wide census, ≈ **87 M reads** on the full PBMC BAM.
+
+### Added
+
+- **`--read-geometry {fixed,keep,true}`** (`read_geometry`), **default
+  `fixed`** — the previous behaviour.
+  * `fixed` — discard span > `--seq-len`, pad shorter reads to
+    `start + seq_len`. **Reproduces pre-branch output byte-for-byte**:
+    validated on the real chr19+21 slice (all 50 data files identical to a
+    reference run made from the frozen pre-branch tree) and on a committed
+    fixture by `tests/test_prime_v2_compat_golden.py`.
+  * `keep` — stop discarding; keep the fixed-length interval. The ablation arm.
+  * `true` — additionally use the read's real aligned reference footprint:
+    soft clips excluded at both ends (they are not aligned, and the terminal
+    poly(A) clip is the clip detector's evidence, not coverage), deletions
+    inside the span, **introns removed**. Introns must be removed: over
+    7.82 M valid-CB slice reads they carry 10.02 Gb, ~14× the real read mass
+    over the same 105 Mb, so admitting them turns the coverage state machine
+    into a gene-body detector.
+
+  Acceptance moves to the read's **de-introned reference footprint**, not to
+  its query length. A query-length rule is *not* a strict relaxation: a short
+  alignment with a long terminal soft clip has span ≤ `--seq-len` (kept
+  before) but query length > `--seq-len` — the shape of a poly(A) clip read.
+  Every read `fixed` accepts, `keep` and `true` accept.
+
+- **`--read-exclude-flags N`** (`read_exclude_flags`), **default `0`** = the
+  previous behaviour = no filtering. The coverage/count channel applies no
+  `samtools -F`, so a read aligned to *N* places contributes *N* reads of
+  coverage and *N* matrix counts. `256` drops secondary alignments.
+
+- `run_config.json` now records both under `variables`, so a run tree states
+  which geometry produced it.
+
+### Measured — and why the defaults did not move
+
+Default precision arm (tier-1 ∩ ≥2 molecules), against `fixed`:
+
+| dataset | arm | n | ΔP@100 | ΔR_det@100 | ΔF1 | precision of the ADDED calls |
+|---|---:|---:|---:|---:|---:|---:|
+| PBMC slice | `keep` | 3,722 | −0.0026 | +0.0030 | +0.0029 | 0.519 |
+| PBMC slice | `true` | 3,724 | −0.0026 | +0.0031 | +0.0030 | 0.519 |
+| mouse1 slice | `keep` | 1,964 | −0.0283 | +0.0059 | +0.0039 | 0.353 |
+| mouse1 slice | `true` | 1,977 | **−0.0292** | +0.0063 | +0.0042 | 0.368 |
+
+(base P@100: PBMC 0.6401, mouse1 0.7156; null P@100 0.031 / 0.014.)
+
+`manuscript/24` §3.1 requires ΔP@100 ≥ −0.005, ΔR_det ≥ +0.010 and ΔF1 > 0 on
+every dataset. **`true` fails (ii) on PBMC and fails (i) on mouse1 by 5.9×**,
+so per the pre-registration it stays behind a non-default flag. The mouse
+precision loss survives `--read-exclude-flags 256` (−0.0117) and the ablation
+puts essentially all of it on *stopping the discard*, not on the 3'-end fix:
+`keep`→`true` is worth ΔP −0.0001 / ΔR +0.0001 on PBMC and −0.0010 / +0.0004
+on mouse1. The recovered spliced reads carry real evidence — their calls agree
+with the atlas 12–26× better than the genic null — but less precisely than the
+evidence already in hand, so admitting them slides along the curve instead of
+lifting it.
+
+**What `true` does buy, and what §3.1 does not measure:** raw count-matrix
+mass **+31.2 %** (PBMC slice) and **+23.5 %** (mouse1 slice), ~**+15.9 %**
+genome-wide from the 13.74 % genome-wide discard. That is the reason the flag
+exists, and moving the default on the strength of it needs a quantification
+criterion the pre-registration does not currently have. (The *filtered*
+matrix and cell counts move much more — +89 % mass, 7,133 → 13,516 cells —
+but that is a slice artefact: `--min-read 1500` bites hard when a cell is only
+seen on 7 % of the genome.)
+
+`--read-exclude-flags 256` is a clean precision-for-recall trade, not a lift:
+on the default arm it is ΔP@100 +0.0125 / ΔR −0.0008 (PBMC) and +0.0218 /
+−0.0031 (mouse1). Filtering can only slide along the curve, so it stays off.
+
+The geometry adds calls rather than moving them: **97.6 %** (PBMC) and
+**91.1 %** (mouse1) of `true`'s default-arm calls sit at *exactly* the same
+coordinate as a `fixed` call, and the median signed distance from a call to
+the nearest Kinnex long-read 3' end is unchanged at −2 bp.
+
+Compute on the PBMC slice at 8 threads: wall 6:31 → 8:38 (1.32×), peak RSS
+1.16 GB → 1.74 GB (1.53×, over the 1.5× guard rail of `manuscript/24`
+§3.2.4 — declared, not hidden). On the mouse slice, 1.17× wall and 1.01× RSS.
 
 ## Unreleased — caller memory and CPU
 

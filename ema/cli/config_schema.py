@@ -116,6 +116,114 @@ def _spec(**kwargs: Any) -> dict[str, FieldSpec]:
 # RunConfig: the schema.  ORDER MATTERS for the auto-generated --help
 # layout (Click renders flags top-to-bottom in declaration order).
 # ---------------------------------------------------------------------------
+#: ``--ip-filter-mode``'s three values, kept as named constants because the
+#: literal is what went wrong: the branch shipped one behavioural default
+#: (``--ip-filter-default auto``, which turns the internal-priming veto ON)
+#: while the mode literal stayed at v2's ``"annotate"``, which KEEPS every
+#: flagged site.  The veto therefore ran, flagged, and dropped nothing -- a
+#: default that emitted v2's exact call set while the docs claimed a recall
+#: lift.  ``IP_FILTER_MODE_UNSET`` is the sentinel meaning "the user did not
+#: name a mode"; :func:`resolve_ip_filter_mode` turns it into
+#: ``IP_FILTER_MODE_WHEN_UNSET``.
+IP_FILTER_MODE_UNSET = "auto"
+#: What an unnamed mode resolves to on peakAtail-prime: the veto DROPS.
+IP_FILTER_MODE_WHEN_UNSET = "filter"
+#: v2 (commit 9dfdefb) literal default for ``--ip-filter-mode``.  Pinned in
+#: :data:`V2_COMPAT_FLAGS` because the branch default is no longer this value.
+IP_FILTER_MODE_V2 = "annotate"
+#: The modes :func:`ema.experimental.internal_priming.filter_internal_priming`
+#: accepts.  ``IP_FILTER_MODE_UNSET`` is deliberately NOT one of them: an
+#: unresolved sentinel reaching the filter must raise, never be guessed at.
+IP_FILTER_MODES_EFFECTIVE = ("annotate", "filter")
+
+
+def resolve_ip_filter_mode(raw: str | None) -> tuple[str, str]:
+    """Turn the ``--ip-filter-mode`` value into the mode the veto will run in.
+
+    Pure: no globals, no logging, so the same answer can be logged, written
+    into the run manifest and asserted in a unit test without three copies of
+    the rule.
+
+    Args:
+        raw: the value of ``args.ip_filter_mode`` -- ``"auto"`` (the branch
+            default, meaning the user did not name a mode), ``"annotate"`` or
+            ``"filter"``.  ``None`` / empty is treated as ``"auto"``.
+
+    Returns:
+        ``(mode, why)`` where *mode* is one of
+        :data:`IP_FILTER_MODES_EFFECTIVE` and *why* is a short human string
+        naming what decided it (for the run log and run_config.json).
+
+    Raises:
+        ValueError: on any other value.  A typo must stop the run, not fall
+            back to a mode nobody chose.
+    """
+    text = str(raw or IP_FILTER_MODE_UNSET)
+    if text in IP_FILTER_MODES_EFFECTIVE:
+        return text, "--ip-filter-mode %s (explicit)" % text
+    if text == IP_FILTER_MODE_UNSET:
+        return (IP_FILTER_MODE_WHEN_UNSET,
+                "--ip-filter-mode not given -> %s (peakAtail-prime default; "
+                "v2's literal was %s)" % (IP_FILTER_MODE_WHEN_UNSET,
+                                          IP_FILTER_MODE_V2))
+    raise ValueError(
+        "--ip-filter-mode must be one of %r, got %r"
+        % ((IP_FILTER_MODE_UNSET,) + IP_FILTER_MODES_EFFECTIVE, raw)
+    )
+
+
+#: The exact CLI incantation that pins every ``peakAtail-prime`` option to its
+#: v2 (commit ``9dfdefb``) value, so a run of this branch reproduces the code
+#: that produced the manuscript's numbers **byte-for-byte**.
+#:
+#: THIS TUPLE IS THE CARDINAL RULE IN MACHINE-READABLE FORM.  It used to live
+#: only as prose in ``CHANGELOG.md``, where nothing could check it: a new prime
+#: option with a non-v2 default that was pinned in
+#: ``tests/test_prime_v2_compat_golden.py::_v2_settings`` but left out of the
+#: documented command line would have made every *published* compat run
+#: silently stop being v2, with the unit test still green.
+#: ``tests/test_prime_compat_flags.py`` ties the two together in both
+#: directions and checks the prose against this tuple.
+#:
+#: Validated on the real PBMC chr19+21 and GSE104556 mouse1 chr18+19 slices:
+#: 50 / 50 data files byte-identical to a run of the frozen v2 worktree, the
+#: run journal identical after timestamp normalisation, and the only remaining
+#: difference the new keys in ``run_config.json`` / ``run_manifest.json``
+#: (which a v2 config file could not have contained).
+#:
+#: Options whose branch default is ALREADY the v2 value are listed too, so the
+#: incantation stays complete and readable if a default ever moves.  Every
+#: value-carrying option this branch adds must appear here, and
+#: ``tests/test_prime_compat_flags.py`` checks that against the frozen v2
+#: worktree rather than against a hand-kept list.
+V2_COMPAT_FLAGS: tuple[str, ...] = (
+    "--read-geometry", "fixed",
+    "--read-exclude-flags", "0",
+    "--pas-features", "off",
+    "--pas-score", "none",
+    "--pas-score-model", "prime1",
+    "--pas-score-min", "-1",
+    "--cleavage-offset", "none",
+    "--emit-inferred-cleavage", "off",
+    "--clip-rate-sampling", "head",
+    "--ip-filter-default", "off",
+    "--ip-filter-mode", IP_FILTER_MODE_V2,
+    "--pas-gene-rescue", "off",
+    "--pas-gene-rescue-min-mol", "0",
+    "--dynamic-threshold-clamp", "off",
+)
+
+#: peakAtail-prime options that are BOOLEAN FLAGS: their v2 behaviour is
+#: "do not pass the flag", so they cannot appear in :data:`V2_COMPAT_FLAGS`
+#: (which is flag/value pairs).  Declared explicitly so the completeness check
+#: in ``tests/test_prime_compat_flags.py`` cannot be satisfied by forgetting
+#: one.
+V2_COMPAT_OMITTED_FLAGS: tuple[str, ...] = (
+    "--no-ip-filter",      # forces the internal-priming veto off; v2 = absent,
+                           # and --ip-filter-default off already restores v2.
+)
+
+
 @dataclass
 class RunConfig:
     """Canonical parameter container for ``ema run``.
@@ -258,6 +366,130 @@ class RunConfig:
             cli_flag="--cb-len", yaml_key="cb_len",
             legacy_dataclass_attr="variable_config.cb_len",
             description="Cell-barcode length (bp).",
+        ),
+    )
+    read_geometry: str = field(
+        # Must equal ema.config.variable_config.read_geometry -- see the long
+        # note there for why the measured default is v2's "fixed".
+        default="fixed",
+        metadata=_spec(
+            cli_flag="--read-geometry", yaml_key="read_geometry",
+            legacy_dataclass_attr="variable_config.read_geometry",
+            choice=("fixed", "keep", "true"),
+            description=(
+                "How a read's genomic interval is derived (peakAtail-prime). "
+                "'fixed' is v2: DISCARD any read whose reference span exceeds "
+                "--seq-len and rewrite a shorter read's end to start+seq_len. "
+                "'keep' replaces the discard with the same test applied to "
+                "the read's DE-INTRONED reference footprint (a "
+                "spliced alignment is no longer thrown away for the length of "
+                "its intron) but keeps v2's fixed-length interval -- the "
+                "footprint and NOT the query length, because a query-length "
+                "rule would DROP a short alignment carrying a long poly(A) "
+                "soft clip, which v2 keeps. 'true' "
+                "additionally uses the read's real aligned reference "
+                "footprint: soft clips excluded, deletions inside the span, "
+                "introns (CIGAR N) removed. Measured on the PBMC chr19+21 "
+                "slice, 'fixed' discards 24.19% of valid-CB reads (98.1% of "
+                "them spliced) before BOTH the poly(A) clip detector and the "
+                "count matrix, so 'true' is worth +31.2% of raw count-matrix "
+                "mass (+23.5% on a GSE104556 mouse slice) -- but it costs "
+                "2.9 precision points (P@100) on that mouse slice, so the "
+                "DEFAULT stays 'fixed', which is also the v2-compatibility "
+                "value. See the branch CHANGELOG."
+            ),
+        ),
+    )
+    read_exclude_flags: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--read-exclude-flags", yaml_key="read_exclude_flags",
+            legacy_dataclass_attr="variable_config.read_exclude_flags",
+            description=(
+                "SAM flag mask vetoed on the coverage/count channel, like "
+                "samtools view -F (0 = default = v2 = no filtering). v2 "
+                "applies no filter, so a read aligned to N places contributes "
+                "N reads of coverage and N matrix counts; 10.42% of valid-CB "
+                "reads on the PBMC chr19+21 slice are secondary alignments. "
+                "256 drops secondary alignments only; 3844 is samtools' "
+                "unmapped+secondary+qcfail+duplicate+supplementary. Left OFF "
+                "by default because it is a call-set change, not a bug fix."
+            ),
+        ),
+    )
+    pas_features: str = field(
+        default="on",
+        metadata=_spec(
+            cli_flag="--pas-features", yaml_key="pas_features",
+            legacy_dataclass_attr="variable_config.pas_features",
+            choice=("off", "on"),
+            description=(
+                "Emit per-site scoring features into the pas_support.tsv "
+                "sidecar (peakAtail-prime). 'on' (default on this branch) "
+                "APPENDS columns -- clip cluster shape at call time, and "
+                "downstream A-content, canonical hexamer, the tool's own "
+                "internal-priming covariates and local candidate context at "
+                "the internal-priming seam. It adds, drops and moves no PAS; "
+                "pasbed.bed stays BED6 and every pre-existing sidecar column "
+                "keeps its position. The sequence columns need "
+                "--genome-fasta and are written NA without one; they cost no "
+                "extra pass over the FASTA. 'off' is the v2-compatibility "
+                "value (v2's seven sidecar columns, byte-for-byte)."
+            ),
+        ),
+    )
+    pas_score: str = field(
+        # Must equal ema.config.variable_config.pas_score.  DEFAULT "none"
+        # until manuscript/24 3.1 is met on all three datasets -- see the note
+        # in ema/config.py for the measured deltas that decide it.
+        default="none",
+        metadata=_spec(
+            cli_flag="--pas-score", yaml_key="pas_score",
+            legacy_dataclass_attr="variable_config.pas_score",
+            choice=("none", "calibrated", "select"),
+            description=(
+                "Calibrated per-site PAS score (peakAtail-prime). 'none' "
+                "(default, = v2) computes nothing. 'calibrated' evaluates the "
+                "shipped model at the internal-priming seam and appends a "
+                "pas_score probability column to pas_support.tsv -- it adds, "
+                "drops and moves no PAS. 'select' additionally uses the score "
+                "IN PLACE OF the molecule-count threshold: a tier-1 candidate "
+                "scoring below --pas-score-min is dropped. Tier-1 membership "
+                "and the internal-priming veto stay HARD GATES in front of it "
+                "-- the score can only remove a tier-1 candidate, never "
+                "promote a coverage-only one and never rescue an "
+                "internally-primed one. Requires --pas-features on and "
+                "--genome-fasta."
+            ),
+        ),
+    )
+    pas_score_model: str = field(
+        default="prime1",
+        metadata=_spec(
+            cli_flag="--pas-score-model", yaml_key="pas_score_model",
+            legacy_dataclass_attr="variable_config.pas_score_model",
+            description=(
+                "Which scoring model --pas-score evaluates: a name shipped "
+                "with the package (default 'prime1', trained offline on "
+                "GSE104556 testis mouse 1) or a path to a model JSON produced "
+                "by scripts/prime/taskD_fit_model.py. Models are constants "
+                "evaluated with numpy; scikit-learn is never imported at run "
+                "time."
+            ),
+        ),
+    )
+    pas_score_min: float = field(
+        default=-1.0,
+        metadata=_spec(
+            cli_flag="--pas-score-min", yaml_key="pas_score_min",
+            legacy_dataclass_attr="variable_config.pas_score_min",
+            description=(
+                "Probability threshold used by --pas-score select. Negative "
+                "(default) means 'use the threshold the model itself was "
+                "shipped with', which was fixed on GSE104556 mouse 1 and never "
+                "on the datasets it is reported against (manuscript/24 3.3, "
+                "Rule T). Ignored unless --pas-score select."
+            ),
         ),
     )
     barcode_tag: Optional[str] = field(
@@ -457,6 +689,22 @@ class RunConfig:
             ),
         ),
     )
+    dynamic_threshold_clamp: str = field(
+        default="off",
+        metadata=_spec(
+            cli_flag="--dynamic-threshold-clamp",
+            yaml_key="dynamic_threshold_clamp",
+            legacy_args_attr="dynamic_threshold_clamp",
+            choice=("off", "on"),
+            description=(
+                "NO-OP, accepted for compatibility. The dynamic-threshold "
+                "look-back index is now bounded by the live read window on "
+                "every path (issue #101), so neither 'off' nor 'on' can "
+                "change a run: both values mean bounded. Kept so existing "
+                "command lines and YAML configs keep parsing."
+            ),
+        ),
+    )
     pas_gap: int = field(
         default=100,
         metadata=_spec(
@@ -504,21 +752,49 @@ class RunConfig:
             ),
         ),
     )
-    cleavage_offset: int = field(
-        default=0,
+    cleavage_offset: str = field(
+        # Must equal ema.config.variable_config.cleavage_offset.
+        default="none",
         metadata=_spec(
             cli_flag="--cleavage-offset", yaml_key="cleavage_offset",
             legacy_dataclass_attr="variable_config.cleavage_offset",
             description=(
-                "3' cleavage-site offset correction (bp; issue #72).  Called "
-                "peak 3' ends stop ~90-105 nt short of the true cleavage site "
-                "because 10x R2 coverage runs out before the poly(A) junction. "
-                "When > 0, the reported PAS 3' end is shifted downstream by "
-                "this many bp after peak calling, so tight-cutoff benchmarks "
-                "and atlas annotation use the inferred cleavage position. "
-                "A sane data-driven constant is ~90-100 (try 95). "
-                "0 (default) preserves legacy behaviour (no shift). "
-                "Use --auto-cleavage-offset to estimate this from the data."
+                "3' cleavage-site offset applied to the reported PAS "
+                "coordinate: 'none' (default, = v2, nothing moves), 'auto' "
+                "(this run's own clip-anchored estimate) or a SIGNED integer "
+                "in bp, transcript orientation. A POSITIVE value is the "
+                "COVERAGE correction (issue #72: a coverage peak's 3' end "
+                "stops ~90-105 nt short of cleavage because 10x R2 coverage "
+                "runs out) and, under --peak-strategy clip_seeded, moves the "
+                "coverage-only tier ONLY -- applying it to clip-anchored "
+                "tier-1 PAS costs 46 points of P@10. A NEGATIVE value is the "
+                "base-pair resolution correction and moves the clip-anchored "
+                "tier only; the measured exact-match optimum on PBMC is -1 bp "
+                "against the atlas and -2 bp against Kinnex long reads, and "
+                "NOTHING at any window >= 25 bp, which is why it is not a "
+                "default. The offset is reported per site in "
+                "pas_support.tsv's inferred_cleavage column whether or not it "
+                "is applied. (For the coverage-caller's A-content estimator, "
+                "see --auto-cleavage-offset; it is refused under clip_seeded.)"
+            ),
+        ),
+    )
+    emit_inferred_cleavage: str = field(
+        # Must equal ema.config.variable_config.emit_inferred_cleavage.
+        default="on",
+        metadata=_spec(
+            cli_flag="--emit-inferred-cleavage",
+            yaml_key="emit_inferred_cleavage",
+            legacy_dataclass_attr="variable_config.emit_inferred_cleavage",
+            choice=("off", "on"),
+            description=(
+                "Append an inferred_cleavage column to pas_support.tsv "
+                "(peakAtail-prime): the coordinate this run's cleavage offset "
+                "implies for each PAS, REPORTED without moving pasbed.bed. "
+                "The per-library clip-anchored offset estimate and its "
+                "per-strand split are written to "
+                "01_peak_calling/cleavage_offset_stats.json and to "
+                "run_manifest.json either way. 'off' is the v2 value."
             ),
         ),
     )
@@ -529,13 +805,17 @@ class RunConfig:
             is_flag=True,
             legacy_dataclass_attr="variable_config.auto_cleavage_offset",
             description=(
-                "Data-driven 3' cleavage-offset estimation (issue #72).  When "
-                "set, the offset is inferred per run from the called peaks and "
+                "COVERAGE-caller 3' cleavage-offset estimation (issue #72). "
+                "Infers the offset per run from the called peaks and "
                 "--genome-fasta (genomic A-fraction crest + AATAAA density "
-                "downstream of each peak 3' end) instead of using the fixed "
-                "--cleavage-offset constant, then applied the same way.  "
-                "Requires --genome-fasta; falls back to ~95 bp if the profiles "
-                "are inconclusive.  Off (default) preserves legacy behaviour."
+                "downstream of each peak 3' end, searched in a 60-120 bp "
+                "band), then applies it like --cleavage-offset. Requires "
+                "--genome-fasta; falls back to ~95 bp when the profiles are "
+                "inconclusive. Off (default). REFUSED under --peak-strategy "
+                "clip_seeded: the band means it can only return a large "
+                "POSITIVE offset, and +95 bp costs 46 points of P@10 there "
+                "(0.5209 -> 0.0551) because clip-anchored PAS are already on "
+                "the cleavage base. Use --cleavage-offset auto instead."
             ),
         ),
     )
@@ -547,9 +827,43 @@ class RunConfig:
             cli_flag="--ip-filter", yaml_key="ip_filter", is_flag=True,
             legacy_args_attr="ip_filter",
             description=(
-                "Enable internal-priming filter: drops PAS near genomic "
+                "Force the internal-priming filter ON: drops PAS near genomic "
                 "A-rich stretches (requires --genome-fasta). Applied to the "
-                "pos/neg PAS BEDs before gene assignment."
+                "pos/neg PAS BEDs before gene assignment. On peakAtail-prime "
+                "this is already the default whenever --genome-fasta is "
+                "available (see --ip-filter-default); passing it explicitly "
+                "makes a missing FASTA an error instead of a warning."
+            ),
+        ),
+    )
+    no_ip_filter: bool = field(
+        default=False,
+        metadata=_spec(
+            cli_flag="--no-ip-filter", yaml_key="no_ip_filter", is_flag=True,
+            legacy_args_attr="no_ip_filter",
+            description=(
+                "Force the internal-priming filter OFF whatever "
+                "--ip-filter-default says. This is the pre-peakAtail-prime "
+                "behaviour for a run that supplies a --genome-fasta."
+            ),
+        ),
+    )
+    ip_filter_default: str = field(
+        # Must equal ema.config.variable_config.ip_filter_default.
+        default="auto",
+        metadata=_spec(
+            cli_flag="--ip-filter-default", yaml_key="ip_filter_default",
+            legacy_dataclass_attr="variable_config.ip_filter_default",
+            choice=("off", "auto"),
+            description=(
+                "What --ip-filter does when it is not passed (peakAtail-prime). "
+                "'auto' (default on this branch) runs the internal-priming "
+                "veto whenever a readable --genome-fasta is available, and "
+                "warns LOUDLY when there is none. 'off' is the v2 value: the "
+                "veto runs only when --ip-filter is given. The veto is the "
+                "largest measured accuracy lift in the caller -- +7.7% to "
+                "+12.8% relative recall at matched atlas precision, +17.7% to "
+                "+22.9% at matched long-read precision -- and it was opt-in."
             ),
         ),
     )
@@ -563,17 +877,37 @@ class RunConfig:
         ),
     )
     ip_filter_mode: str = field(
-        default="annotate",
+        # peakAtail-prime: the default is the SENTINEL "auto", not a mode.
+        # v2's literal here is "annotate" -- see IP_FILTER_MODE_V2 -- and on
+        # v2 that was harmless because the veto only ran when the user asked
+        # for it with --ip-filter, i.e. a user who wanted the drop asked for
+        # it twice.  This branch turns the veto on by itself
+        # (--ip-filter-default auto), so leaving "annotate" as the literal
+        # made the branch's one behavioural default a NO-OP: the veto ran,
+        # flagged ~15 % of candidates and dropped none, and the run emitted
+        # v2's exact call set while the log advertised a recall lift it was
+        # not delivering.  "auto" resolves to "filter" (see
+        # ema.main._resolve_ip_filter_mode); an explicit --ip-filter-mode
+        # annotate is still honoured verbatim.
+        default="auto",
         metadata=_spec(
             cli_flag="--ip-filter-mode", yaml_key="ip_filter_mode",
-            choice=("annotate", "filter"),
+            choice=("auto", "annotate", "filter"),
             legacy_args_attr="ip_filter_mode",
             description=(
-                "How the internal-priming filter handles a flagged PAS "
-                "(only relevant when --ip-filter is set). 'annotate' "
-                "(default) KEEPS every PAS and records the internal_priming "
-                "flag on the PAS ledger + pasbed. 'filter' restores the "
-                "pre-D9 behaviour of dropping flagged PAS."
+                "What the internal-priming veto DOES with a flagged PAS "
+                "(only relevant when the veto runs -- see --ip-filter / "
+                "--ip-filter-default). 'auto' (default on peakAtail-prime) "
+                "means 'the mode was not named' and resolves to 'filter'. "
+                "'filter' DROPS flagged PAS -- this is the +7.7%-12.8% "
+                "relative recall at matched atlas precision. 'annotate' "
+                "KEEPS every PAS and only records the internal_priming flag "
+                "on the PAS ledger + pasbed; it is v2's literal default and "
+                "is the value pinned by the documented v2-compatibility "
+                "flag list (ema.cli.config_schema.V2_COMPAT_FLAGS; there is "
+                "no --compat flag). The mode that was actually used "
+                "is logged and written to run_config.json / "
+                "run_manifest.json under 'internal_priming'."
             ),
         ),
     )
@@ -758,6 +1092,30 @@ class RunConfig:
             ),
         ),
     )
+    clip_rate_sampling: str = field(
+        # Must equal ema.config.variable_config.clip_rate_sampling.
+        default="pass",
+        metadata=_spec(
+            cli_flag="--clip-rate-sampling", yaml_key="clip_rate_sampling",
+            legacy_dataclass_attr="variable_config.clip_rate_sampling",
+            choice=("head", "strided", "pass"),
+            description=(
+                "How the poly(A) clip-rate QC gets its number "
+                "(peakAtail-prime). 'pass' (default on this branch) does not "
+                "estimate at all: it COUNTS every accepted read and every "
+                "qualifying clip during the peak-calling pass the run performs "
+                "anyway, and reports the EXACT rate per (contig, strand) for "
+                "zero extra I/O. 'head' is v2: the first 200,000 CB reads of "
+                "the file, which on a coordinate-sorted BAM is the head of the "
+                "first contig and reported 2.2565% on PBMC 10k v3 where the "
+                "whole-file rate on the same denominator is 0.5364%. 'strided' "
+                "samples coordinate-uniform windows across every mapped contig "
+                "-- unbiased by construction, but measured to be unreliable "
+                "(1.53%-1.81% on the same file) because clips are rare and "
+                "clustered at 3' ends. Log-only: no output byte changes."
+            ),
+        ),
+    )
     polya_count_window: str = field(
         default="auto,25",
         metadata=_spec(
@@ -827,6 +1185,43 @@ class RunConfig:
             cli_flag="--utr-multiplier", yaml_key="utr_multiplier",
             legacy_args_attr="utr_multiplier",
             description="3'UTR length multiplier for extended-3' annotation.",
+        ),
+    )
+    pas_gene_rescue: str = field(
+        default="off",
+        metadata=_spec(
+            cli_flag="--pas-gene-rescue", yaml_key="pas_gene_rescue",
+            legacy_args_attr="pas_gene_rescue",
+            choice=("off", "inside"),
+            description=(
+                "Rescue PAS the gene-assignment tier gate drops for lack of a "
+                "3'UTR annotation (peakAtail-prime). The tier ladder can only "
+                "award TIER_1/TIER_2 when the assigned gene has an annotated "
+                "3'UTR LENGTH, so a PAS INSIDE its gene body (distance 0) "
+                "falls to TIER_3 and is dropped whenever that gene has no UTR "
+                "record -- in practice every non-coding gene. 'inside' grades "
+                "those TIER_2. OFF by default because it is MEASURED to cost "
+                "precision: on the PBMC chr19+21 slice it takes the default "
+                "arm from P@100 0.7392 / R_det 0.2080 to 0.6646 / 0.2132. "
+                "See --pas-gene-rescue-min-mol."
+            ),
+        ),
+    )
+    pas_gene_rescue_min_mol: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--pas-gene-rescue-min-mol",
+            yaml_key="pas_gene_rescue_min_mol",
+            legacy_args_attr="pas_gene_rescue_min_mol",
+            description=(
+                "Minimum BED score (poly(A) clip molecules for a clip_seeded "
+                "tier-1 PAS) for --pas-gene-rescue inside to apply. 0 "
+                "(default) rescues every inside-gene PAS. Measured on the "
+                "PBMC slice: even the >=10-molecule casualties reach only "
+                "P@100 0.4138 and Kinnex t5 P@25 0.5655 against 0.7392 / "
+                "0.7839 for the calls already kept, so no floor makes the "
+                "rescue free."
+            ),
         ),
     )
     include_extended: bool = field(

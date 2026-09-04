@@ -116,7 +116,10 @@ PEAK_KWARGS = dict(
 def _config():
     from ema.config import variable_config
 
-    keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro", "default_threshold", "merge_len")
+    # peakAtail-prime: read_geometry / pas_features / clip_rate_sampling are
+    # process-global too, and the geometry test below deliberately moves one.
+    keys = ("seqlen", "cb_len", "barcode_tag", "ignore_chro", "default_threshold",
+            "merge_len", "read_geometry", "pas_features", "clip_rate_sampling")
     saved = {k: getattr(variable_config, k) for k in keys}
     variable_config.seqlen = SEQ_LEN
     variable_config.cb_len = 16
@@ -387,3 +390,99 @@ def test_merge_renumbers_in_emission_order_and_keeps_first_write_cb_order(tmp_pa
     assert pos_sup[0] == "\t".join(SUPPORT_COLUMNS)
     assert pos_sup[1:] == ["1\t0\t0\t0\t0\t6\t2", "2\t2\t2\t2\t2\t7\t1", "3\t1\t1\t1\t1\t5\t1"]
     assert (tmp_path / "neg.support.tsv").read_text().splitlines()[1:] == ["4\t0\t3\t0\t3\t4\t1"]
+
+
+# ---------------------------------------------------------------------------
+# peakAtail-prime: the spawned workers must inherit the prime knobs
+# ---------------------------------------------------------------------------
+# Only "true" is an arm here: on this fixture no read's reference span exceeds
+# --seq-len, so nothing is discarded and "keep" is byte-equal to "fixed" -- a
+# "keep" arm could not tell a broken ChromJob from a working one.
+@pytest.mark.parametrize("geometry", ["true"])
+def test_parallel_matches_sequential_under_a_non_default_read_geometry(
+        bam, tmp_path, geometry):
+    """``--read-geometry`` has to reach the SPAWNED per-contig workers.
+
+    ``chrom_parallel`` is the path a real ``ema run --threads N`` takes, and
+    its workers are spawned: ``ema.config``'s legacy globals come back at
+    their MODULE defaults in the child.  ``read_geometry``'s module default is
+    ``"fixed"``, and every other integration test in this suite runs at that
+    same value -- so a ``ChromJob`` that forgot to carry the geometry would be
+    invisible to all of them while the parent used one geometry and the
+    children another.  The only symptom would be wrong coordinates.
+
+    (This coverage existed implicitly while ``"true"`` was the branch default;
+    it stopped existing when the measurement moved the default back to
+    ``"fixed"``.  Hence an explicit arm.)
+    """
+    from ema.config import variable_config
+    from ema.countmatrix.paswrite import support_path_for
+
+    variable_config.read_geometry = geometry
+    seq = _sequential(bam, tmp_path / "seq", "clip_seeded")
+    par, summary = _parallel(bam, tmp_path / "par", "clip_seeded", n_workers=3)
+    assert len(summary["jobs"]) == 6, "the merge was not exercised"
+    for key in ("pos.bed", "neg.bed", "pos.mtx", "neg.mtx", "cb.tsv"):
+        _assert_same_bytes(seq[key], par[key])
+    for key in ("pos.bed", "neg.bed"):
+        _assert_same_bytes(Path(support_path_for(str(seq[key]))),
+                           Path(support_path_for(str(par[key]))))
+
+    # ...and the arm is not vacuous: v2 geometry gives DIFFERENT bytes on this
+    # fixture, so byte-identity above is a statement about the plumbing.
+    variable_config.read_geometry = "fixed"
+    v2 = _sequential(bam, tmp_path / "v2", "clip_seeded")
+    assert v2["pos.bed"].read_bytes() != seq["pos.bed"].read_bytes(), (
+        f"--read-geometry {geometry} produced v2's bytes on this fixture, so "
+        "the test cannot tell 'the geometry reached the child' from 'nothing "
+        "happened'"
+    )
+
+
+def test_parallel_matches_sequential_with_the_feature_columns_on(bam, tmp_path):
+    """``--pas-features on`` decides the sidecar's COLUMN SET, and the merged
+    sidecar's header is taken from the children.  Both halves have to agree
+    across the spawn."""
+    from ema.config import variable_config
+    from ema.countmatrix.paswrite import (
+        CALL_FEATURE_COLUMNS, SUPPORT_COLUMNS, support_path_for,
+    )
+
+    variable_config.pas_features = "on"
+    seq = _sequential(bam, tmp_path / "seq", "clip_seeded")
+    par, _ = _parallel(bam, tmp_path / "par", "clip_seeded", n_workers=3)
+    for key in ("pos.bed", "neg.bed"):
+        a = Path(support_path_for(str(seq[key])))
+        b = Path(support_path_for(str(par[key])))
+        _assert_same_bytes(a, b)
+        header = a.read_text().splitlines()[0].split("\t")
+        assert header == list(SUPPORT_COLUMNS) + list(CALL_FEATURE_COLUMNS), header
+        rows = a.read_text().splitlines()[1:]
+        assert rows, f"{key}: empty sidecar makes this check vacuous"
+        for row in rows:
+            assert len(row.split("\t")) == len(header)
+
+
+def test_every_prime_knob_that_changes_output_travels_with_the_job():
+    """A structural guard: a new prime option that a child would otherwise
+    re-read from ``variable_config`` must be a ``ChromJob`` field AND be
+    assigned in ``chrom_worker``.
+
+    The failure mode this pins is silent and has already happened twice on
+    this branch (``run_tiled``'s legacy dicts, and the sidecar header): the
+    parent honours the flag, the spawned child does not, and the two halves of
+    one run disagree.
+    """
+    import dataclasses
+    import inspect
+
+    from ema.countmatrix import chrom_parallel as CP
+
+    fields = {f.name for f in dataclasses.fields(CP.ChromJob)}
+    src = inspect.getsource(CP.chrom_worker)
+    for knob in ("read_geometry", "read_exclude_flags", "pas_features",
+                 "clip_rate_sampling"):
+        assert knob in fields, f"ChromJob has no {knob} field"
+        assert f"vc.{knob} = job.{knob}" in src, (
+            f"chrom_worker never pushes {knob} into the child's variable_config"
+        )

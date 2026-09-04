@@ -25,7 +25,8 @@ def apply_filters(input_bed: str, output_bed: str,
                   ip_window_right: int = 30,
                   ip_a_stretch: int = 6,
                   ip_a_fraction: float = 0.7,
-                  ip_mode: str = "annotate") -> dict:
+                  ip_mode: str = "annotate",
+                  features=None) -> dict:
     """Apply all enabled filters sequentially to a BED file.
 
     Filters are applied in order:
@@ -52,6 +53,11 @@ def apply_filters(input_bed: str, output_bed: str,
             filter; the annotation-region filter (``enable_annotation_filter``)
             is a distinct "keep only PAS overlapping a gene region" concept
             and always drops non-overlapping peaks, unaffected by this flag.
+        features: Optional
+            :class:`ema.countmatrix.pas_features.FeatureCollector`, forwarded
+            verbatim to the internal-priming filter so ``--pas-features on``
+            costs no extra pass over the genome (peakAtail-prime).  Never
+            changes which peaks are written.
 
     Returns:
         Dict with statistics from each applied filter. When the internal
@@ -73,6 +79,7 @@ def apply_filters(input_bed: str, output_bed: str,
                 a_stretch=ip_a_stretch,
                 a_fraction=ip_a_fraction,
                 mode=ip_mode,
+                features=features,
             )
             all_stats["internal_priming"] = ip_stats
             all_stats["internal_priming_flags"] = ip_stats.get("flags", {})

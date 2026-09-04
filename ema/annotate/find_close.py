@@ -24,6 +24,7 @@ PAS_CHRO_COL = 0
 PAS_START_COL = 1
 PAS_END_COL = 2
 PAS_ID_COL = 3
+PAS_SCORE_COL = 4
 PAS_STRAND_COL = 5
 GENE_START_COL = 7
 GENE_END_COL = 8
@@ -228,6 +229,8 @@ def find_close(posbed_dir=None,
                utr_multiplier=2.0,
                include_extended=False,
                gene_extension=None,
+               pas_gene_rescue="off",
+               pas_gene_rescue_min_mol=0,
                ) -> pd.DataFrame:
     """Find the closest gene for each PAS and annotate with confidence tier.
 
@@ -252,6 +255,20 @@ def find_close(posbed_dir=None,
             ``None`` (default) uses ``gtftobed.GENE_EXTENSION_BP``. Pass ``0``
             for a gene BED that was not built by ``gtf_bed`` and so carries no
             extension.
+        pas_gene_rescue: ``"off"`` (default, = v2) or ``"inside"``.
+            peakAtail-prime TASK E item 4.  ``assign_tier`` can only award
+            TIER_1/TIER_2 when the assigned gene has an annotated 3'UTR
+            LENGTH, so a PAS that sits INSIDE its gene body -- distance 0 --
+            falls through to TIER_3 and is dropped whenever that gene has no
+            UTR record.  In practice that is every non-coding gene: on the
+            PBMC chr19+21 slice 1,762 of the 3,338 tier-1 clip clusters the
+            gene gate drops (52.8 %) are at distance 0, hosted by 514 genes of
+            which 469 are lncRNA and only 18 protein-coding.  ``"inside"``
+            grades those TIER_2 instead.  It is OFF by default because it is
+            measured to cost precision (see the CHANGELOG).
+        pas_gene_rescue_min_mol: Minimum BED score (clip molecules for a
+            ``clip_seeded`` tier-1 PAS) for ``pas_gene_rescue="inside"`` to
+            apply.  ``0`` (default) rescues every inside-gene PAS.
 
     Returns:
         pd.DataFrame: DataFrame with PAS IDs as index and gene_id as values,
@@ -322,6 +339,33 @@ def find_close(posbed_dir=None,
                  "gene at the minimal distance (%d rival candidate rows "
                  "discarded); kept the candidate the annotation supports",
                  n_contested, len(annotated_frame), n_dropped)
+
+    # peakAtail-prime --pas-gene-rescue, applied to the WINNER's grade only.
+    #
+    # HOW THE TWO FEATURES COMPOSE.  Issue #99's precedence above decides
+    # WHICH gene a PAS belongs to, from what the annotation says; the rescue
+    # then re-grades the PAS against the gene it was given.  It runs strictly
+    # AFTER the tie-break and never before it: ``_would_drop_pas`` outranks
+    # ``_no_utr_record`` in that precedence, so re-grading candidates first
+    # would let a gene carrying no ``three_prime_utr`` record beat one that
+    # has it -- the exact rule issue #99 exists to enforce, and the one whose
+    # absence silently deleted 124 chr17 PAS in an earlier draft.
+    #
+    # distance == 0 means the PAS is INSIDE the gene body it was assigned to,
+    # so the only way it can still be TIER_3 is that the gene has no annotated
+    # 3'UTR to grade it against -- an annotation gap, not a distance judgement.
+    if str(pas_gene_rescue) == "inside" and not annotated_frame.empty:
+        _rescue_min = float(pas_gene_rescue_min_mol or 0)
+        _score = pd.to_numeric(annotated_frame.iloc[:, PAS_SCORE_COL],
+                               errors="coerce").fillna(0.0)
+        _rescued = (annotated_frame["tier"].eq(TIER_3)
+                    & annotated_frame.iloc[:, DISTANCE_COL].astype("int64").eq(0)
+                    & _score.ge(_rescue_min))
+        if _rescued.any():
+            annotated_frame.loc[_rescued, "tier"] = TIER_2
+            log.info("--pas-gene-rescue inside: re-graded %d distance-0 PAS "
+                     "from TIER_3 to TIER_2 (host gene has no annotated "
+                     "3'UTR record)", int(_rescued.sum()))
 
     # Filter by tier: keep TIER_1 + TIER_2 by default, optionally TIER_3
     annotated_frame = annotated_frame[annotated_frame["tier"].isin(keep_tiers)]

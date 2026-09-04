@@ -8,10 +8,11 @@ from ema.countmatrix.peak import Peak
 from ema.countmatrix.peak_state import PeakCallingState
 from ema.countmatrix.read import read_check
 from ema.countmatrix.paswrite import (
-    matrix_write, open_support, pas_write, support_write,
+    PAS_FEATURE_MODES, matrix_write, open_support, pas_write, support_write,
 )
 from ema.countmatrix.polya import (
-    ClipSeeder, check_clip_rate, clip_read_ok, clip_site, read_umi,
+    ClipRateCounter, ClipSeeder, V2_CLIP_RATE_SAMPLING, check_clip_rate,
+    clip_read_ok, clip_site, read_umi,
 )
 from ema.config import directory_config, variable_config
 from ema.countmatrix.dynamic_threshold import (
@@ -37,6 +38,9 @@ def peak_calling(
                     floor_threshold: int = 3,
                     lambda_fold_change: float = 2.0,
                     lambda_window: int = 5000,
+                    # peakAtail-prime: bound the dynamic-threshold look-back
+                    # index.  False (default) == v2, IndexError and all.
+                    dynamic_threshold_clamp: bool = False,
                     bam_threads: int = 4,
                     use_pipeline: bool = False,
                     batch_size: int = 10000,
@@ -99,6 +103,13 @@ def peak_calling(
             oldest end in the window (issue #101).
         lambda_fold_change: Multiplier on local lambda for dynamic threshold (default: 2.0).
         lambda_window: Window size in bp for local lambda estimation (default: 5000).
+        dynamic_threshold_clamp: ACCEPTED AND IGNORED.  peakAtail-prime's
+            ``--dynamic-threshold-clamp`` used this to choose between v2's
+            unbounded look-back index (and its IndexError) and a bounded one;
+            issue #101 made the bound unconditional, so both values now mean
+            the same thing.  Kept so existing command lines, YAML configs and
+            library callers keep working.  See
+            :mod:`ema.countmatrix.dynamic_threshold`.
         bam_threads: Number of threads for pysam BGZF block decompression (default: 4).
         use_pipeline: When True, dispatch to the 3-stage Reader->Finder->Writer
             pipeline instead of the monolithic single-threaded loop.  Default
@@ -188,6 +199,7 @@ def peak_calling(
             floor_threshold=floor_threshold,
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
+            dynamic_threshold_clamp=dynamic_threshold_clamp,
             bam_threads=bam_threads,
             tile_size=tile_size,
             tile_overlap=tile_overlap,
@@ -239,6 +251,7 @@ def peak_calling(
             floor_threshold=floor_threshold,
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
+            dynamic_threshold_clamp=dynamic_threshold_clamp,
             bam_threads=bam_threads,
             batch_size=batch_size,
             default_sample_id=_default_sample_id,
@@ -277,6 +290,33 @@ def peak_calling(
             f"got {polya_clip_filter!r}"
         )
     _strict_clip = polya_clip_filter == "f3844"
+    # peakAtail-prime: outside v2 geometry `end1 - start1` is not constant,
+    # so the seeder is told the geometry and the configured --seq-len instead
+    # of letting its ClipStream infer them from the first read.
+    from ema.config import variable_config as _vc_geom
+    from ema.countmatrix.read import READ_GEOMETRIES as _READ_GEOMETRIES
+    _read_geometry = _vc_geom.read_geometry
+    if _read_geometry not in _READ_GEOMETRIES:
+        # Click validates --read-geometry, but a library caller setting the
+        # legacy global by hand would otherwise get "anything not fixed/keep
+        # means true", which is a silent wrong answer rather than an error.
+        raise ValueError(
+            f"read_geometry must be one of {_READ_GEOMETRIES}, "
+            f"got {_read_geometry!r}"
+        )
+    # peakAtail-prime: --pas-features decides the sidecar's COLUMN SET, so it
+    # has to be resolved here, next to the geometry, and handed to both the
+    # producer (ClipSeeder / _emit_peak) and the writer (open_support /
+    # support_write).  Reading the legacy global is correct in a spawned
+    # child only because chrom_parallel / tile_runner set it there from their
+    # job spec before calling in -- see ema/config.py's note.
+    _pas_features = str(getattr(_vc_geom, "pas_features", "off")).lower()
+    if _pas_features not in PAS_FEATURE_MODES:
+        raise ValueError(
+            f"pas_features must be one of {PAS_FEATURE_MODES}, "
+            f"got {_pas_features!r}"
+        )
+    _features = _pas_features == "on"
     _seeder = (
         ClipSeeder(
             direction,
@@ -285,6 +325,13 @@ def peak_calling(
             window=polya_window,
             count_window=polya_count_window,
             clip_filter=polya_clip_filter,
+            geometry=_read_geometry,
+            # `or None` rather than int(None): a caller that never set
+            # --seq-len must fail inside ClipStream with the explanatory
+            # ValueError, not with a TypeError before the seeder exists.
+            seq_len=(None if _read_geometry == "fixed"
+                     else (int(_vc_geom.seqlen) if _vc_geom.seqlen else None)),
+            features=_features,
         )
         if _polya_seeded
         else None
@@ -317,6 +364,12 @@ def peak_calling(
     # bounds it (and counts how often it fired).  Built ONLY on the dynamic
     # path, so a static-threshold run keeps the literal expression below and
     # pays nothing for a bound it cannot need.
+    #
+    # `dynamic_threshold_clamp` is NOT consulted here.  peakAtail-prime built
+    # the guard only when that flag asked for it, so a default run kept v2's
+    # unbounded expression and its IndexError; the merge with develop settled
+    # on the bound being unconditional (see ema/countmatrix/dynamic_threshold
+    # for why, and for what the flag now means).
     _dyn_guard = DynamicThresholdGuard() if dynamic_threshold else None
 
     log.debug("peak_calling: bamfile_dir=%s", bamfile_dir)
@@ -336,13 +389,20 @@ def peak_calling(
     # and warn loudly when the evidence channel looks destroyed.  Full-scan
     # invocations only — tile workers (region != None) inherit the check from
     # their dispatcher, and re-sampling per tile would be pure overhead.
-    if _polya_collect and region is None:
-        check_clip_rate(
-            str(bamfile_dir),
-            min_clip=polya_min_clip,
-            min_purity=polya_min_purity,
-            barcode_tag=variable_config.barcode_tag or "CB",
-        )
+    _clip_rate = None
+    if _polya_collect:
+        _clip_rate_mode = str(getattr(variable_config, "clip_rate_sampling",
+                                      V2_CLIP_RATE_SAMPLING))
+        if _clip_rate_mode == "pass":
+            _clip_rate = ClipRateCounter()
+        elif region is None:
+            check_clip_rate(
+                str(bamfile_dir),
+                min_clip=polya_min_clip,
+                min_purity=polya_min_purity,
+                barcode_tag=variable_config.barcode_tag or "CB",
+                sampling=_clip_rate_mode,
+            )
 
     # Open BAM with the caller's BGZF decompression thread count.  Region
     # jobs used to be forced to threads=1; the per-chromosome dispatcher
@@ -383,7 +443,7 @@ def peak_calling(
     bedfile = open(bedfilepath, "w")
     # Per-PAS poly(A) support sidecar (raw clip reads, molecules, -F 3844
     # counts, matrix-row reads) — BED6 stays BED6.
-    supportfile = open_support(bedfilepath) if _polya_collect else None
+    supportfile = open_support(bedfilepath, _features) if _polya_collect else None
     data_array = SortedList()
     signal = False
     chro = "1"
@@ -428,12 +488,19 @@ def peak_calling(
                 pasnumber=pasnumber, output=bedfile, score=_support,
             )
             if supportfile is not None:
-                support_write(supportfile, pasnumber, {
+                _row = {
                     "clip_reads": _reads, "clip_umis": _umis,
                     "clip_reads_f3844": _reads_f, "clip_umis_f3844": _umis_f,
                     "window_reads": sum(pas_cb_dict.values()),
                     "tier": 2,
-                })
+                }
+                if _features:
+                    _row["clip_positions"], _row["clip_span"] = (
+                        peak_obj.polya_site_geometry(
+                            pas_1, pas_2, direction, polya_window)
+                        if _polya_collect else (0, 0)
+                    )
+                support_write(supportfile, pasnumber, _row, _features)
             matrix_write(pas_cb_dict, pasnumber, matrix, index=index)
 
     def _flush_seeded(chro_out):
@@ -448,7 +515,7 @@ def peak_calling(
                 chro_out, _start, _end, direction,
                 pasnumber=pasnumber, output=bedfile, score=_support,
             )
-            support_write(supportfile, pasnumber, _row)
+            support_write(supportfile, pasnumber, _row, _features)
             matrix_write(_cb_dict, pasnumber, matrix, index=index)
     # --- End Stage 1 helpers -----------------------------------------------
 
@@ -488,6 +555,11 @@ def peak_calling(
         _clip_ok = True
         if _polya_collect:
             _clip = clip_site(read, polya_min_clip, polya_min_purity)
+            if _clip_rate is not None:
+                # --clip-rate-sampling pass: the exact rate over the reads the
+                # caller ACCEPTS, counted here because clip_site has already
+                # been called on this read.  Two integer increments.
+                _clip_rate.add(_clip is not None)
             if _clip is not None:
                 _umi = read_umi(read)
                 # samtools -F 3844 on the clip-evidence channel only:
@@ -533,7 +605,10 @@ def peak_calling(
             # read ends in its cleavage window, not from its clip reads).
             _seeder.add_read(start1, end1, cb)
             if _clip is not None:
-                _seeder.add_clip(_clip, cb, _umi, end1, _clip_ok)
+                # start1 lets the seeder put the clip read's end in the
+                # same space add_read uses (identity under v2 geometry).
+                _seeder.add_clip(_clip, cb, _umi, end1, _clip_ok,
+                                 start1=start1)
 
         # Update window-based local lambda from trailing deque of read positions
         if dynamic_threshold:
@@ -613,6 +688,16 @@ def peak_calling(
         _dyn_guard.report("%s%s strand%s" % (
             chro if chro else "", "-" if direction else "+",
             f", region {region[0]}:{region[1]}-{region[2]}" if region else ""))
+
+    if _clip_rate is not None:
+        # warn=False: this is one (contig, strand).  The per-chromosome rate
+        # legitimately spans 0.3669 %-0.8179 % on a healthy PBMC library and
+        # chr21's '+' strand alone is 0.2878 %, so the alarm belongs to the
+        # run-level total (chrom_parallel) rather than to a job.
+        _clip_rate.report("%s%s strand%s" % (
+            chro if chro else "", "-" if direction else "+",
+            f", region {region[0]}:{region[1]}-{region[2]}" if region else ""),
+            warn=region is None)
 
     if _seeder is not None:
         log.info("clip_seeded counting (%s strand%s): %s",

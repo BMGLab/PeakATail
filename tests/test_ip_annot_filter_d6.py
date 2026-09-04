@@ -200,9 +200,11 @@ def test_annot_filter_with_gtf_present_validates_ok(tmp_path):
 # ---------------------------------------------------------------------------
 # 3. ip_filter actually removes an internally-primed peak (real seam,
 #    real pyfaidx-indexed genome FASTA -- skip if pyfaidx unavailable).
-#    D9: this now requires ip_filter_mode="filter" explicitly -- the default
-#    is "annotate" (keep + flag). See test_ip_filter_mode_d9.py for the
-#    default-mode ("annotate") behaviour.
+#    D9 made this require ip_filter_mode="filter" explicitly, because the
+#    default was "annotate" (keep + flag).  On peakAtail-prime the default is
+#    the sentinel "auto", which resolves to "filter", so the explicit flag
+#    below now states what the default would do anyway.  It is kept explicit
+#    on purpose: this test is about the filter, not about the default.
 # ---------------------------------------------------------------------------
 @pytest.mark.xfail(
     reason=(
@@ -261,10 +263,17 @@ def test_ip_filter_removes_internally_primed_peak_keeps_clean_one(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 3b (D9). Default mode ("annotate"): the internally-primed peak is KEPT,
-#    not dropped -- it's candidate alternative-PAS signal for a scientist
-#    hunting APA, not noise. Both PAS survive; the flagged one is
-#    identifiable via n_ip_flagged / the returned ip_of map.
+# 3b (D9). "annotate" mode: the internally-primed peak is KEPT, not dropped --
+#    it's candidate alternative-PAS signal for a scientist hunting APA, not
+#    noise. Both PAS survive; the flagged one is identifiable via
+#    n_ip_flagged / the returned ip_of map.
+#
+#    This was written when "annotate" was the DEFAULT and the test left
+#    ip_filter_mode unset.  On peakAtail-prime an unset mode resolves to
+#    "filter", so leaving it unset would have made this test silently assert
+#    the opposite of what the tree does -- it is xfail-marked for an unrelated
+#    stats-counter drift, so it would not even have gone red.  The mode is
+#    named explicitly now; the behaviour under test is unchanged.
 # ---------------------------------------------------------------------------
 @pytest.mark.xfail(
     reason=(
@@ -278,7 +287,7 @@ def test_ip_filter_removes_internally_primed_peak_keeps_clean_one(tmp_path):
     ),
     strict=False,
 )
-def test_ip_filter_default_mode_annotates_instead_of_dropping(tmp_path):
+def test_ip_filter_annotate_mode_annotates_instead_of_dropping(tmp_path):
     pytest.importorskip("pyfaidx")
     from ema.main import _apply_pas_filters, _validate_pas_filter_config
 
@@ -296,7 +305,7 @@ def test_ip_filter_default_mode_annotates_instead_of_dropping(tmp_path):
     _write_bed(directory_config.negbed, [])
 
     args.ip_filter = True
-    # args.ip_filter_mode left UNSET -> _apply_pas_filters must default to "annotate".
+    args.ip_filter_mode = "annotate"     # NOT the default any more -- see above
     args.genome_fasta = str(genome_fasta)
     args.annot_filter = False
 
@@ -306,8 +315,8 @@ def test_ip_filter_default_mode_annotates_instead_of_dropping(tmp_path):
     surviving = directory_config.posbed.read_text().splitlines()
     surviving_names = [line.split("\t")[3] for line in surviving]
     assert surviving_names == ["1", "2"], (
-        "annotate mode (the new default) must KEEP every PAS, including "
-        f"the internally-primed one; got {surviving_names!r}"
+        "annotate mode must KEEP every PAS, including the internally-primed "
+        f"one; got {surviving_names!r}"
     )
 
     stats = json.loads(_stats_path(mgr).read_text())

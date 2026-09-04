@@ -89,6 +89,21 @@ class ChromJob:
     ignore_chro: tuple = ("MT", "mt")
     default_threshold: int = 5
     merge_len: int = 100
+    # peakAtail-prime read acceptance geometry.  Workers are SPAWNED, so the
+    # legacy globals come back at their module defaults ("fixed", 0) in the
+    # child -- these must travel with the job or the parallel path silently
+    # runs v2 geometry while the monolithic path runs the branch default.
+    read_geometry: str = "fixed"
+    read_exclude_flags: int = 0
+    # peakAtail-prime --pas-features: same hazard, same fix.  It decides the
+    # sidecar's column set, so a child that fell back to the module default
+    # would write a header the merge step does not expect.
+    pas_features: str = "off"
+    # peakAtail-prime --clip-rate-sampling: the exact "pass" counter runs
+    # INSIDE this job, so a child at the module default would report a rate the
+    # run was not asked for -- and would put a line in the log that a
+    # --clip-rate-sampling head run must not have.
+    clip_rate_sampling: str = "head"
     # --- strategy (re-instantiated in the child) ---
     strategy_name: str = "original"
     strategy_kwargs: dict = field(default_factory=dict)
@@ -133,6 +148,10 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
     vc.ignore_chro = list(job.ignore_chro)
     vc.default_threshold = job.default_threshold
     vc.merge_len = job.merge_len
+    vc.read_geometry = job.read_geometry
+    vc.read_exclude_flags = job.read_exclude_flags
+    vc.pas_features = job.pas_features
+    vc.clip_rate_sampling = job.clip_rate_sampling
 
     reset_index()
     Peak.reset_pasnumber()
@@ -158,6 +177,8 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
     with open(cb, "w") as fh:
         for cb_str, _ in sorted(mapping.items(), key=lambda kv: kv[1]):
             fh.write(cb_str + "\n")
+    from ema.countmatrix.polya import take_last_clip_counts
+    _n_reads, _n_clip = take_last_clip_counts()
     return {
         "job_id": job.job_id,
         "contig": job.contig,
@@ -170,6 +191,12 @@ def chrom_worker(job: ChromJob) -> dict[str, Any]:
         "n_cb": len(mapping),
         "wall_s": time.monotonic() - t0,
         "maxrss_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0,
+        # --clip-rate-sampling pass: this job's own exact counts, so the
+        # dispatcher can report ONE run-level rate instead of a warning per
+        # (contig, strand) -- chr21's '+' strand alone measures 0.2878 % on a
+        # perfectly healthy PBMC library.
+        "clip_rate_reads": _n_reads,
+        "clip_rate_clips": _n_clip,
     }
 
 
@@ -244,6 +271,56 @@ def _remap_mtx(src: str, dst, pas_map: np.ndarray, col_map: np.ndarray) -> int:
     return n
 
 
+def _merged_support_header(results: list[dict[str, Any]], direction: bool) -> str:
+    """The sidecar header the CHILD workers wrote for *direction*.
+
+    peakAtail-prime: ``--pas-features on`` appends columns to the sidecar, so
+    the merged file's header has to come from the children (which knew the
+    setting) rather than from this module's compile-time
+    :data:`~ema.countmatrix.paswrite.SUPPORT_COLUMNS`.
+
+    Two things are checked rather than assumed, because a header that does not
+    match its own rows is silent and corrupts every column after ``tier``:
+
+    * the children of one direction must all have written the SAME header (a
+      disagreement means the setting did not reach one of them);
+    * the fallback used when NO child wrote a header is this run's column set
+      (``support_columns(--pas-features)``), not v2's -- otherwise a direction
+      whose contigs all came back empty would get a seven-column header while
+      the other direction got the full one, and the run-root merge would
+      concatenate the two into a ragged file.
+    """
+    header = None
+    for r in results:
+        if r.get("direction") != direction:
+            continue
+        sp = r.get("support")
+        if not sp or not os.path.exists(sp):
+            continue
+        with open(sp) as fh:
+            first = fh.readline()
+        if not first.startswith("pas_id"):
+            continue
+        first = first if first.endswith("\n") else first + "\n"
+        if header is None:
+            header = first
+        elif first != header:
+            log.error(
+                "sidecar header mismatch between per-contig workers on the %s "
+                "strand: %r wrote %r, an earlier worker wrote %r. One of the "
+                "spawned children did not receive --pas-features; the merged "
+                "pas_support.tsv would mislabel every column after `tier`.",
+                "-" if direction else "+", sp, first.rstrip("\n"),
+                header.rstrip("\n"),
+            )
+    if header is not None:
+        return header
+    from ema.config import variable_config as _vc
+    from ema.countmatrix.paswrite import support_columns
+    return "\t".join(support_columns(
+        str(getattr(_vc, "pas_features", "off")).lower() == "on")) + "\n"
+
+
 def merge_chrom_results(
     results: list[dict[str, Any]],
     contig_order: list[str],
@@ -275,7 +352,11 @@ def merge_chrom_results(
         with open(bed_out_path, "w") as bed_out, open(mtx_out_path, "w") as mtx_out:
             sup_out = open(sup_out_path, "w") if write_support else None
             if sup_out is not None:
-                sup_out.write("\t".join(SUPPORT_COLUMNS) + "\n")
+                # peakAtail-prime: --pas-features appends columns to the
+                # sidecar, so the merged header must be the CHILDREN's header,
+                # not this module's compile-time SUPPORT_COLUMNS.  Falls back
+                # to SUPPORT_COLUMNS only when no child wrote one.
+                sup_out.write(_merged_support_header(results, direction))
             try:
                 for contig in contig_order:
                     r = by_key.get((contig, direction))
@@ -410,6 +491,11 @@ def run_chrom_parallel(
                 seq_len=int(vc.seqlen), ignore_chro=ignore_chro,
                 default_threshold=int(vc.default_threshold),
                 merge_len=int(vc.merge_len),
+                read_geometry=str(vc.read_geometry),
+                read_exclude_flags=int(vc.read_exclude_flags),
+                pas_features=str(getattr(vc, "pas_features", "off")),
+                clip_rate_sampling=str(getattr(vc, "clip_rate_sampling",
+                                               "head")),
                 strategy_name=strategy_name,
                 strategy_kwargs=dict(strategy_kwargs or {}),
                 peak_kwargs=peak_kwargs, log_queue=log_queue,
@@ -460,6 +546,18 @@ def run_chrom_parallel(
                 except Exception:
                     pool.terminate()
                     raise
+        # --clip-rate-sampling pass: ONE exact, run-level poly(A) clip rate,
+        # summed over the jobs that counted it.  This is the alarm; the
+        # per-job lines above are information.
+        _cr_reads = sum(int(r.get("clip_rate_reads", 0)) for r in results)
+        if _cr_reads:
+            from ema.countmatrix.polya import report_clip_rate_total
+            report_clip_rate_total(
+                _cr_reads,
+                sum(int(r.get("clip_rate_clips", 0)) for r in results),
+                str(bam_path),
+            )
+
         t_merge = time.monotonic()
         # Legacy numbering: peak_calling() seeds its state from the
         # class-level Peak.pasnumber and writes the final value back, and

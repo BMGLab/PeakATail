@@ -36,6 +36,37 @@ SUPPORT_COLUMNS: tuple[str, ...] = (
     "tier",               # 1 = clip-seeded cluster, 2 = coverage candidate
 )
 
+#: peakAtail-prime, ``--pas-features on``: two more columns written by the
+#: caller itself, describing the clip cluster's SHAPE rather than its size.
+#: They cost one ``len()`` and one subtraction per emitted PAS -- the cluster
+#: member positions are already in hand -- and they are not derivable from
+#: anything else the run writes, which is why they are emitted here and not
+#: reconstructed later.  APPEND ONLY: they go after every v2 column, so a
+#: reader indexing the v2 columns by position is unaffected.
+#: See :mod:`ema.countmatrix.pas_features` for the rest of the feature set,
+#: which is appended at the internal-priming seam.
+CALL_FEATURE_COLUMNS: tuple[str, ...] = (
+    "clip_positions",     # distinct poly(A) clip POSITIONS backing this PAS
+    "clip_span",          # bp between the first and last of them (0 if <2)
+    "clip_offset_mean",   # read-weighted mean(member - call), transcript
+                          # orientation, + = downstream (TASK E); NA on tier 2
+)
+
+
+#: Accepted values of ``--pas-features``.  ``"off"`` is v2.
+PAS_FEATURE_MODES: tuple[str, ...] = ("off", "on")
+#: The v2-compatibility value of ``--pas-features``.
+V2_PAS_FEATURES: str = "off"
+
+
+def support_columns(features: bool = False) -> tuple[str, ...]:
+    """Sidecar header for this run.
+
+    *features* is ``--pas-features on``.  ``False`` is the v2 column set,
+    byte-for-byte.
+    """
+    return SUPPORT_COLUMNS + CALL_FEATURE_COLUMNS if features else SUPPORT_COLUMNS
+
 
 def support_path_for(bedfilepath) -> str:
     """Sidecar path for a caller BED (``x.bed`` -> ``x.support.tsv``)."""
@@ -45,23 +76,41 @@ def support_path_for(bedfilepath) -> str:
     return s + ".support.tsv"
 
 
-def open_support(bedfilepath):
-    """Open the sidecar for *bedfilepath* and write its header row."""
+def open_support(bedfilepath, features: bool = False):
+    """Open the sidecar for *bedfilepath* and write its header row.
+
+    *features* must be the same value every :func:`support_write` call for
+    this handle passes, or the header and the rows disagree; it is threaded
+    explicitly (rather than read from ``variable_config`` here) because the
+    parallel callers run in spawned children whose globals are back at module
+    defaults -- the same hazard that made ``--read-geometry`` silently differ
+    between the tile path and the monolithic path.  ``tests/
+    test_pas_features.py::test_every_calling_path_agrees_on_the_sidecar_header``
+    pins the agreement.
+    """
     fh = open(support_path_for(bedfilepath), "w")
-    fh.write("\t".join(SUPPORT_COLUMNS) + "\n")
+    fh.write("\t".join(support_columns(features)) + "\n")
     return fh
 
 
-def support_write(output, pasnumber, support: dict) -> None:
+def support_write(output, pasnumber, support: dict, features: bool = False) -> None:
     """Append one sidecar row.  *support* is a dict as produced by
-    :meth:`~ema.countmatrix.polya.ClipSeeder.flush` (``support_out=``)."""
+    :meth:`~ema.countmatrix.polya.ClipSeeder.flush` (``support_out=``).
+
+    With *features* false the row is v2's seven columns, byte-for-byte.
+    """
     if output is None:
         return
-    output.write(
+    row = (
         f"{pasnumber}\t{support['clip_reads']}\t{support['clip_umis']}\t"
         f"{support['clip_reads_f3844']}\t{support['clip_umis_f3844']}\t"
-        f"{support['window_reads']}\t{support['tier']}\n"
+        f"{support['window_reads']}\t{support['tier']}"
     )
+    if features:
+        row += "\t" + "\t".join(
+            str(support.get(c, "NA")) for c in CALL_FEATURE_COLUMNS
+        )
+    output.write(row + "\n")
 
 
 def pas_write(

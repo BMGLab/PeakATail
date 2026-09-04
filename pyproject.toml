@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peakatail"
-version = "0.2.0"
+version = "0.3.0"
 description = "PeakATail — single-cell poly(A) site detection and APA analysis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -81,6 +81,14 @@ Repository = "https://github.com/BMGLab/PeakATail"
 
 [tool.setuptools]
 packages = {find = {where = ["."], include = ["ema*"]}}
+
+# peakAtail-prime: the --pas-score models are CONSTANTS, not code -- node
+# arrays / coefficients fitted offline by scripts/prime/taskD_fit_model.py and
+# evaluated with numpy.  They ship inside the package so a wheel is
+# self-contained and `--pas-score calibrated` needs no download and no
+# scikit-learn.
+[tool.setuptools.package-data]
+"ema.countmatrix" = ["models/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -401,12 +401,59 @@ def build_resolved_run_config() -> dict:
         for k in (
             "seqlen", "cb_len", "barcode_tag", "default_threshold",
             "merge_len", "min_pas_spacing", "min_pas_prominence",
+            # peakAtail-prime: the read acceptance geometry decides which
+            # reads reach the clip detector and the count matrix at all, so a
+            # run record that omits it is not reproducible.  It has to be
+            # HERE and not left to the "args" grab-bag below: that block is
+            # the argparse namespace, which carries schema DEFAULTS for
+            # anything the Click layer resolved (`--read-geometry fixed` on
+            # the command line still shows as args.read_geometry == "true",
+            # the same class of defect bug B0 fixed for atlas/gtf).
+            # variable_config is what read_check actually reads.
+            "read_geometry", "read_exclude_flags",
+            # Same reasoning for --pas-features: it decides the sidecar's
+            # column set, so a run record that omits it cannot be replayed.
+            "pas_features",
+            # ...and for --pas-score: it decides whether a pas_score column
+            # exists and, in "select" mode, which PAS survive at all.
+            "pas_score", "pas_score_model", "pas_score_min",
+            # TASK E: --cleavage-offset can MOVE a reported coordinate, and
+            # the other three decide whether a column exists, how the
+            # clip-rate QC was sampled, and whether the internal-priming veto
+            # ran without being asked for.  All four are read off
+            # variable_config for the same reason as above.
+            "cleavage_offset", "emit_inferred_cleavage",
+            "clip_rate_sampling", "ip_filter_default",
         )
     }
     resolved["filters"] = {
         k: _get(_fc, k)
         for k in ("min_read", "min_cells", "min_genes", "min_pas_per_cell")
     }
+
+    # --- the internal-priming policy, RESOLVED -----------------------------
+    # Two flags decide two different things -- whether the veto RUNS
+    # (--ip-filter / --no-ip-filter / --ip-filter-default) and whether it
+    # DROPS (--ip-filter-mode) -- and the branch shipped a combination where
+    # the first said yes and the second said "keep everything", so the run
+    # emitted v2's call set while claiming a recall lift.  Neither the "args"
+    # grab-bag below nor "variables" above can show that: args carries the
+    # unresolved sentinel "auto" and variable_config only knows the policy.
+    # Record what ACTUALLY happened, in the file the hub reads.
+    try:
+        from ema.main import _ip_filter_decision
+
+        _ip = _ip_filter_decision()
+        resolved["internal_priming"] = {
+            "ip_filter": _ip["ip_filter"],
+            "ip_filter_why": _ip["why"],
+            "ip_filter_mode_requested": _ip["mode_requested"],
+            "ip_filter_mode_resolved": _ip["mode"],
+            "ip_filter_mode_why": _ip["mode_why"],
+            "genome_fasta": _ip["genome_fasta"],
+        }
+    except Exception as exc:  # pragma: no cover -- never fail a run record
+        resolved["internal_priming"] = {"error": repr(exc)}
 
     # --- remaining argparse fields (strategy, thresholds, tiles, …) ---
     # Kept for completeness, but under a namespaced key so the resolved

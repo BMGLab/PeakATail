@@ -4,7 +4,7 @@ cff-version: 1.2.0
 message: "If you use PeakATail in your research, please cite it using the metadata below."
 type: software
 title: "PeakATail"
-version: "0.2.0"
+version: "0.3.0"
 abstract: "Single-cell poly(A) site detection and alternative polyadenylation (APA) analysis from scRNA-seq BAM files."
 authors:
   - name: "PeakATail developers (BMGLab)"

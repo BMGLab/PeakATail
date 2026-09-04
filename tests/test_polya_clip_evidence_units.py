@@ -412,11 +412,22 @@ def _run(bam: Path, out: Path, tag: str, **kwargs):
 
 
 def _read_support(bed: Path) -> dict[str, dict]:
+    """The v2 columns of the sidecar, whatever else follows them.
+
+    peakAtail-prime's ``--pas-features on`` APPENDS columns (paswrite's
+    ``CALL_FEATURE_COLUMNS``, and more at the internal-priming seam).  This
+    module is about the v2 columns' VALUES, so it pins their names and
+    positions -- which is the guarantee that matters -- and ignores the tail.
+    """
     lines = Path(support_path_for(bed)).read_text().splitlines()
-    assert lines[0].split("\t") == list(SUPPORT_COLUMNS)
+    header = lines[0].split("\t")
+    assert header[:len(SUPPORT_COLUMNS)] == list(SUPPORT_COLUMNS), (
+        "the sidecar's v2 columns must keep their names AND their positions; "
+        "new columns are APPENDED, never inserted or reordered"
+    )
     out = {}
     for line in lines[1:]:
-        f = line.split("\t")
+        f = line.split("\t")[:len(SUPPORT_COLUMNS)]
         out[f[0]] = dict(zip(SUPPORT_COLUMNS[1:], [int(x) for x in f[1:]]))
     return out
 

@@ -120,6 +120,10 @@ def reader_loop(
     polya_enabled: bool = True,
     polya_min_clip: int = 6,
     polya_min_purity: float = 0.8,
+    read_geometry: str = "fixed",
+    read_exclude_flags: int = 0,
+    seq_len: int | None = None,
+    clip_rate_sampling: str = "head",
 ) -> None:
     """Reader stage: iterate BAM, validate, batch, emit on *out_queue*.
 
@@ -152,6 +156,13 @@ def reader_loop(
         polya_enabled: Compute per-read poly(A) clip evidence (default on).
         polya_min_clip: Minimum terminal soft-clip / A-run length.
         polya_min_purity: Minimum A (T) fraction over the clipped bases.
+        read_geometry: ``--read-geometry`` (peakAtail-prime).  Passed
+            EXPLICITLY rather than read from ``variable_config`` because the
+            stage runs in a spawned subprocess, where the legacy globals are
+            re-imported at their module defaults.
+        read_exclude_flags: ``--read-exclude-flags``, same reason.
+        seq_len: ``--seq-len``, same reason.  ``None`` keeps
+            ``read_check``'s own ``variable_config`` lookup (v2 behaviour).
     """
     import pysam
 
@@ -162,16 +173,26 @@ def reader_loop(
 
     bamfile = pysam.AlignmentFile(bam_path, "rb", threads=bam_threads)
 
+    # --clip-rate-sampling pass: the exact rate over the reads this reader
+    # accepts.  The reader is the only stage that sees every read, so the
+    # counter lives here rather than in the finder or the writer.
+    from ema.countmatrix.polya import ClipRateCounter
+    clip_rate = ClipRateCounter() if str(clip_rate_sampling) == "pass" else None
     batch: list[tuple[str, int, int, bool, str, int | None, str | None, bool]] = []
     try:
         for read in bamfile:
-            chro1, start1, end1, strand, cb = read_check(read=read, direction=direction)
+            chro1, start1, end1, strand, cb = read_check(
+                read=read, direction=direction, seq_len=seq_len,
+                geometry=read_geometry, exclude_flags=read_exclude_flags,
+            )
             if chro1 == 0:
                 continue
             clip = umi = None
             clip_ok = True
             if polya_enabled:
                 clip = clip_site(read, polya_min_clip, polya_min_purity)
+                if clip_rate is not None:
+                    clip_rate.add(clip is not None)
                 if clip is not None:
                     umi = read_umi(read)
                     clip_ok = clip_read_ok(read)
@@ -183,6 +204,9 @@ def reader_loop(
         # Flush the final partial batch
         if batch:
             out_queue.put(batch)
+        if clip_rate is not None:
+            clip_rate.report("%s strand, pipeline reader"
+                             % ("-" if direction else "+"))
     finally:
         bamfile.close()
         # Signal end-of-stream
@@ -201,7 +225,10 @@ def finder_loop(
     lambda_fold_change: float,
     lambda_window: int,
     polya_enabled: bool = True,
+    dynamic_threshold_clamp: bool = False,
     polya_seeded: bool = False,
+    read_geometry: str = "fixed",
+    seq_len: int | None = None,
 ) -> None:
     """Finder stage: consume read batches, run streaming peak detection.
 
@@ -229,6 +256,11 @@ def finder_loop(
             (issue #101) -- validated by the caller, :func:`peak_calling`.
         lambda_fold_change: Multiplier on local lambda for dynamic threshold.
         lambda_window: Window size in bp for local lambda estimation.
+        dynamic_threshold_clamp: ACCEPTED AND IGNORED (issue #101 made the
+            look-back bound unconditional; see
+            :mod:`ema.countmatrix.dynamic_threshold`).  Historically:
+            peakAtail-prime ``--dynamic-threshold-clamp``, ``False`` == v2,
+            the IndexError included.
     """
     from collections import deque
 
@@ -240,10 +272,11 @@ def finder_loop(
 
     current_threshold = default_threshold
     background_deque: deque[int] = deque()
-
     # issue #101: same bound as the monolithic loop, and for the same reason
     # -- the dynamic threshold can outgrow the live read window.  Built only
     # on the dynamic path so the static one keeps the literal expression.
+    # `dynamic_threshold_clamp` is not consulted: the bound is unconditional
+    # (see ema/countmatrix/dynamic_threshold).
     dyn_guard = DynamicThresholdGuard() if dynamic_threshold else None
 
     data_array: SortedList = SortedList()
@@ -260,7 +293,16 @@ def finder_loop(
     # chrom, ClipStream)`` message hands the OLD chromosome's evidence to the
     # writer AFTER that chromosome's last peak, which is the writer's signal
     # to run the two-tier emission for that chromosome.
-    clip_accum = ClipStream() if polya_seeded else None
+    def _new_clip_stream():
+        # Outside v2 geometry the stream cannot infer seq_len from the reads
+        # and must key minus-strand reads on their true 3' end -- so it is
+        # told both, here, where the values crossed the spawn boundary.
+        if read_geometry == "fixed":
+            return ClipStream()
+        return ClipStream(seq_len=seq_len, geometry=read_geometry,
+                          direction=direction)
+
+    clip_accum = _new_clip_stream() if polya_seeded else None
 
     try:
         while True:
@@ -278,7 +320,7 @@ def finder_loop(
                         out_queue.put((chro, peak))
                     if clip_accum is not None:
                         out_queue.put(("__polya_clips__", chro, clip_accum))
-                        clip_accum = ClipStream()
+                        clip_accum = _new_clip_stream()
 
                     signal = False
                     peak = Peak(
@@ -302,7 +344,12 @@ def finder_loop(
                 if clip_accum is not None:
                     clip_accum.add_read(start1, end1, cb)
                     if clip is not None:
-                        clip_accum.add_clip(clip, cb, umi, end1, clip_ok)
+                        # same coordinate space as add_read (see
+                        # ClipStream.three_key); identity under v2 geometry
+                        clip_accum.add_clip(
+                            clip, cb, umi,
+                            clip_accum.three_key(start1, end1), clip_ok,
+                        )
 
                 # --- dynamic threshold update ---
                 if dynamic_threshold:
@@ -392,6 +439,9 @@ def writer_loop(
     polya_clip_filter: str = "none",
     direction: bool = False,
     polya_count_window: tuple = (-1, 25),
+    read_geometry: str = "fixed",
+    seq_len: int | None = None,
+    pas_features: str = "off",
 ) -> None:
     """Writer stage: consume peaks, run strategy, write BED and MTX.
 
@@ -432,8 +482,11 @@ def writer_loop(
 
     _collect = polya_enabled or polya_seeded
     _strict_clip = polya_clip_filter == "f3844"
+    # peakAtail-prime --pas-features: passed in as a plain value, never read
+    # from the legacy globals here -- this process was SPAWNED.
+    _features = str(pas_features).lower() == "on"
     with open(bedfilepath, "w") as bedfile, open(matrixpath, "w") as matrix:
-        supportfile = open_support(bedfilepath) if _collect else None
+        supportfile = open_support(bedfilepath, _features) if _collect else None
         seeder: ClipSeeder | None = (
             ClipSeeder(
                 direction,
@@ -442,6 +495,9 @@ def writer_loop(
                 window=polya_window,
                 count_window=polya_count_window,
                 clip_filter=polya_clip_filter,
+                geometry=read_geometry,
+                seq_len=seq_len,
+                features=_features,
             )
             if polya_seeded
             else None
@@ -459,7 +515,7 @@ def writer_loop(
                     chro_out, _start, _end, direction,
                     pasnumber=Peak.pasnumber, output=bedfile, score=_support,
                 )
-                support_write(supportfile, Peak.pasnumber, _row)
+                support_write(supportfile, Peak.pasnumber, _row, _features)
                 matrix_write(_cb_dict, Peak.pasnumber, matrix)
 
         while True:
@@ -512,12 +568,19 @@ def writer_loop(
                     score=_support,
                 )
                 if supportfile is not None:
-                    support_write(supportfile, Peak.pasnumber, {
+                    _row2 = {
                         "clip_reads": _reads, "clip_umis": _umis,
                         "clip_reads_f3844": _reads_f, "clip_umis_f3844": _umis_f,
                         "window_reads": sum(pas_cb_dict.values()),
                         "tier": 2,
-                    })
+                    }
+                    if _features:
+                        _row2["clip_positions"], _row2["clip_span"] = (
+                            peak.polya_site_geometry(
+                                pas_1, pas_2, peak.peak_strand, polya_window)
+                            if polya_enabled else (0, 0)
+                        )
+                    support_write(supportfile, Peak.pasnumber, _row2, _features)
                 matrix_write(pas_cb_dict, Peak.pasnumber, matrix)
 
         if supportfile is not None:
@@ -548,6 +611,7 @@ def run_pipeline(
     floor_threshold: int = 3,
     lambda_fold_change: float = 2.0,
     lambda_window: int = 5000,
+    dynamic_threshold_clamp: bool = False,
     bam_threads: int = 4,
     batch_size: int = 10000,
     default_sample_id: str = "default",
@@ -562,6 +626,10 @@ def run_pipeline(
     polya_min_umis: int = 1,
     polya_clip_filter: str = "none",
     polya_count_window: tuple = (-1, 25),
+    read_geometry: str | None = None,
+    read_exclude_flags: int | None = None,
+    seq_len: int | None = None,
+    pas_features: str | None = None,
 ) -> None:
     """Run the 3-stage Reader → Finder → Writer pipeline.
 
@@ -631,7 +699,25 @@ def run_pipeline(
             min_clip=polya_min_clip,
             min_purity=polya_min_purity,
             barcode_tag=_vc.barcode_tag or "CB",
-        )
+        )   # a no-op under --clip-rate-sampling pass; the reader counts instead
+
+    # peakAtail-prime: the three stages are SPAWNED, so ema.config's legacy
+    # globals come back at their module defaults in each child.  Resolve the
+    # read-geometry knobs in the parent and pass them as plain values -- a
+    # child that silently fell back to "fixed" would give the pipeline path a
+    # different answer from the monolithic one (guarded by
+    # tests/test_read_geometry_three_path_agreement.py).
+    from ema.config import variable_config as _vc_geom
+    if read_geometry is None:
+        read_geometry = _vc_geom.read_geometry
+    if read_exclude_flags is None:
+        read_exclude_flags = _vc_geom.read_exclude_flags
+    if seq_len is None:
+        seq_len = _vc_geom.seqlen
+    if pas_features is None:
+        pas_features = getattr(_vc_geom, "pas_features", "off")
+    # --clip-rate-sampling: same spawn hazard, same fix.
+    _clip_rate_sampling = str(getattr(_vc_geom, "clip_rate_sampling", "head"))
 
     ctx = mp.get_context("spawn")
 
@@ -654,6 +740,10 @@ def run_pipeline(
             _polya_collect,
             polya_min_clip,
             polya_min_purity,
+            read_geometry,
+            read_exclude_flags,
+            seq_len,
+            _clip_rate_sampling,
         ),
         daemon=True,
     )
@@ -673,7 +763,10 @@ def run_pipeline(
             lambda_fold_change,
             lambda_window,
             _polya_collect,
+            dynamic_threshold_clamp,
             _polya_seeded,
+            read_geometry,
+            seq_len,
         ),
         daemon=True,
     )
@@ -695,6 +788,9 @@ def run_pipeline(
             polya_clip_filter,
             direction,
             polya_count_window,
+            read_geometry,
+            seq_len,
+            pas_features,
         ),
         daemon=True,
     )

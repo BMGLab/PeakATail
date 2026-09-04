@@ -7,8 +7,15 @@ uses:
   ``pysam.AlignedSegment`` it returns the inferred cleavage coordinate (the
   0-based genomic position of the last aligned base on the read's 3' side)
   or ``None``.  Semantics match the measured prototype exactly
-  (1.152% of CB reads on the PBMC BAM, 92x wrong-end specificity, 73.9% of
-  sites within 100 bp of PolyASite 2.0).
+  (92x wrong-end specificity, 73.9% of sites within 100 bp of PolyASite 2.0).
+
+  **The qualifying clip rate is 0.5730 % of accepted CB reads genome-wide on
+  the PBMC 10k v3 BAM** (3,195,067 / 557,564,408), 0.5364 % on
+  :func:`check_clip_rate`'s own denominator, and 0.3669 % (chr21) to 0.8179 %
+  (chr19) per chromosome.  The **1.152 %** this docstring used to state was
+  measured on the head of a coordinate-sorted BAM and is wrong by ~2x; it was
+  independently re-derived from scratch in gawk over ``samtools view`` and
+  agreed to six decimals (``results/algo_headroom/VERIFY``, §5).
 * :func:`read_umi` — best-effort UMI extraction (10x ``UB`` tag).
 * :func:`clip_read_ok` — ``samtools view -F 3844`` alignment filter
   (unmapped / secondary / supplementary / qcfail / duplicate) applied to
@@ -26,6 +33,12 @@ uses:
 * :func:`check_clip_rate` — R2 chemistry mitigation: loud warning when the
   observed clip rate is below 0.3% of CB reads (poly(A) trimmed upstream,
   wrong chemistry, etc.), instead of silently emitting an unsupported set.
+  ``--clip-rate-sampling pass`` (the peakAtail-prime default) counts every
+  accepted read and qualifying clip during the peak-calling pass itself, so
+  the rate is exact and costs no extra I/O; ``strided`` spreads a sampled
+  budget across the whole BAM; ``head`` is v2's first-200k-CB-reads scan,
+  which on a coordinate-sorted BAM samples the head of chr1 and reported
+  2.2565 % where the truth on the same library is 0.5364 %.
 
 Coordinate conventions (identical to the prototype's clip.awk / measure2.py):
 
@@ -63,7 +76,71 @@ _clip_rate_warned: dict[str, float] = {}
 
 # Below this fraction of CB reads carrying a poly(A) clip, the evidence
 # channel is considered destroyed (e.g. poly(A) trimmed before alignment).
+# Reference point for the bar: the genome-wide truth on PBMC 10k v3 is
+# 0.5364 % on this function's own denominator (0.3669 %-0.8179 % per
+# chromosome), so 0.3 % is roughly "half of what a healthy 10x cDNA library
+# gives".  See the module docstring for the provenance of that number.
 LOW_CLIP_RATE = 0.003
+
+#: Accepted values of ``--clip-rate-sampling``.
+#:
+#: ``"head"``
+#:     v2: scan the BAM from record 0 until ``max_reads`` CB reads have been
+#:     seen, which on a coordinate-sorted BAM means the head of the first
+#:     contig.  On PBMC 10k v3 it returns 2.2565 % where the whole-file rate on
+#:     the same denominator is 0.5364 %.
+#: ``"strided"``
+#:     Sample coordinate-uniform windows across every mapped contig, taking
+#:     every read whose start falls in one.  Unbiased in construction and
+#:     cheap (3 s), but MEASURED TO BE UNRELIABLE at an affordable budget:
+#:     poly(A) clips are rare and concentrated at the 3' ends of expressed
+#:     genes, so the estimate is dominated by which windows happen to hit one.
+#:     On the full PBMC BAM against a 0.5364 % truth it returns 1.5258 %
+#:     (200,000 reads) and 1.8068 % (1,000,000); on the chr19+21 slice against
+#:     a 0.6169 % truth, 0.44 %-0.79 %.  Kept because it is the "sample across
+#:     the BAM" design and its failure is worth being able to reproduce.
+#: ``"pass"``
+#:     **The peakAtail-prime default, and the only one that is not an
+#:     estimate.**  Skip the startup scan entirely and COUNT, during the peak
+#:     calling pass the run does anyway, every read the caller accepts and
+#:     every qualifying poly(A) clip among them.  Exact, per (contig, strand),
+#:     for zero extra I/O -- ``clip_site`` is already called on each of those
+#:     reads.  Its denominator is the caller's own accepted-read denominator
+#:     (0.5730 % genome-wide on PBMC 10k v3), which is the evidence the caller
+#:     actually has, rather than ``check_clip_rate``'s slightly wider one.
+CLIP_RATE_SAMPLINGS = ("head", "strided", "pass")
+
+#: The v2-compatibility value of ``--clip-rate-sampling``.
+V2_CLIP_RATE_SAMPLING = "head"
+
+#: Windows per contig used by ``"strided"``.  Every read whose start falls in
+#: a window is taken, so dense regions contribute proportionally more reads --
+#: see :func:`_sample_strided` for why an equal-READS-per-stratum design is
+#: biased and this one is not.
+CLIP_RATE_STRATA = 10
+
+#: Minimum window width (bp).  A narrow window is expensive rather than wrong:
+#: ``fetch`` yields every read OVERLAPPING it, and a spliced alignment spans
+#: its introns, so a 2 kb window in a gene-dense region yields ~685 reads of
+#: which ~5 START inside it.  Measured on the full PBMC BAM: at 100 windows
+#: per contig (2 kb wide) collecting 1 M in-window reads iterated ~100x that
+#: many and took >10 min of CPU.  Widening the window amortises the span
+#: overhead; the number of windows is reduced to keep the sampled FRACTION of
+#: each contig unchanged, so the estimator is the same one.
+CLIP_RATE_MIN_WINDOW = 25_000
+
+#: CB-read budget for ``"strided"``.  Larger than v2's 200,000 because poly(A)
+#: clips are RARE (0.57 % genome-wide) and CLUSTERED at 3' ends, so a
+#: coordinate-window sample either hits a pileup or misses it: measured on the
+#: PBMC chr19+21 slice against a whole-file truth of 0.6169 %, the estimate
+#: lands at 0.44 % with a 200,000-read budget and 0.61 % with 1,000,000
+#: (9 s).  The estimator is an ALARM, not a measurement -- across the budget
+#: and window settings probed it lands within 0.85x-1.28x of truth, against
+#: 4.2x for v2's head scan (2.2565 % vs 0.5364 % on the full PBMC BAM).
+CLIP_RATE_STRIDED_READS = 1_000_000
+
+#: CB-read budget for ``"head"`` -- v2's number, kept exactly.
+CLIP_RATE_HEAD_READS = 200_000
 
 
 def clip_site(read, min_clip: int = 6, min_purity: float = 0.8):
@@ -368,6 +445,18 @@ class _SupportIndex:
         cum = self.cum_f if strict else self.cum
         return cum[hi] - cum[lo]
 
+    def sites_within(self, center: int, window: int) -> tuple[int, int]:
+        """``(n distinct clip positions, bp span)`` in the window.
+
+        peakAtail-prime ``--pas-features on``: the tier-2 counterpart of a
+        tier-1 cluster's ``len(sites)`` / member span.  Two bisects and two
+        list reads -- the same slice ``reads_within`` already computes.
+        """
+        lo, hi = self._slice(center, window)
+        if hi <= lo:
+            return 0, 0
+        return hi - lo, self.pos[hi - 1] - self.pos[lo]
+
     def molecules_within(self, center: int, window: int,
                          strict: bool = False) -> int:
         lo, hi = self._slice(center, window)
@@ -519,30 +608,73 @@ class ClipStream:
       ``ends[i]`` is the read's ``end1`` as tracked by the peak caller and
       ``cbids[i]`` an interned cell-barcode id (via :meth:`add_read`).
 
-    ``read_check`` pads/drops reads so that ``end1 - start1 == seq_len`` for
-    every accepted read; the BAM is coordinate-sorted, so ``ends`` is
-    non-decreasing in arrival order and any ``[lo, hi]`` window is an
-    ``O(log n)`` bisect plus a ``Counter`` over the slice.  Memory is 8 bytes
-    per accepted read (plus one interned string per distinct barcode), i.e.
-    tens of MB for the deepest chromosome of a 200M-read BAM — and it is
-    released at every chromosome flush.  ``seq_len`` is learned from the
-    first read (the invariant above), so the minus-strand coordinate shift
-    below never depends on config plumbing across spawned processes.
+    Under ``--read-geometry fixed`` (v2) ``read_check`` pads/drops reads so
+    that ``end1 - start1 == seq_len`` for every accepted read; the BAM is
+    coordinate-sorted, so ``ends`` is non-decreasing in arrival order and any
+    ``[lo, hi]`` window is an ``O(log n)`` bisect plus a ``Counter`` over the
+    slice.  Memory is 8 bytes per accepted read (plus one interned string per
+    distinct barcode), i.e. tens of MB for the deepest chromosome of a
+    200M-read BAM — and it is released at every chromosome flush.
+
+    **Under the peakAtail-prime geometries that invariant is gone**, so two
+    things change and both are explicit rather than inferred:
+
+    * ``seq_len`` is no longer learned from the first read (``end1 - start1``
+      is not constant any more) — it MUST be supplied by the caller from
+      ``--seq-len``.  Constructing a non-``fixed`` stream without one raises,
+      rather than silently shifting every minus-strand count window.
+    * the key stored per read is the read's TRANSCRIPT 3'-MOST coordinate
+      expressed in the caller's ``end1`` space (:meth:`three_key`), not the
+      raw ``end1``.  On ``+`` that is ``end1`` itself (the true 3'-most
+      aligned base, which under ``true`` geometry is no longer fabricated).
+      On ``-`` the transcript 3' end is ``start1`` — exact in every geometry —
+      and it is stored as ``start1 + seq_len`` so that it keeps sitting
+      exactly on the cluster anchor ``mode + seq_len`` the rest of
+      :class:`ClipSeeder` works in.  Under ``fixed`` both reduce to ``end1``,
+      so v2 bytes are untouched.
+
+    Sortedness is therefore preserved by construction everywhere EXCEPT
+    ``true`` geometry on the ``+`` strand, where a soft-clipped read's true
+    end can fall behind its predecessor's by up to ``seq_len``.  That case is
+    detected while streaming and repaired once, at :meth:`finalize`, with a
+    stable sort — ``count_ends`` bisects and must never see an unsorted array.
 
     The object is picklable (the 3-stage pipeline hands one per chromosome
     from the finder to the writer); the intern dict is dropped on pickling
     because the receiving side only reads.
     """
 
-    __slots__ = ("accum", "ends", "cbids", "cb_names", "seq_len", "_cb_ids")
+    __slots__ = ("accum", "ends", "cbids", "cb_names", "seq_len", "_cb_ids",
+                 "geometry", "direction", "_sorted")
 
-    def __init__(self) -> None:
+    def __init__(self, seq_len: int | None = None, geometry: str = "fixed",
+                 direction: bool = False) -> None:
+        if geometry != "fixed" and not seq_len:
+            raise ValueError(
+                "ClipStream(geometry=%r) needs an explicit seq_len: outside "
+                "v2 geometry `end1 - start1` is not constant, so it cannot be "
+                "learned from the first read." % (geometry,)
+            )
         self.accum = ClipAccumulator()
         self.ends = array("i")
         self.cbids = array("i")
         self.cb_names: list = []
-        self.seq_len: int | None = None
+        self.seq_len: int | None = seq_len
+        self.geometry = geometry
+        self.direction = bool(direction)
+        self._sorted = True
         self._cb_ids: dict = {}
+
+    # -- coordinate space --------------------------------------------------
+    def three_key(self, start1: int, end1: int) -> int:
+        """The read's transcript 3'-most coordinate in ``end1`` space.
+
+        ``fixed`` -> ``end1`` (v2, and ``end1 == start1 + seq_len`` anyway).
+        ``+`` strand -> ``end1``.  ``-`` strand -> ``start1 + seq_len``.
+        """
+        if self.geometry == "fixed" or not self.direction:
+            return end1
+        return start1 + self.seq_len
 
     # -- streaming hooks ---------------------------------------------------
     def add_clip(self, site: int, cb, umi=None, end1=None,
@@ -552,13 +684,47 @@ class ClipStream:
     def add_read(self, start1: int, end1: int, cb) -> None:
         if self.seq_len is None:
             self.seq_len = end1 - start1
+        key = end1 if self.geometry == "fixed" else self.three_key(start1, end1)
         cid = self._cb_ids.get(cb)
         if cid is None:
             cid = len(self.cb_names)
             self._cb_ids[cb] = cid
             self.cb_names.append(cb)
-        self.ends.append(end1)
+        ends = self.ends
+        if self._sorted and ends and key < ends[-1]:
+            self._sorted = False
+        ends.append(key)
         self.cbids.append(cid)
+
+    def finalize(self) -> None:
+        """Restore the non-decreasing ``ends`` invariant ``count_ends`` needs.
+
+        A no-op (and a single flag test) in every geometry that keeps the
+        invariant while streaming, which includes all of v2 — so this cannot
+        move a v2 byte.  Where it does fire, the sort is STABLE so that equal
+        coordinates keep arrival order and the per-cell dict built by
+        ``count_ends`` is insertion-ordered deterministically.
+        """
+        if self._sorted or not self.ends:
+            return
+        import numpy as np
+        # Round-trip through BYTES, never through a Python list.  `.tolist()`
+        # on a 19.8 M-element int32 array materialises 19.8 M int objects
+        # (~28 B each) plus the list of pointers -- measured at +1.1 GB on the
+        # chr19 (+) worker of the PBMC slice, which on its own pushed peak RSS
+        # to 2.21x v2 and through the 1.5x compute guard rail of
+        # manuscript/24 3.2.4.  frombuffer/tobytes keeps the transient at
+        # ~24 B per read (int64 argsort + two int32 copies + two array copies).
+        ends = np.frombuffer(self.ends, dtype=np.int32)
+        cbids = np.frombuffer(self.cbids, dtype=np.int32)
+        order = np.argsort(ends, kind="stable")
+        new_ends = array("i")
+        new_ends.frombytes(ends[order].tobytes())
+        new_cbids = array("i")
+        new_cbids.frombytes(cbids[order].tobytes())
+        self.ends = new_ends
+        self.cbids = new_cbids
+        self._sorted = True
 
     @property
     def sites(self) -> dict:
@@ -585,10 +751,12 @@ class ClipStream:
 
     # -- pickling (pipeline hand-off) ---------------------------------------
     def __getstate__(self):
-        return (self.accum.sites, self.ends, self.cbids, self.cb_names, self.seq_len)
+        return (self.accum.sites, self.ends, self.cbids, self.cb_names,
+                self.seq_len, self.geometry, self.direction, self._sorted)
 
     def __setstate__(self, state):
-        sites, self.ends, self.cbids, self.cb_names, self.seq_len = state
+        (sites, self.ends, self.cbids, self.cb_names, self.seq_len,
+         self.geometry, self.direction, self._sorted) = state
         self.accum = ClipAccumulator()
         self.accum.sites = sites
         self._cb_ids = {}
@@ -689,12 +857,15 @@ class ClipSeeder:
 
     __slots__ = ("direction", "seed_window", "min_umis", "window",
                  "count_up", "count_down", "stream", "coverage", "stats",
-                 "strict", "clip_filter", "_cb_ids", "_cb_names")
+                 "strict", "clip_filter", "_cb_ids", "_cb_names",
+                 "geometry", "seq_len", "features")
 
     def __init__(self, direction: bool, seed_window: int = 25,
                  min_umis: int = 1, window: int = 100,
                  count_window=(-1, 25), clip_filter: str = "none",
-                 min_reads: int | None = None) -> None:
+                 min_reads: int | None = None, *,
+                 geometry: str = "fixed", seq_len: int | None = None,
+                 features: bool = False) -> None:
         """
         Args:
             min_umis: Minimum DISTINCT MOLECULES for a clip cluster to be
@@ -706,6 +877,19 @@ class ClipSeeder:
                 supplementary / duplicate / qcfail alignments.
             min_reads: Deprecated alias for *min_umis* (the flag was
                 ``--polya-min-reads`` and always gated on molecules).
+            geometry: ``--read-geometry`` (see
+                :data:`ema.countmatrix.read.READ_GEOMETRIES`).  Anything but
+                the v2 ``"fixed"`` breaks the ``end1 - start1 == seq_len``
+                invariant, so the stream is told the geometry and the
+                configured *seq_len* instead of inferring them.
+            seq_len: ``--seq-len``.  Required when *geometry* is not
+                ``"fixed"``; ignored (learned from the reads, exactly as v2
+                does) when it is.
+            features: ``--pas-features on`` (peakAtail-prime).  Adds
+                ``clip_positions`` / ``clip_span`` to every support dict
+                :meth:`flush` produces.  False (v2) leaves both keys absent,
+                and :func:`ema.countmatrix.paswrite.support_write` then
+                writes exactly v2's seven columns.
         """
         if min_reads is not None:
             min_umis = min_reads
@@ -720,7 +904,10 @@ class ClipSeeder:
         self.strict = clip_filter == "f3844"
         self.window = window
         self.count_up, self.count_down = parse_count_window(count_window)
-        self.stream = ClipStream()
+        self.geometry = geometry
+        self.seq_len = seq_len
+        self.features = bool(features)
+        self.stream = self._new_stream()
         self.coverage: list[tuple[int, int, dict, _CandidateSlice | None]] = []
         # cell-barcode intern table for the candidate slices (the stream has
         # its own: in the pipeline the writer's stream is replaced by the
@@ -736,7 +923,18 @@ class ClipSeeder:
 
     # -- streaming hooks ---------------------------------------------------
     def add_clip(self, site: int, cb, umi=None, end1=None,
-                 primary: bool = True) -> None:
+                 primary: bool = True, start1: int | None = None) -> None:
+        """Record one clip read.
+
+        *end1* is stored so the tier-1 clip fallback can tell which cluster's
+        midpoint territory the read belongs to, and it must therefore live in
+        the SAME space as the read ends :meth:`add_read` stores.  Pass
+        *start1* as well and the seeder maps it through
+        :meth:`ClipStream.three_key`; under v2 geometry the mapping is the
+        identity, so v2 callers may keep omitting it.
+        """
+        if start1 is not None and self.geometry != "fixed" and end1 is not None:
+            end1 = self.stream.three_key(start1, end1)
         self.stream.add_clip(site, cb, umi, end1, primary)
 
     def add_read(self, start1: int, end1: int, cb) -> None:
@@ -796,11 +994,16 @@ class ClipSeeder:
             support_out: Optional list; when given, one support dict per
                 emitted record is appended IN THE SAME ORDER (keys
                 ``clip_reads``, ``clip_umis``, ``clip_reads_f3844``,
-                ``clip_umis_f3844``, ``window_reads``, ``tier``).  This is
-                the sidecar (``pas_support.tsv``) source: the raw clip-read
-                count stays available without overloading BED6.
+                ``clip_umis_f3844``, ``window_reads``, ``tier``, and -- only
+                when this seeder was built with ``features=True`` --
+                ``clip_positions``, ``clip_span``).  This is the sidecar
+                (``pas_support.tsv``) source: the raw clip-read count stays
+                available without overloading BED6.
         """
         stream = self.stream
+        # `count_ends` bisects; outside v2 geometry the arrival order is not
+        # guaranteed sorted.  No-op (one bool test) whenever it already is.
+        stream.finalize()
         sites = stream.sites
         strict = self.strict
         umi_key = "numis_f3844" if strict else "numis"
@@ -846,14 +1049,22 @@ class ClipSeeder:
                 if not claim:
                     _score = support.molecules_within(three, w, strict)
                     records.append((bed_start, bed_end, _score, cb_dict))
-                    supports.append({
+                    _row2 = {
                         "clip_reads": support.reads_within(three, w),
                         "clip_umis": support.molecules_within(three, w),
                         "clip_reads_f3844": support.reads_within(three, w, True),
                         "clip_umis_f3844": support.molecules_within(three, w, True),
                         "window_reads": sum(cb_dict.values()),
                         "tier": 2,
-                    })
+                    }
+                    if self.features:
+                        # A tier-2 row has no cluster of its own, so its clip
+                        # geometry is that of the clip positions inside the
+                        # SAME +/-window its four clip counts come from.
+                        _n_pos, _span = support.sites_within(three, w)
+                        _row2["clip_positions"] = _n_pos
+                        _row2["clip_span"] = _span
+                    supports.append(_row2)
                     stats["reads_tier2"] += sum(cb_dict.values())
                     continue
                 stats["suppressed_candidates"] += 1
@@ -889,14 +1100,38 @@ class ClipSeeder:
                 else:
                     stats["empty_tier1_rows"] += 1
             records.append((c["mode"], c["mode"] + 1, c[umi_key], cb_dict))
-            supports.append({
+            _row1 = {
                 "clip_reads": c["nreads"],
                 "clip_umis": c["numis"],
                 "clip_reads_f3844": c["nreads_f3844"],
                 "clip_umis_f3844": c["numis_f3844"],
                 "window_reads": sum(cb_dict.values()),
                 "tier": 1,
-            })
+            }
+            if self.features:
+                # cluster_clip_sites() already carries the member positions,
+                # ascending; this is a len() and a subtraction, not a rescan.
+                _members = c["sites"]
+                _row1["clip_positions"] = len(_members)
+                _row1["clip_span"] = _members[-1] - _members[0]
+                # Clip-anchored cleavage offset (TASK E): where the poly(A)
+                # tails actually pinned the last aligned base, relative to the
+                # base this cluster REPORTS, in transcript orientation
+                # (positive = downstream of the call).  Read-weighted over the
+                # cluster's own members, which are already in hand -- one pass
+                # over a list whose median length is 1.  A single-member
+                # cluster is exactly 0 by construction.
+                if len(_members) == 1:
+                    _row1["clip_offset_mean"] = "0.00"
+                else:
+                    _mode = c["mode"]
+                    _num = _den = 0
+                    for _p in _members:
+                        _w = sites[_p][0]
+                        _num += (_mode - _p if self.direction else _p - _mode) * _w
+                        _den += _w
+                    _row1["clip_offset_mean"] = "%.2f" % (_num / _den) if _den else "0.00"
+            supports.append(_row1)
         stats["tier1"] += n_kept
         stats["tier2"] += len(records) - n_kept
 
@@ -904,11 +1139,18 @@ class ClipSeeder:
         records = [records[k] for k in order]
         if support_out is not None:
             support_out.extend(supports[k] for k in order)
-        self.stream = ClipStream()
+        self.stream = self._new_stream()
         self.coverage = []
         self._cb_ids = {}
         self._cb_names = []
         return records
+
+    def _new_stream(self) -> ClipStream:
+        """A stream for this seeder's geometry (v2 keeps the bare default)."""
+        if self.geometry == "fixed":
+            return ClipStream()
+        return ClipStream(seq_len=self.seq_len, geometry=self.geometry,
+                          direction=self.direction)
 
     @staticmethod
     def _clip_to_neighbours(i: int, lo: int, hi: int, anchors: list[int],
@@ -990,17 +1232,247 @@ class ClipSeeder:
             _merge_counts(counts[i], d)
 
 
+def _sample_head(bam, min_clip, min_purity, barcode_tag, max_reads):
+    """v2's sampler: scan from record 0 until *max_reads* CB reads are seen.
+
+    On a coordinate-sorted BAM that is the head of the first contig, which is
+    why the estimate it returns is not the file's rate (2.2565 % against a
+    0.5364 % truth on PBMC 10k v3).  Kept because v2 output must stay
+    reachable, not because it is right.
+    """
+    n_cb = n_clip = 0
+    for read in bam:
+        if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            continue
+        if not read.has_tag(barcode_tag):
+            continue
+        n_cb += 1
+        if clip_site(read, min_clip, min_purity) is not None:
+            n_clip += 1
+        if n_cb >= max_reads:
+            break
+    return n_cb, n_clip, {"mode": "head", "contigs": 1, "strata": 1}
+
+
+def _sample_strided(bam, min_clip, min_purity, barcode_tag, max_reads,
+                    strata=CLIP_RATE_STRATA):
+    """Spread the sample across the whole BAM, weighted by read density.
+
+    The sample is a set of equally spaced GENOMIC WINDOWS from which EVERY
+    read is taken, not a set of equally sized read blocks.  That distinction
+    is the whole estimator, and it was arrived at by measurement rather than
+    by taste:
+
+      A first implementation gave each stratum an equal READ quota and started
+      it at an evenly spaced coordinate.  That weights read-sparse coordinate
+      regions equally with read-dense ones, which is not what the file's rate
+      is, and it showed: on the PBMC chr19+21 slice (whole-file truth
+      0.6169 %) it returned 0.9111 % at 25 strata, 0.8489 % at 100, 0.3988 %
+      at 400 and 0.1853 % at 2,500 -- a 3x swing driven by nothing but the
+      stratum count, which is the signature of a biased estimator rather than
+      a noisy one.
+
+    Taking every read inside a coordinate-uniform window instead makes dense
+    regions contribute proportionally more reads, exactly as they do in the
+    whole file, so the pooled ratio estimates the same quantity a full scan
+    would.  A read is counted when its START is inside the window, so a read
+    is never counted twice and long reads are not over-sampled at the edges.
+
+    Window width is chosen so the expected yield is ``max_reads``: with
+    sampling fraction ``f = max_reads / total_mapped``, a contig of length L
+    sampled in S windows uses ``W = f * L / S``.
+
+    Returns ``(n_cb, n_clip, diagnostics)``, or ``(0, 0, None)`` when the BAM
+    has no usable index -- the caller then falls back to the head scan and
+    says so.
+    """
+    try:
+        stats = bam.get_index_statistics()
+    except (ValueError, AttributeError):      # no index / unindexed stream
+        return 0, 0, None
+    mapped = [(s.contig, s.mapped) for s in stats if s.mapped > 0]
+    total = sum(m for _, m in mapped)
+    if not mapped or total <= 0:
+        return 0, 0, None
+
+    lengths = dict(zip(bam.references, bam.lengths))
+    fraction = min(1.0, float(max_reads) / float(total))
+    n_cb = n_clip = 0
+    n_contigs = n_windows = 0
+    for contig, _m in mapped:
+        length = lengths.get(contig, 0)
+        if length <= 0:
+            continue
+        # bp to sample on this contig -- ALWAYS the same fraction of it, so a
+        # short, very deep contig (MT: 16.5 kb and often a tenth of a 10x
+        # library) cannot swamp the sample.  Letting the minimum width win
+        # here took 100 % of MT and of every scaffold and returned 36.2 M
+        # reads for a 200,000-read budget, at 0.3492 % against a 0.5364 %
+        # truth -- measured on the full PBMC BAM, not reasoned about.
+        span = max(1, int(fraction * length))
+        k = max(1, int(strata))
+        width = max(1, min(span, max(CLIP_RATE_MIN_WINDOW, span // k)))
+        k = max(1, span // width)
+        n_contigs += 1
+        for j in range(k):
+            lo = int(length * j / k)
+            hi = min(length, lo + width)
+            if hi <= lo:
+                continue
+            n_windows += 1
+            for read in bam.fetch(contig, lo, hi):
+                if read.reference_start < lo or read.reference_start >= hi:
+                    continue          # count each read in exactly one window
+                if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    continue
+                if not read.has_tag(barcode_tag):
+                    continue
+                n_cb += 1
+                if clip_site(read, min_clip, min_purity) is not None:
+                    n_clip += 1
+    return n_cb, n_clip, {"mode": "strided", "contigs": n_contigs,
+                          "strata": n_windows}
+
+
+#: Set by :meth:`ClipRateCounter.report` so a caller in the SAME process can
+#: pick the two integers up without widening ``peak_calling``'s return type --
+#: which several paths ignore.  ``chrom_parallel._run_job`` reads it straight
+#: after ``peak_calling`` returns and puts the counts in its result dict, so the
+#: dispatcher can report one exact run-level rate.
+_last_clip_counts: dict = {"n_reads": 0, "n_clip": 0}
+
+
+def take_last_clip_counts() -> tuple[int, int]:
+    """Return and clear the last job's ``(accepted reads, qualifying clips)``."""
+    n_reads = int(_last_clip_counts.get("n_reads", 0))
+    n_clip = int(_last_clip_counts.get("n_clip", 0))
+    _last_clip_counts["n_reads"] = 0
+    _last_clip_counts["n_clip"] = 0
+    return n_reads, n_clip
+
+
+def _warn_low_clip_rate(label, rate, n_reads, n_clip) -> None:
+    log.warning(
+        "LOW POLY(A) CLIP RATE (exact, %s): %.4f%% of %d accepted CB reads "
+        "carry a qualifying poly(A) soft clip (%d reads). Expected >~0.3%% for "
+        "10x cDNA kept untrimmed; PBMC 10k v3 reference on this denominator: "
+        "0.5730%% genome-wide, 0.3669%%-0.8179%% per chromosome. The clip "
+        "evidence channel looks destroyed (poly(A) trimmed upstream, unusual "
+        "chemistry, or aligner hard-clipping): clip_seeded calls and BED "
+        "score-column support values from this BAM are NOT reliable.",
+        label, rate * 100.0, n_reads, n_clip,
+    )
+
+
+def report_clip_rate_total(n_reads: int, n_clip: int, label: str) -> float:
+    """Report the EXACT run-level clip rate, and warn once if it is too low."""
+    if n_reads <= 0:
+        return 0.0
+    rate = n_clip / n_reads
+    if rate < LOW_CLIP_RATE:
+        _warn_low_clip_rate(label, rate, n_reads, n_clip)
+    else:
+        log.info(
+            "poly(A) clip rate (exact, %s): %.4f%% of %d accepted CB reads "
+            "(%d clips) -- counted during peak calling, not sampled",
+            label, rate * 100.0, n_reads, n_clip,
+        )
+    return rate
+
+
+class ClipRateCounter:
+    """Exact poly(A) clip rate over the reads the caller actually accepted.
+
+    ``--clip-rate-sampling pass``.  The peak-calling loop already calls
+    :func:`clip_site` on every read that clears ``read_check``; this class adds
+    two integers to that, so the rate it reports is the file's, on the
+    caller's own denominator, for no extra I/O and no sampling theory.
+
+    Reported per (contig, strand) job rather than per run because that is the
+    unit the caller parallelises over and the unit whose log line already
+    exists -- and because the per-chromosome spread is real: 0.3669 % (chr21)
+    to 0.8179 % (chr19) on PBMC 10k v3.
+    """
+
+    __slots__ = ("n_reads", "n_clip")
+
+    def __init__(self) -> None:
+        self.n_reads = 0
+        self.n_clip = 0
+
+    def add(self, has_clip: bool) -> None:
+        self.n_reads += 1
+        if has_clip:
+            self.n_clip += 1
+
+    @property
+    def rate(self) -> float:
+        return (self.n_clip / self.n_reads) if self.n_reads else 0.0
+
+    def report(self, label: str, warn: bool = False) -> float:
+        """Log the exact rate for one unit of work.
+
+        ``warn`` is False for a per-(contig, strand) job on purpose: the
+        per-chromosome rate legitimately ranges 0.3669 % (chr21) to 0.8179 %
+        (chr19) on a healthy PBMC 10k v3 library, and chr21's ``+`` strand
+        alone measures 0.2878 % -- under the 0.3 % bar.  Warning per job would
+        fire on a perfectly good library.  The alarm belongs to the run-level
+        total (:func:`report_clip_rate_total`).
+        """
+        rate = self.rate
+        if not self.n_reads:
+            return rate
+        _last_clip_counts["n_reads"] = self.n_reads
+        _last_clip_counts["n_clip"] = self.n_clip
+        if warn and rate < LOW_CLIP_RATE:
+            _warn_low_clip_rate(label, rate, self.n_reads, self.n_clip)
+        else:
+            log.info(
+                "poly(A) clip rate (exact, %s): %.4f%% of %d accepted CB reads "
+                "(%d clips)", label, rate * 100.0, self.n_reads, self.n_clip,
+            )
+        return rate
+
+
 def check_clip_rate(bam_path: str, min_clip: int = 6, min_purity: float = 0.8,
-                    barcode_tag: str = "CB", max_reads: int = 200_000):
-    """Estimate the poly(A) clip rate on the first *max_reads* CB reads and
-    warn loudly when it is below :data:`LOW_CLIP_RATE`.
+                    barcode_tag: str = "CB", max_reads: int | None = None,
+                    sampling: str | None = None):
+    """Estimate the poly(A) clip rate over *max_reads* CB reads and warn
+    loudly when it is below :data:`LOW_CLIP_RATE`.
 
     R2 mitigation (plan section 5): a pipeline that trims poly(A) before
     alignment destroys the evidence channel entirely; the caller must say so
     at startup rather than silently emitting an unsupported call set.
 
+    **How the sample is drawn matters more than how big it is.**  v2 read the
+    first *max_reads* CB reads of the file; on a coordinate-sorted BAM that is
+    the head of chr1, and on PBMC 10k v3 it returns **2.2565 %** where the
+    whole-file rate on the same denominator is **0.5364 %** -- a ~4x
+    over-estimate, in the direction that would MASK a genuinely destroyed
+    channel.  ``sampling="pass"`` (the peakAtail-prime default) does not
+    sample at all: it counts every accepted read and qualifying clip during
+    the peak-calling pass, so the rate is exact per (contig, strand).
+    ``sampling="strided"`` allocates the same budget across every mapped
+    contig in proportion to its mapped reads and across
+    :data:`CLIP_RATE_STRATA` evenly spaced strata inside each contig; it is
+    kept as the measured-unreliable obvious design.
+
     Cached per BAM per process, so tile/pipeline workers and repeat strand
     passes never rescan.
+
+    Args:
+        bam_path: BAM to sample.
+        min_clip: ``--polya-min-clip``.
+        min_purity: ``--polya-min-purity``.
+        barcode_tag: Cell-barcode SAM tag.
+        max_reads: CB-read budget for the sample.  ``None`` (default) means
+            v2's 200,000 for ``"head"`` and :data:`CLIP_RATE_STRIDED_READS`
+            for ``"strided"``, which needs more reads for the same confidence
+            because it samples clustered rare events.  Ignored by ``"pass"``,
+            which does not sample.
+        sampling: One of :data:`CLIP_RATE_SAMPLINGS`.  ``None`` (default)
+            reads ``variable_config.clip_rate_sampling``, whose legacy-global
+            default is the BRANCH value; pass an explicit value to pin it.
 
     Returns the estimated rate (float) or ``None`` when the BAM could not be
     sampled.
@@ -1009,21 +1481,44 @@ def check_clip_rate(bam_path: str, min_clip: int = 6, min_purity: float = 0.8,
     if key in _clip_rate_warned:
         return _clip_rate_warned[key]
 
+    if sampling is None:
+        from ema.config import variable_config as _vc
+        sampling = str(getattr(_vc, "clip_rate_sampling", V2_CLIP_RATE_SAMPLING))
+    if sampling not in CLIP_RATE_SAMPLINGS:
+        raise ValueError(
+            "clip_rate_sampling must be one of %r, got %r"
+            % (list(CLIP_RATE_SAMPLINGS), sampling)
+        )
+    if sampling == "pass":
+        # Nothing to sample: the peak-calling pass counts the real thing.
+        # See ClipRateCounter and peak_calling()'s per-job report.
+        return None
+
+    if max_reads is None:
+        max_reads = (CLIP_RATE_STRIDED_READS if sampling == "strided"
+                     else CLIP_RATE_HEAD_READS)
+
     try:
         import pysam
-        n_cb = 0
-        n_clip = 0
         with pysam.AlignmentFile(key, "rb") as bam:
-            for read in bam:
-                if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                    continue
-                if not read.has_tag(barcode_tag):
-                    continue
-                n_cb += 1
-                if clip_site(read, min_clip, min_purity) is not None:
-                    n_clip += 1
-                if n_cb >= max_reads:
-                    break
+            diag = None
+            if sampling == "strided":
+                n_cb, n_clip, diag = _sample_strided(
+                    bam, min_clip, min_purity, barcode_tag, max_reads)
+                if diag is None:
+                    log.warning(
+                        "poly(A) clip-rate QC: %s has no usable index, so the "
+                        "sample cannot be spread across the file; falling back "
+                        "to the head-of-file scan, which OVER-ESTIMATES the "
+                        "rate on a coordinate-sorted BAM (2.2565%% vs a "
+                        "0.5364%% truth on PBMC 10k v3).", key,
+                    )
+                    n_cb, n_clip, diag = _sample_head(
+                        bam, min_clip, min_purity, barcode_tag,
+                        min(max_reads, CLIP_RATE_HEAD_READS))
+            else:
+                n_cb, n_clip, diag = _sample_head(
+                    bam, min_clip, min_purity, barcode_tag, max_reads)
         rate = (n_clip / n_cb) if n_cb else 0.0
     except Exception as exc:  # never fail a run over the QC estimate
         log.warning("poly(A) clip-rate estimate failed for %s: %s", key, exc)
@@ -1031,17 +1526,47 @@ def check_clip_rate(bam_path: str, min_clip: int = 6, min_purity: float = 0.8,
         return None
 
     _clip_rate_warned[key] = rate
+    # v2's log line, byte-for-byte, when v2's sampler was asked for: the
+    # compatibility guarantee covers the run journal too, and identity_check.py
+    # compares it.  The diagnostics ride only on the new sampler.
+    if diag["mode"] == "head":
+        if rate < LOW_CLIP_RATE:
+            log.warning(
+                "LOW POLY(A) CLIP RATE: %.4f%% of the first %d CB reads in %s "
+                "carry a poly(A) soft clip (expected >~0.3%% for 10x cDNA kept "
+                "untrimmed; PBMC 10k v3 genome-wide reference: 0.54%% on this "
+                "denominator). The clip evidence channel looks destroyed "
+                "(poly(A) trimmed upstream, unusual chemistry, or aligner "
+                "hard-clipping). clip_seeded calls and BED score-column "
+                "support values from this BAM are NOT reliable. NOTE: "
+                "--clip-rate-sampling head reads only the HEAD of the file, "
+                "which on a coordinate-sorted BAM is one contig.",
+                rate * 100.0, n_cb, key,
+            )
+        else:
+            log.info("poly(A) clip rate for %s: %.4f%% of %d sampled CB reads",
+                     key, rate * 100.0, n_cb)
+        return rate
     if rate < LOW_CLIP_RATE:
         log.warning(
-            "LOW POLY(A) CLIP RATE: %.4f%% of the first %d CB reads in %s "
-            "carry a poly(A) soft clip (expected >~0.3%% for 10x cDNA kept "
-            "untrimmed; PBMC v3 reference: 1.15%%). The clip evidence channel "
+            "LOW POLY(A) CLIP RATE: %.4f%% of %d sampled CB reads in %s carry "
+            "a poly(A) soft clip (sampling=%s over %d contig(s)/%d strata; "
+            "expected >~0.3%% for 10x cDNA kept untrimmed; PBMC 10k v3 "
+            "genome-wide reference: 0.54%% on this denominator, 0.57%% on the "
+            "caller's accepted-read denominator). The clip evidence channel "
             "looks destroyed (poly(A) trimmed upstream, unusual chemistry, or "
             "aligner hard-clipping). clip_seeded calls and BED score-column "
             "support values from this BAM are NOT reliable.",
-            rate * 100.0, n_cb, key,
+            rate * 100.0, n_cb, key, diag["mode"], diag["contigs"],
+            diag["strata"],
         )
     else:
-        log.info("poly(A) clip rate for %s: %.4f%% of %d sampled CB reads",
-                 key, rate * 100.0, n_cb)
+        log.info(
+            "poly(A) clip rate for %s: %.4f%% of %d sampled CB reads "
+            "(sampling=%s, %d contig(s), %d windows). This is a QC ALARM, not "
+            "a measurement: clips are rare and clustered at 3' ends, so a "
+            "sample lands within roughly 0.85x-1.3x of the file's rate.",
+            key, rate * 100.0, n_cb, diag["mode"], diag["contigs"],
+            diag["strata"],
+        )
     return rate

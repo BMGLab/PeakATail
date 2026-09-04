@@ -152,6 +152,8 @@ class JobSpec:
     floor_threshold: int = 3
     lambda_fold_change: float = 2.0
     lambda_window: int = 5000
+    # peakAtail-prime --dynamic-threshold-clamp; False == v2.
+    dynamic_threshold_clamp: bool = False
     bam_threads: int = 4
     default_sample_id: str = "default"
     # Post-detection PAS merger (strategy-agnostic).  -1 for spacing triggers
@@ -168,6 +170,16 @@ class JobSpec:
     polya_min_umis: int = 1
     polya_clip_filter: str = "none"
     polya_count_window: tuple = (-1, 25)
+    # peakAtail-prime read acceptance geometry (see ema/countmatrix/read.py).
+    # Workers are spawned, so these travel with the job rather than being
+    # re-derived from the legacy globals in the child.
+    read_geometry: str = "fixed"
+    read_exclude_flags: int = 0
+    seq_len: int | None = None
+    # peakAtail-prime --pas-features: same reason -- it decides the sidecar's
+    # column set, which pass 2b below merges by adopting the child's header.
+    pas_features: str = "off"
+    clip_rate_sampling: str = "head"
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +325,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_floor_threshold = args.floor_threshold
         _args_lambda_fold_change = args.lambda_fold_change
         _args_lambda_window = args.lambda_window
+        _args_dyn_clamp = getattr(args, "dynamic_threshold_clamp", False)
         _args_bam_threads = args.bam_threads
         _args_default_sample_id = args.default_sample_id
         _args_min_pas_spacing = args.min_pas_spacing
@@ -344,6 +357,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
         _args_floor_threshold = args["floor_threshold"]
         _args_lambda_fold_change = args["lambda_fold_change"]
         _args_lambda_window = args["lambda_window"]
+        _args_dyn_clamp = args.get("dynamic_threshold_clamp", False)
         _args_bam_threads = args["bam_threads"]
         _args_default_sample_id = args["default_sample_id"]
         _args_min_pas_spacing = args.get("min_pas_spacing", -1)
@@ -360,6 +374,28 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             polya_clip_filter=args.get("polya_clip_filter", "none"),
             polya_count_window=args.get("polya_count_window", (-1, 25)),
         )
+
+    # peakAtail-prime: push the read-acceptance geometry into this spawned
+    # worker's freshly-imported legacy globals.  seq_len is only overridden
+    # for the non-v2 geometries (where ClipStream cannot infer it from the
+    # reads); under "fixed" the worker keeps resolving it exactly as before,
+    # so tile-path v2 bytes are untouched.
+    from ema.config import variable_config as _vc_tile
+    if isinstance(args, JobSpec):
+        _vc_tile.read_geometry = args.read_geometry
+        _vc_tile.read_exclude_flags = args.read_exclude_flags
+        _vc_tile.pas_features = args.pas_features
+        _vc_tile.clip_rate_sampling = getattr(args, "clip_rate_sampling",
+                                              "head")
+        if args.read_geometry != "fixed" and args.seq_len:
+            _vc_tile.seqlen = args.seq_len
+    else:
+        _vc_tile.read_geometry = args.get("read_geometry", "fixed")
+        _vc_tile.read_exclude_flags = args.get("read_exclude_flags", 0)
+        _vc_tile.pas_features = args.get("pas_features", "off")
+        _vc_tile.clip_rate_sampling = args.get("clip_rate_sampling", "head")
+        if _vc_tile.read_geometry != "fixed" and args.get("seq_len"):
+            _vc_tile.seqlen = args["seq_len"]
 
     # Per-worker isolation: reset all process-global mutable state
     reset_index()
@@ -395,6 +431,7 @@ def tile_worker(args: "dict[str, Any] | JobSpec") -> dict[str, Any]:
             floor_threshold=_args_floor_threshold,
             lambda_fold_change=_args_lambda_fold_change,
             lambda_window=_args_lambda_window,
+            dynamic_threshold_clamp=_args_dyn_clamp,
             bam_threads=_args_bam_threads,
             region=(chrom, fetch_start, fetch_end),
             min_pas_spacing=_args_min_pas_spacing,
@@ -687,6 +724,7 @@ def build_job_specs(
     dynamic_threshold: bool = False,
     floor_threshold: int = 3,
     lambda_fold_change: float = 2.0,
+    dynamic_threshold_clamp: bool = False,
     lambda_window: int = 5000,
     bam_threads: int = 4,
     per_bam_tile_sizes: dict[str, int] | None = None,
@@ -745,6 +783,8 @@ def build_job_specs(
             else tile_size
         )
         per_bam_spacing = min_pas_spacing
+        # Resolved in the PARENT: spawned workers re-import ema.config fresh.
+        from ema.config import variable_config as _vc_specs
         chromosomes = get_chromosomes(str(bam_path))
         for chrom, length in chromosomes:
             tiles = split_chromosome_into_tiles(chrom, length, bam_tile_size, tile_overlap)
@@ -767,6 +807,7 @@ def build_job_specs(
                         floor_threshold=floor_threshold,
                         lambda_fold_change=lambda_fold_change,
                         lambda_window=lambda_window,
+                        dynamic_threshold_clamp=dynamic_threshold_clamp,
                         bam_threads=bam_threads,
                         default_sample_id=dataset_id,
                         min_pas_spacing=per_bam_spacing,
@@ -779,6 +820,13 @@ def build_job_specs(
                         polya_min_umis=polya_min_umis,
                         polya_clip_filter=polya_clip_filter,
                         polya_count_window=tuple(polya_count_window),
+                        read_geometry=str(_vc_specs.read_geometry),
+                        read_exclude_flags=int(_vc_specs.read_exclude_flags),
+                        pas_features=str(getattr(_vc_specs, "pas_features", "off")),
+                        clip_rate_sampling=str(getattr(
+                            _vc_specs, "clip_rate_sampling", "head")),
+                        seq_len=(int(_vc_specs.seqlen)
+                                 if _vc_specs.seqlen else None),
                     ))
                     job_id += 1
 
@@ -906,6 +954,7 @@ def run_tiled(
     dynamic_threshold: bool = False,
     floor_threshold: int = 3,
     lambda_fold_change: float = 2.0,
+    dynamic_threshold_clamp: bool = False,
     lambda_window: int = 5000,
     bam_threads: int = 4,
     tile_size: int = 25_000_000,
@@ -1048,6 +1097,7 @@ def run_tiled(
             floor_threshold=floor_threshold,
             lambda_fold_change=lambda_fold_change,
             lambda_window=lambda_window,
+            dynamic_threshold_clamp=dynamic_threshold_clamp,
             bam_threads=bam_threads,
             min_pas_spacing=min_pas_spacing,
             min_pas_prominence=min_pas_prominence,
@@ -1077,6 +1127,21 @@ def run_tiled(
             _resolved_spacing, bamfile_dir,
         )
 
+    # peakAtail-prime: resolve the read-acceptance geometry in the PARENT.
+    # Tile workers are spawned; without these keys the child falls back to
+    # variable_config's module default and the tile path silently runs a
+    # different geometry from the monolithic one -- which is exactly what
+    # tests/test_polya_three_path_agreement.py caught when they were missing.
+    from ema.config import variable_config as _vc_tiles
+    _geom_kwargs = {
+        "read_geometry": str(_vc_tiles.read_geometry),
+        "read_exclude_flags": int(_vc_tiles.read_exclude_flags),
+        "pas_features": str(getattr(_vc_tiles, "pas_features", "off")),
+        "clip_rate_sampling": str(getattr(_vc_tiles, "clip_rate_sampling",
+                                          "head")),
+        "seq_len": int(_vc_tiles.seqlen) if _vc_tiles.seqlen else None,
+    }
+
     worker_args: list[dict[str, Any]] = []
     for tile_id, (chrom, tile_start, tile_end, fetch_start, fetch_end) in enumerate(all_tiles):
         worker_args.append({
@@ -1096,11 +1161,13 @@ def run_tiled(
             "floor_threshold": floor_threshold,
             "lambda_fold_change": lambda_fold_change,
             "lambda_window": lambda_window,
+            "dynamic_threshold_clamp": dynamic_threshold_clamp,
             "bam_threads": bam_threads,
             "default_sample_id": default_sample_id,
             "min_pas_spacing": _resolved_spacing,
             "min_pas_prominence": min_pas_prominence,
             **_polya_kwargs,
+            **_geom_kwargs,
         })
 
     # ----------------------------------------------------------------

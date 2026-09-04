@@ -63,7 +63,8 @@ def _slice_config():
     saved = {
         k: getattr(variable_config, k)
         for k in ("seqlen", "cb_len", "barcode_tag", "ignore_chro",
-                  "default_threshold", "merge_len")
+                  "default_threshold", "merge_len", "pas_features",
+                  "read_geometry", "clip_rate_sampling")
     }
     variable_config.seqlen = SEQ_LEN
     variable_config.cb_len = 16
@@ -124,20 +125,30 @@ def _support_by_coord(bed: Path):
     """``{(chrom, start, end, strand): support row}`` — the sidecar joined
     back onto the BED through the pas_id, so path-specific renumbering does
     not matter."""
-    from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
+    from ema.config import variable_config
+    from ema.countmatrix.paswrite import support_columns, support_path_for
 
+    # peakAtail-prime: --pas-features appends columns, so the expected header
+    # is the one the CURRENT setting implies.  Comparing the full row across
+    # paths therefore also compares clip_positions / clip_span, which is what
+    # makes this file the plumbing test for TASK C's new columns as well.
+    expect = support_columns(
+        str(getattr(variable_config, "pas_features", "off")).lower() == "on")
     lines = Path(support_path_for(bed)).read_text().splitlines()
-    assert lines[0].split("\t") == list(SUPPORT_COLUMNS)
+    assert lines[0].split("\t") == list(expect)
+    # Compared as TEXT, not as ints: clip_offset_mean is a signed float and is
+    # "NA" on a tier-2 row, and comparing the raw fields across paths is the
+    # stricter test anyway (it would catch a formatting divergence too).
     rows = {}
     for line in lines[1:]:
         f = line.split("\t")
-        rows[f[0]] = tuple(int(x) for x in f[1:])
+        rows[f[0]] = tuple(f[1:])
     out = {}
     for r in _rows(bed):
         key = (r["chrom"], r["start"], r["end"], r["strand"])
         out[key] = rows[str(r["name"])]
         # BED column 5 is the molecule count from the same sidecar row
-        assert int(r["score"]) == rows[str(r["name"])][1]
+        assert int(r["score"]) == int(rows[str(r["name"])][1])
     return out
 
 
@@ -198,3 +209,91 @@ def test_all_three_paths_find_the_cleavage_site_when_seeded(bam, tmp_path):
         bare = [r for r in rows
                 if r["score"] == 0 and r["start"] <= BARE_SITE <= r["end"] + 150]
         assert bare, f"{label}: coverage-only tier missing at the bare locus"
+
+
+def test_the_sidecar_column_set_survives_the_spawn(bam, tmp_path):
+    """``--pas-features off`` (the v2-compatibility value) must reach the
+    CHILDREN of every parallel path.
+
+    This is the exact hazard ``--read-geometry`` hit: the pipeline and tile
+    workers are spawned, so ``ema.config``'s legacy globals come back at their
+    MODULE defaults in the child -- and the module default of
+    ``pas_features`` is the branch value ``"on"``.  A path that forgot to
+    carry the setting would write a nine-column sidecar for a run the user
+    asked to be v2-compatible, and the only symptom would be two extra
+    columns in a file nothing in the pipeline reads.
+    """
+    from ema.config import variable_config
+    from ema.countmatrix.paswrite import SUPPORT_COLUMNS, support_path_for
+
+    variable_config.pas_features = "off"
+    beds = {
+        "monolithic": _call(bam, tmp_path, "cols_mono", "clip_seeded"),
+        "pipeline": _call(bam, tmp_path, "cols_pipe", "clip_seeded",
+                          use_pipeline=True),
+        "tiles": _call(bam, tmp_path, "cols_tile", "clip_seeded",
+                       use_tiles=True, tile_size=8_000, tile_overlap=2_000,
+                       n_workers=2),
+    }
+    for label, bed in beds.items():
+        lines = Path(support_path_for(bed)).read_text().splitlines()
+        assert lines[0].split("\t") == list(SUPPORT_COLUMNS), (
+            f"{label}: --pas-features off did not reach the writer"
+        )
+        assert len(lines) > 1, f"{label}: empty sidecar, the check is vacuous"
+        for line in lines[1:]:
+            assert len(line.split("\t")) == len(SUPPORT_COLUMNS), (
+                f"{label}: row has feature columns the header does not declare"
+            )
+
+
+@pytest.mark.parametrize("geometry", ["true"])
+def test_all_three_paths_agree_under_a_non_default_read_geometry(
+        bam, tmp_path, geometry):
+    """``--read-geometry`` must reach the spawned pipeline and tile workers.
+
+    ``run_tiled`` hands its workers a legacy DICT rather than a ``JobSpec``,
+    and that dict was missed on the first cut of the flag: the tile path
+    silently ran v2 geometry while the monolithic path ran the branch value.
+    That was caught only because ``"true"`` was the branch DEFAULT at the
+    time; the measurement has since moved the default back to ``"fixed"``, so
+    every other test in this file now runs at the value the child falls back
+    to anyway and the regression would be invisible again.  Hence an arm that
+    forces a non-default value.
+
+    Only ``"true"`` is an arm: this fixture has no read whose reference span
+    exceeds ``--seq-len``, so ``"keep"`` is byte-equal to ``"fixed"`` here and
+    could not tell a broken hand-off from a working one.
+    """
+    from ema.config import variable_config
+
+    variable_config.read_geometry = geometry
+    mono = _call(bam, tmp_path, f"geo_mono_{geometry}", "clip_seeded")
+    pipe = _call(bam, tmp_path, f"geo_pipe_{geometry}", "clip_seeded",
+                 use_pipeline=True)
+    tiled = _call(bam, tmp_path, f"geo_tile_{geometry}", "clip_seeded",
+                  use_tiles=True, tile_size=8_000, tile_overlap=2_000,
+                  n_workers=2)
+    for label, bed in (("pipeline", pipe), ("tiles", tiled)):
+        assert _coords_and_scores(bed) == _coords_and_scores(mono), (
+            f"--read-geometry {geometry} did not reach the {label} workers "
+            "(coordinates diverged from the monolithic path)"
+        )
+        assert _counts_by_coord(bed) == _counts_by_coord(mono), (
+            f"--read-geometry {geometry} did not reach the {label} workers "
+            "(count matrix diverged)"
+        )
+        assert _support_by_coord(bed) == _support_by_coord(mono), (
+            f"--read-geometry {geometry} did not reach the {label} workers "
+            "(clip support diverged)"
+        )
+
+    # Not vacuous: v2 geometry gives a different answer on this fixture.
+    variable_config.read_geometry = "fixed"
+    v2 = _call(bam, tmp_path, "geo_mono_fixed", "clip_seeded")
+    assert _coords_and_scores(v2) != _coords_and_scores(mono) or \
+        _counts_by_coord(v2) != _counts_by_coord(mono), (
+        f"--read-geometry {geometry} reproduced v2 on this fixture, so the "
+        "agreement above cannot distinguish 'the flag travelled' from "
+        "'nothing happened'"
+    )

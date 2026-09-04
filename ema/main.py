@@ -312,7 +312,9 @@ def run(
 def _write_run_support(bed_paths, out_path) -> None:
     """Concatenate the caller BEDs' poly(A) support sidecars into one
     run-root ``pas_support.tsv`` (pas_id, clip_reads, clip_umis,
-    clip_reads_f3844, clip_umis_f3844, window_reads, tier).
+    clip_reads_f3844, clip_umis_f3844, window_reads, tier -- plus the
+    ``--pas-features on`` call-time columns, whose presence is read off the
+    first source file's own header rather than assumed).
 
     Best-effort and non-fatal: the sidecar is an annotation, never an input
     to the pipeline.  Only written when the pas_ids are still the caller's
@@ -325,8 +327,37 @@ def _write_run_support(bed_paths, out_path) -> None:
         srcs = [s for s in srcs if s.exists()]
         if not srcs:
             return
+        # The header must come from the CALLER's own sidecars, not from this
+        # module's compile-time SUPPORT_COLUMNS: --pas-features on appends
+        # columns to every row, and a hardcoded seven-column header over
+        # nine-column rows silently mislabels every field after `tier`.
+        # (Found on the real chr19+21 slice, not by a unit test -- the merge
+        # had no coverage at all.  It now does: see
+        # tests/test_pas_features.py::test_the_run_root_sidecar_keeps_the_callers_header.)
+        header = "\t".join(SUPPORT_COLUMNS) + "\n"
+        with open(srcs[0]) as fh:
+            first = fh.readline()
+        if first.startswith("pas_id"):
+            header = first if first.endswith("\n") else first + "\n"
+        # ...and every OTHER source must carry the same one.  This function
+        # concatenates rows blindly, so two sidecars with different column
+        # counts (--pas-features or --emit-inferred-cleavage having reached
+        # one strand and not the other) would produce a ragged file in which
+        # every column after `tier` is mislabelled for half the rows -- with
+        # no error anywhere.  Never let that be silent.
+        for s in srcs[1:]:
+            with open(s) as fh:
+                other = fh.readline()
+            other = other if other.endswith("\n") else other + "\n"
+            if other.startswith("pas_id") and other != header:
+                log.error(
+                    "pas_support.tsv: %s has a different header from %s "
+                    "(%r vs %r); the merged sidecar will be RAGGED and every "
+                    "column after `tier` mislabelled for part of the rows.",
+                    s, srcs[0], other.rstrip("\n"), header.rstrip("\n"),
+                )
         with open(out_path, "w") as out:
-            out.write("\t".join(SUPPORT_COLUMNS) + "\n")
+            out.write(header)
             for s in srcs:
                 with open(s) as fh:
                     first = fh.readline()
@@ -337,6 +368,278 @@ def _write_run_support(bed_paths, out_path) -> None:
                             out.write(line)
     except Exception as exc:  # pragma: no cover - annotation only
         log.warning("poly(A) support sidecar not written: %s", exc)
+
+
+def _pas_features_enabled() -> bool:
+    """``--pas-features on`` (peakAtail-prime).
+
+    Read from ``variable_config`` and not from ``args``: the argparse
+    namespace carries schema DEFAULTS for anything Click resolved (bug B0's
+    class of defect), while ``variable_config`` is what the caller itself
+    read when it wrote the sidecar's header.
+    """
+    from ema.config import variable_config as _vc
+
+    return str(getattr(_vc, "pas_features", "off")).lower() == "on"
+
+
+def _collect_pas_features_standalone(collector, genome_fasta) -> None:
+    """Fill *collector* when the internal-priming filter is NOT running.
+
+    With a genome FASTA this performs the SAME single pass the IP filter
+    would have performed (``mode="annotate"``, ``output_path=None``: it drops
+    nothing and writes no BED) -- so a run never makes two passes over the
+    FASTA, whichever way ``--ip-filter`` is set.  Without one, only the
+    BED-derived context columns are real and every sequence column is ``NA``.
+    """
+    import os
+
+    from ema.countmatrix.pas_features import collect_from_bed
+
+    beds = [str(directory_config.posbed), str(directory_config.negbed)]
+    beds = [b for b in beds if os.path.exists(b) and os.path.getsize(b) > 0]
+    if genome_fasta and os.path.exists(genome_fasta):
+        from ema.experimental.internal_priming import filter_internal_priming
+
+        for bed in beds:
+            filter_internal_priming(
+                bed, genome_fasta, None,
+                window_left=getattr(args, "ip_window_left", 10),
+                window_right=getattr(args, "ip_window_right", 30),
+                a_stretch=getattr(args, "ip_a_stretch", 6),
+                a_fraction=getattr(args, "ip_a_fraction", 0.7),
+                mode="annotate", features=collector,
+            )
+    else:
+        if beds:
+            log.warning(
+                "--pas-features on but no --genome-fasta: the sequence "
+                "columns of pas_support.tsv (downstream A-content, hexamer, "
+                "ip_tool_*) will be NA. Supply --genome-fasta to fill them."
+            )
+        for bed in beds:
+            collect_from_bed(bed, collector)
+
+
+def _pas_score_mode() -> str:
+    """``--pas-score`` (peakAtail-prime), read from ``variable_config``.
+
+    Not from ``args``: that namespace carries schema DEFAULTS for anything the
+    Click layer resolved (bug B0's class of defect), while ``variable_config``
+    is what this seam actually acts on.
+    """
+    from ema.config import variable_config as _vc
+
+    return str(getattr(_vc, "pas_score", "none")).lower()
+
+
+def _apply_pas_score(collector, stats: dict, output_mgr) -> None:
+    """Compute the calibrated per-site score, and optionally SELECT on it.
+
+    Runs at the same seam as the internal-priming veto, immediately after it,
+    because that is where the per-site features exist and where a dropped PAS
+    still disappears cleanly from ``genes.index`` (and therefore from the count
+    matrix).  Three things happen here and nothing else:
+
+    1. every candidate's probability is computed from the shipped constants
+       (:mod:`ema.countmatrix.pas_score`; numpy only, no scikit-learn);
+    2. the probabilities are handed to :func:`_write_pas_features`, which
+       appends them to ``pas_support.tsv`` as one more column;
+    3. **only** in ``--pas-score select``: a **tier-1** PAS whose probability is
+       below the threshold is dropped from the pos/neg BEDs.
+
+    THE HARD GATES STAY HARD.  The score is a re-ranker INSIDE tier-1 and
+    inside the internal-priming veto -- it replaces the ">= 2 clip molecules"
+    threshold and nothing else.  It can only ever REMOVE a tier-1 candidate:
+    it cannot rescue an internally-primed one (the veto has already dropped it
+    when ``--ip-filter --ip-filter-mode filter`` ran) and it cannot promote a
+    coverage-only tier-2 one.  Every configuration in which a score was allowed
+    to override the veto looked spectacular on the curated atlas and no better
+    on long reads (`results/algo_headroom/VERIFY/` §1.4, §7.1).
+
+    A PAS whose sequence window could not be read (``seq_ok != 1``: a contig
+    missing from the FASTA, or a candidate too close to a contig edge) gets
+    ``pas_score`` ``NA`` and is EXEMPT from the gate rather than silently
+    dropped -- "we could not score it" must not be spelled the same way as
+    "we scored it and it lost".
+    """
+    import os
+
+    import numpy as np
+
+    mode = _pas_score_mode()
+    if mode == "none":
+        return
+    from ema.countmatrix.pas_features import SEAM_FEATURE_COLUMNS
+    from ema.countmatrix.pas_score import load_model
+
+    if collector is None:
+        raise ValueError(
+            "--pas-score requires --pas-features on: the score is computed "
+            "from the per-site feature columns and cannot be evaluated "
+            "without them.")
+
+    support = Path(directory_config.output_dir) / "pas_support.tsv"
+    if not support.exists():
+        # Multi-BAM runs re-key their PAS ids in merge_pas_beds, so there is no
+        # run-root sidecar to read the caller columns from.  Annotating is then
+        # simply skipped -- but SELECTING must not be, because a gate that
+        # silently does not apply produces a call set the run record claims was
+        # filtered.  Fail instead.
+        if mode == "select":
+            raise ValueError(
+                "--pas-score select needs the run-root pas_support.tsv for the "
+                "caller's feature columns, and this run has none (multi-BAM "
+                "runs re-key their PAS ids at merge time). Refusing to report a "
+                "score-selected call set that was never selected.")
+        log.warning(
+            "--pas-score: no run-root pas_support.tsv (multi-BAM runs re-key "
+            "their PAS ids in merge_pas_beds); no score computed.")
+        return
+
+    from ema.config import variable_config as _vc
+
+    model = load_model(getattr(_vc, "pas_score_model", None) or "prime1")
+    feats = collector.finish()
+
+    import pandas as pd
+
+    caller_cols = [c for c in model.features if c not in SEAM_FEATURE_COLUMNS]
+    seam_cols = [c for c in model.features if c in SEAM_FEATURE_COLUMNS]
+    sup = pd.read_csv(support, sep="\t", usecols=["pas_id"] + caller_cols,
+                      dtype={"pas_id": str}, na_values=["NA"])
+    n = len(sup)
+    ids = sup.pas_id.values
+
+    # The seam block is stored as tab-joined TEXT (one string per candidate, so
+    # a genome-wide run does not hold a 22-key dict each).  Pull only the
+    # columns this model names, straight into preallocated arrays -- building a
+    # 650k x 22 object DataFrame first would cost most of a gigabyte for values
+    # that are about to become floats.
+    take = [(SEAM_FEATURE_COLUMNS.index(c), c) for c in seam_cols]
+    cols = {c: np.full(n, np.nan) for _, c in take}
+    ok = np.zeros(n, dtype=bool)
+    seq_ok_at = SEAM_FEATURE_COLUMNS.index("seq_ok")
+    n_missing = 0
+    for i, pid in enumerate(ids):
+        txt = feats.get(pid)
+        if txt is None:
+            n_missing += 1
+            continue
+        parts = txt.split("\t")
+        ok[i] = parts[seq_ok_at] == "1"
+        for j, c in take:
+            v = parts[j]
+            if v != "NA":
+                cols[c][i] = float(v)
+    for c in caller_cols:
+        cols[c] = pd.to_numeric(sup[c], errors="coerce").values.astype(float)
+
+    # Transforms are applied over the WHOLE candidate population and only then
+    # subset to the scoreable rows.  It matters for any within-run statistic
+    # (the `rankpct` transform): a percentile computed over a subset is a
+    # different number from the one the offline fitter computed over the run.
+    X = model.build_matrix(cols)
+    prob = np.full(n, np.nan)
+    if ok.any():
+        prob[ok] = model.predict_proba_matrix(X[ok])
+    scores = {str(pid): prob[i] for i, pid in enumerate(ids)}
+
+    thr = getattr(_vc, "pas_score_min", -1.0)
+    thr = model.threshold if thr is None or float(thr) < 0 else float(thr)
+    st = {"mode": mode, "model": model.name, "threshold": float(thr),
+          "n_scored": int(ok.sum()), "n_unscoreable": int((~ok).sum()),
+          "n_missing_features": int(n_missing),
+          "mean_prob": float(np.nanmean(prob)) if ok.any() else None}
+
+    if mode == "select":
+        dropped = kept = 0
+        for bed_path in (str(directory_config.posbed), str(directory_config.negbed)):
+            if not os.path.exists(bed_path) or os.path.getsize(bed_path) == 0:
+                continue
+            tmp = bed_path + ".pas_score_tmp"
+            with open(bed_path) as src, open(tmp, "w") as dst:
+                for line in src:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 6:
+                        dst.write(line)
+                        continue
+                    try:
+                        tier1 = float(parts[4]) > 0
+                    except ValueError:
+                        tier1 = False
+                    p = scores.get(parts[3])
+                    if tier1 and p is not None and p == p and p < thr:
+                        dropped += 1
+                        continue
+                    dst.write(line)
+                    kept += 1
+            os.replace(tmp, bed_path)
+        st.update({"n_dropped": dropped, "n_kept": kept})
+        log.info("pas_score: select at p >= %.6f (model %s): kept %d, dropped %d "
+                 "tier-1 candidates", thr, model.name, kept, dropped)
+    else:
+        log.info("pas_score: %d candidates scored with model %s "
+                 "(threshold %.6f is RECORDED, not applied -- use "
+                 "--pas-score select to apply it)", int(ok.sum()), model.name, thr)
+
+    stats["pas_score"] = scores
+    stats["pas_score_stats"] = st
+    try:
+        with open(output_mgr.path("pas_gene", "pas_score_stats.json"), "w") as fh:
+            json.dump(st, fh, indent=2)
+    except Exception as exc:  # pragma: no cover - bookkeeping only
+        log.warning("pas_score: stats write failed: %s", exc)
+
+
+def _write_pas_features(pas_filter_result) -> None:
+    """Append the seam's feature columns to the run-root sidecar.
+
+    APPEND ONLY: ``pas_support.tsv`` keeps every column it already had, in
+    place, and gains :data:`~ema.countmatrix.pas_features.SEAM_FEATURE_COLUMNS`
+    on the end.  Best-effort and non-fatal, exactly like the sidecar itself:
+    the features are an annotation and nothing in the pipeline reads them.
+
+    Multi-BAM runs re-key their PAS ids in ``merge_pas_beds``, so there is no
+    run-root ``pas_support.tsv`` to extend; those runs get a standalone
+    ``pas_features.tsv`` in the merged id space instead.
+    """
+    collector = (pas_filter_result or {}).get("pas_features")
+    if collector is None:
+        return
+    try:
+        from ema.countmatrix.pas_features import (
+            append_columns, write_features_tsv,
+        )
+
+        from ema.countmatrix.pas_features import SEAM_FEATURE_COLUMNS
+
+        feats = collector.finish()
+        columns = SEAM_FEATURE_COLUMNS
+        # --pas-score: the probability is one more column on the SAME append,
+        # folded into the collector's own tab-joined text exactly the way
+        # finish() folds the context block in -- so the sidecar is rewritten
+        # once, not twice, whether or not the score was asked for.
+        scores = (pas_filter_result or {}).get("pas_score")
+        if scores:
+            from ema.countmatrix.pas_score import ScoredFeatures
+
+            columns = SEAM_FEATURE_COLUMNS + ("pas_score",)
+            feats = ScoredFeatures(feats, scores)
+        root = Path(directory_config.output_dir)
+        support = root / "pas_support.tsv"
+        if support.exists():
+            n = append_columns(support, feats, columns)
+            log.info(
+                "pas_support.tsv: %d feature columns appended to %d rows (%s)",
+                len(columns), n, collector.stats(),
+            )
+        else:
+            out = root / "pas_features.tsv"
+            n = write_features_tsv(out, feats, columns)
+            log.info("pas_features.tsv: %d rows written (%s)", n, collector.stats())
+    except Exception as exc:  # pragma: no cover - annotation only
+        log.warning("pas_support.tsv feature columns not written: %s", exc)
 
 
 def _resolve_annotation_bed() -> str:
@@ -352,13 +655,200 @@ def _resolve_annotation_bed() -> str:
     return str(directory_config.endbed)
 
 
+def _validate_pas_score_config() -> None:
+    """Fail BEFORE the run when --pas-score is misconfigured.
+
+    A score computed from NA sequence columns would be a number that looks
+    exactly like a real one in the sidecar, so the two things it cannot do
+    without are checked here rather than warned about later.
+    """
+    import os
+
+    mode = _pas_score_mode()
+    if mode == "none":
+        return
+    if not _pas_features_enabled():
+        raise ValueError(
+            "--pas-score requires --pas-features on: the score is computed "
+            "from the per-site feature columns.")
+    genome_fasta = getattr(args, "genome_fasta", None)
+    if not genome_fasta or not os.path.exists(genome_fasta):
+        raise ValueError(
+            "--pas-score requires --genome-fasta: the model uses the "
+            "canonical-hexamer columns, which are NA without a genome "
+            f"(got: {genome_fasta!r}).")
+    from ema.countmatrix.pas_score import load_model
+
+    model = load_model(getattr(variable_config, "pas_score_model", None) or "prime1")
+    if mode == "select":
+        thr = getattr(variable_config, "pas_score_min", -1.0)
+        thr = model.threshold if thr is None or float(thr) < 0 else float(thr)
+        if not (0.0 <= float(thr) <= 1.0):
+            raise ValueError(
+                f"--pas-score select needs a probability threshold in [0, 1]; "
+                f"model {model.name!r} carries {model.threshold!r} and "
+                f"--pas-score-min resolved to {thr!r}.")
+
+
+#: Memo for the one-time internal-priming notice, keyed by every input that
+#: decides it (the resolved MODE included), so a repeat call inside one run
+#: stays quiet but a genuine change of decision is never swallowed.
+_ip_filter_resolved: dict = {}
+
+
+def _ip_filter_decision() -> dict:
+    """Resolve the whole internal-priming policy for this run.  No logging.
+
+    Pure with respect to everything except the module-level ``args`` /
+    ``variable_config`` singletons it reads, so the same dict can be logged,
+    written into ``run_config.json`` / ``run_manifest.json`` and asserted in a
+    unit test.  There is no second copy of the rule anywhere.
+
+    Two independent questions, decided by two different flags -- which is the
+    trap this function exists to make visible:
+
+    * **Does the veto RUN?**  ``--no-ip-filter`` (off) > ``--ip-filter`` (on) >
+      ``ip_filter_default`` (``"auto"`` = on whenever a readable
+      ``--genome-fasta`` exists; ``"off"`` = v2, on only when asked).
+    * **Does it DROP?**  ``--ip-filter-mode``.  ``"filter"`` drops the flagged
+      sites; ``"annotate"`` keeps every one and only records the flag.  The
+      branch default is the sentinel ``"auto"``, which resolves to
+      ``"filter"``; v2's literal was ``"annotate"``.
+
+    Returns:
+        ``{"ip_filter": bool, "why": str, "genome_fasta": str|None,
+        "mode_requested": str, "mode": str|None, "mode_why": str}``.
+        ``mode`` is ``None`` when the veto does not run -- there is no mode to
+        report, and naming one would be the same class of untruth this
+        function exists to end.
+    """
+    import os
+
+    from ema.cli.config_schema import (
+        IP_FILTER_MODE_UNSET,
+        resolve_ip_filter_mode,
+    )
+
+    forced_off = bool(getattr(args, "no_ip_filter", False))
+    forced_on = bool(getattr(args, "ip_filter", False))
+    policy = str(getattr(variable_config, "ip_filter_default", "off"))
+    fasta = getattr(args, "genome_fasta", None)
+    have_fasta = bool(fasta) and os.path.exists(str(fasta))
+
+    if forced_off:
+        decision, why = False, "--no-ip-filter"
+    elif forced_on:
+        decision, why = True, "--ip-filter"
+    elif policy != "auto":
+        decision, why = False, "ip_filter_default=%s" % policy
+    elif have_fasta:
+        decision, why = True, "ip_filter_default=auto with a genome FASTA"
+    else:
+        decision, why = False, "ip_filter_default=auto but no genome FASTA"
+
+    requested = str(getattr(args, "ip_filter_mode", IP_FILTER_MODE_UNSET)
+                    or IP_FILTER_MODE_UNSET)
+    mode, mode_why = resolve_ip_filter_mode(requested)
+    return {
+        "ip_filter": decision,
+        "why": why,
+        "genome_fasta": str(fasta) if fasta else None,
+        "mode_requested": requested,
+        "mode": mode if decision else None,
+        "mode_why": mode_why,
+    }
+
+
+def _resolve_ip_filter_mode() -> str:
+    """The mode the internal-priming veto runs in: ``"filter"`` or ``"annotate"``.
+
+    ``"filter"`` (drop the flagged sites) unless the user explicitly asked for
+    ``annotate``.  Never returns the ``"auto"`` sentinel -- an unresolved
+    sentinel reaching
+    :func:`ema.experimental.internal_priming.filter_internal_priming` would
+    raise there, which is the right outcome but a worse error message.
+    """
+    from ema.cli.config_schema import resolve_ip_filter_mode
+
+    return resolve_ip_filter_mode(getattr(args, "ip_filter_mode", None))[0]
+
+
+def _resolve_ip_filter() -> bool:
+    """Whether the internal-priming veto runs for this run, said out loud once.
+
+    peakAtail-prime TASK E item 3.  The veto is the single largest measured
+    accuracy lift in the caller -- +7.7 % to +12.8 % relative recall at matched
+    atlas precision and +17.7 % to +22.9 % at matched long-read precision
+    (results/algo_headroom/VERIFY/tables/v8_ipveto_value.tsv), more than every
+    detector change tested put together -- because it brings in information
+    the molecule thresholds do not have: genomic sequence.  In v2 it was an
+    opt-in flag, so every benchmark arm in the manuscript ran with it and
+    every user who did not read the flag list did not.
+
+    THE DEFECT THIS LINE EXISTS TO MAKE IMPOSSIBLE.  Turning the veto ON is
+    not the same as making it DROP, and the two are different flags.  The
+    branch first shipped ``--ip-filter-default auto`` (veto ON) while
+    ``--ip-filter-mode`` still carried v2's literal ``annotate`` (drop
+    NOTHING), so the branch's only behavioural default was a no-op: on the
+    PBMC chr19+21 slice it flagged 5,015 of 32,752 candidates, dropped 0, and
+    emitted v2's exact call set (18,865 PAS) while the docs advertised a
+    recall lift.  The mode is now resolved by :func:`_ip_filter_decision`,
+    named in this log line, and written into ``run_config.json`` /
+    ``run_manifest.json`` under ``internal_priming``.
+
+    Never fails a run: without a FASTA the veto cannot run at all, so the
+    branch default degrades to v2 behaviour with a warning that names what it
+    costs.
+    """
+    d = _ip_filter_decision()
+    key = (d["ip_filter"], d["why"], d["genome_fasta"],
+           d["mode_requested"], d["mode"])
+    if _ip_filter_resolved.get("key") != key:
+        _ip_filter_resolved["key"] = key
+        if d["ip_filter"] and d["mode"] == "filter":
+            # WARNING, not INFO: this is the only branch of the three that
+            # actually removes calls (17.09 % of them genome-wide), so it is
+            # the one a user must not be able to lose to --quiet -- and the
+            # two less consequential notices below are already warnings.
+            log.warning(
+                "internal-priming veto: ON (%s), mode=filter [%s] -- flagged "
+                "PAS are DROPPED. This is the largest measured accuracy lift "
+                "in the caller (+7.7%%-12.8%% relative recall at matched "
+                "atlas precision). Pass --no-ip-filter for the "
+                "pre-peakAtail-prime behaviour, or --ip-filter-mode annotate "
+                "to keep and flag them instead.",
+                d["why"], d["mode_why"],
+            )
+        elif d["ip_filter"]:
+            log.warning(
+                "internal-priming veto: ON (%s), mode=annotate [%s] -- "
+                "NOTHING IS DROPPED: every flagged PAS is kept and only "
+                "annotated, so this run's call set is the one it would have "
+                "had with --no-ip-filter. The measured +7.7%%-12.8%% relative "
+                "recall at matched atlas precision is the lift of DROPPING "
+                "them -- drop --ip-filter-mode annotate to get it.",
+                d["why"], d["mode_why"],
+            )
+        elif d["why"] == "ip_filter_default=auto but no genome FASTA":
+            log.warning(
+                "INTERNAL-PRIMING FILTER CANNOT RUN: no readable "
+                "--genome-fasta (got %r), so the veto is OFF for this run. It "
+                "is worth +7.7%%-12.8%% relative recall at matched atlas "
+                "precision and +17.7%%-22.9%% at matched long-read precision, "
+                "and nothing else in the caller replaces it -- it is the only "
+                "stage that reads genomic sequence. Supply --genome-fasta "
+                "(indexed for pyfaidx) to get it.", d["genome_fasta"],
+            )
+    return d["ip_filter"]
+
+
 def _validate_pas_filter_config() -> None:
     """Raise a clear error BEFORE running if --ip-filter / --annot-filter
     are enabled but misconfigured. Never silently skips a requested filter.
     """
     import os
 
-    ip_filter = bool(getattr(args, "ip_filter", False))
+    ip_filter = _resolve_ip_filter()
     annot_filter = bool(getattr(args, "annot_filter", False))
     if not ip_filter and not annot_filter:
         return
@@ -481,12 +971,18 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     --ip-filter and --annot-filter are off, so default-off runs take
     exactly the pre-D6 code path. Returns ``None`` in that case.
 
-    D9: --ip-filter defaults to ``ip_filter_mode="annotate"`` (keep every
-    PAS, flag it) rather than dropping it -- an internally-primed peak is
-    candidate alternative-PAS signal, not noise, for a scientist hunting
-    APA. ``--ip-filter-mode filter`` restores the pre-D9 drop behaviour.
-    (``--annot-filter``, the gene-region membership filter, is a distinct
-    concept and is unaffected -- it always drops non-overlapping peaks.)
+    The mode comes from :func:`_resolve_ip_filter_mode`, never straight off
+    ``args``: ``--ip-filter-mode``'s default is the sentinel ``"auto"``, and
+    reading it raw is how the veto came to run in v2's ``annotate`` mode --
+    flagging ~15 % of candidates and dropping none -- under a branch whose one
+    behavioural default is that the veto runs.  D9 chose ``annotate`` when the
+    veto was opt-in (an internally-primed peak is candidate alternative-PAS
+    signal, not noise, for a scientist hunting APA); that choice is still one
+    flag away, ``--ip-filter-mode annotate``, and it is the value pinned by
+    :data:`ema.cli.config_schema.V2_COMPAT_FLAGS` (the documented
+    v2-compatibility command line -- there is no ``--compat`` flag).  (``--annot-filter``, the gene-region membership filter, is a
+    distinct concept and is unaffected -- it always drops non-overlapping
+    peaks.)
 
     When run, the returned dict includes ``"ip_of"`` -- the merged
     ``{pas_id: internal_priming_bool}`` map across the pos+neg BEDs, for
@@ -500,12 +996,30 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     # computed on the clip-supported set when both are enabled.
     polya_stats = _apply_polya_gate(output_mgr)
 
-    ip_filter = bool(getattr(args, "ip_filter", False))
+    ip_filter = _resolve_ip_filter()
     annot_filter = bool(getattr(args, "annot_filter", False))
-    if not ip_filter and not annot_filter:
-        return {"polya_gate": polya_stats} if polya_stats else None
 
-    ip_mode = str(getattr(args, "ip_filter_mode", "annotate"))
+    # peakAtail-prime --pas-features: the per-site scoring covariates are
+    # collected HERE, at the internal-priming seam, because that is where the
+    # genome is already open and the full candidate set is still on disk.
+    # When --ip-filter is on they ride inside its pass; when it is off the
+    # collector's own pass is the only one.  Either way: one pass, never two.
+    collector = None
+    if _pas_features_enabled():
+        from ema.countmatrix.pas_features import FeatureCollector
+
+        collector = FeatureCollector()
+
+    if not ip_filter and not annot_filter:
+        _out: dict = {"polya_gate": polya_stats} if polya_stats else {}
+        if collector is not None:
+            _collect_pas_features_standalone(
+                collector, getattr(args, "genome_fasta", None))
+            _out["pas_features"] = collector
+            _apply_pas_score(collector, _out, output_mgr)
+        return _out or None
+
+    ip_mode = _resolve_ip_filter_mode()
 
     from ema.experimental.peak_filters import apply_filters
 
@@ -529,6 +1043,8 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     combined_stats: dict = {
         "ip_filter": ip_filter,
         "ip_filter_mode": ip_mode if ip_filter else None,
+        "ip_filter_mode_requested": str(
+            getattr(args, "ip_filter_mode", None) or "auto"),
         "annot_filter": annot_filter,
         "genome_fasta": genome_fasta if ip_filter else None,
         "annotation_bed": annotation_bed if annot_filter else None,
@@ -559,11 +1075,24 @@ def _apply_pas_filters(output_mgr) -> dict | None:
             ip_a_stretch=getattr(args, "ip_a_stretch", 6),
             ip_a_fraction=getattr(args, "ip_a_fraction", 0.7),
             ip_mode=ip_mode,
+            features=collector if ip_filter else None,
         )
         os.replace(tmp_out, bed_path)
         combined_stats[strand_label] = stats
         filtered_any = True
         ip_of.update(stats.get("internal_priming_flags") or {})
+
+    if collector is not None:
+        if not ip_filter:
+            # --annot-filter alone does not open the genome, so the feature
+            # pass still has to be made (or the BED-only fallback taken).
+            _collect_pas_features_standalone(
+                collector, getattr(args, "genome_fasta", None))
+        combined_stats["pas_features"] = collector
+        # The score runs AFTER the internal-priming veto, on the BEDs the veto
+        # has already rewritten, so `--pas-score select` can only ever remove a
+        # tier-1 candidate the veto let through -- never rescue one it dropped.
+        _apply_pas_score(collector, combined_stats, output_mgr)
 
     if ip_filter:
         n_ip_flagged = sum(1 for v in ip_of.values() if v)
@@ -581,7 +1110,8 @@ def _apply_pas_filters(output_mgr) -> dict | None:
     # Redact the per-PAS flag maps from the ON-DISK stats (they can be as
     # large as the PAS count and belong in the pasbed/ledger, not a JSON
     # blob) -- the full maps are still on the RETURNED dict for the caller.
-    _disk_stats = {k: v for k, v in combined_stats.items() if k != "ip_of"}
+    _disk_stats = {k: v for k, v in combined_stats.items()
+                   if k not in ("ip_of", "pas_features")}
     for _strand_label in ("pos", "neg"):
         _sd = _disk_stats.get(_strand_label)
         if isinstance(_sd, dict):
@@ -609,9 +1139,11 @@ def _apply_pas_filters(output_mgr) -> dict | None:
         except Exception as e:  # pragma: no cover -- bookkeeping only
             log.warning("peak_filters: register_artifact failed: %s", e)
     log.info(
-        "peak_filters: ip_filter=%s(mode=%s) annot_filter=%s pos(total=%s filtered=%s) "
+        "peak_filters: ip_filter=%s(mode=%s, requested=%s) annot_filter=%s "
+        "pos(total=%s filtered=%s) "
         "neg(total=%s filtered=%s) n_ip_flagged=%s",
-        ip_filter, ip_mode, annot_filter,
+        ip_filter, ip_mode, combined_stats["ip_filter_mode_requested"],
+        annot_filter,
         combined_stats["pos"].get("total"), combined_stats["pos"].get("filtered"),
         combined_stats["neg"].get("total"), combined_stats["neg"].get("filtered"),
         combined_stats.get("n_ip_flagged"),
@@ -665,6 +1197,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # D6: fail loud, before any peak-calling compute is spent, if --ip-filter
     # / --annot-filter are enabled but misconfigured (see _apply_pas_filters).
     _validate_pas_filter_config()
+    _validate_pas_score_config()
 
     # Save run configuration (B0: serialize the RESOLVED config actually in
     # effect — directory_config/variable_config/filter_config — not the raw
@@ -730,6 +1263,12 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         floor_threshold=args.floor_threshold,
         lambda_fold_change=args.lambda_fold_change,
         lambda_window=args.lambda_window,
+        # peakAtail-prime --dynamic-threshold-clamp ("off"/"on" on the CLI,
+        # a bool at the peak_calling seam).  "off" == v2, IndexError and all;
+        # only reachable with --dynamic-threshold (off by default).
+        dynamic_threshold_clamp=(
+            str(getattr(args, "dynamic_threshold_clamp", "off")).lower() == "on"
+        ),
         bam_threads=getattr(args, 'bam_threads', 4),
         # Post-detection PAS merger (strategy-agnostic).
         # -1 spacing triggers auto-detect (median read length per BAM) inside
@@ -862,6 +1401,7 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             dynamic_threshold=peak_kwargs.get("dynamic_threshold", False),
             floor_threshold=peak_kwargs.get("floor_threshold", 3),
             lambda_fold_change=peak_kwargs.get("lambda_fold_change", 2.0),
+            dynamic_threshold_clamp=peak_kwargs.get("dynamic_threshold_clamp", False),
             lambda_window=peak_kwargs.get("lambda_window", 5000),
             bam_threads=peak_kwargs.get("bam_threads", 4),
             per_bam_tile_sizes=per_bam_tile_sizes if _tile_size_is_auto else None,
@@ -1098,65 +1638,167 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         "polya_mode": str(getattr(args, "polya_mode", "annotate")),
     })
 
-    # ---- 3' cleavage-site offset correction (issue #72) ------------------
-    # Called peak 3' ends stop ~90-105 nt short of the true cleavage site
-    # (10x R2 coverage runs out before the poly(A) junction).  When the
-    # opt-in --cleavage-offset flag is > 0 we shift each reported PAS 3' end
-    # downstream, in place, on the per-(dataset,bam) strand BEDs produced by
-    # BOTH the tiled and sequential paths.  Doing it here -- the single point
-    # where all_pos_beds/all_neg_beds are finalised and before any snapshot,
-    # legacy copy, find_close() or annotatedpas.bed derives from them -- keeps
-    # the correction path-agnostic without threading a parameter through the
-    # spawn-based peak-calling workers.  0 (default) is a no-op (legacy).
-    _cleavage_offset = int(getattr(variable_config, "cleavage_offset", 0) or 0)
+    # ---- 3' cleavage-site offset (issue #72 + peakAtail-prime TASK E) ----
+    # Two different quantities live behind one flag name, and confusing them
+    # is expensive:
+    #
+    #   * a POSITIVE offset is the COVERAGE correction (issue #72): a coverage
+    #     peak's 3' end stops ~90-105 nt short of cleavage because 10x R2
+    #     coverage runs out before the poly(A) junction.  It belongs to
+    #     coverage-only rows.  Applying it to clip_seeded's tier-1 PAS -- which
+    #     are already ON the cleavage base -- costs 46 points of P@10
+    #     (0.5209 -> 0.0551, results/algo_headroom/A4_resolution T7).
+    #   * a NEGATIVE offset is the BASE-PAIR RESOLUTION correction: on the PBMC
+    #     chr19+21 slice the default arm's exact-match optimum is -1 bp against
+    #     the atlas and -2 bp against Kinnex long reads.  It belongs to the
+    #     clip-anchored tier; tier 2's own P@1 is 0.0016 and does not respond.
+    #
+    # ``rows_for_offset`` encodes exactly that, and it reproduces v2's
+    # ``skip_supported`` rule for every value v2 could express (offset > 0).
+    # Done here -- the single point where all_pos_beds/all_neg_beds are
+    # finalised and before any snapshot, legacy copy, find_close() or
+    # annotatedpas.bed derives from them -- so the correction stays
+    # path-agnostic without threading a parameter through the spawn-based
+    # peak-calling workers.  ``none`` (default) is a no-op (v2).
+    from ema.countmatrix.cleavage_offset import (
+        append_inferred_cleavage, estimate_clip_anchored_offset,
+        parse_cleavage_offset, resolve_offset_for_run,
+        rewrite_bed_cleavage_offset,
+    )
+    from ema.countmatrix.paswrite import support_path_for
+
+    _strategy = str(getattr(args, "strategy", ""))
+    _offset_mode, _offset_const = parse_cleavage_offset(
+        getattr(variable_config, "cleavage_offset", "none")
+    )
     _auto_offset = bool(getattr(variable_config, "auto_cleavage_offset", False))
-    _offset_diag = None
+    if _auto_offset and _strategy == "clip_seeded":
+        # Refuse rather than warn.  --auto-cleavage-offset is the COVERAGE
+        # estimator: it searches a 60-120 bp band for a genomic A-fraction
+        # crest, so it cannot return anything but a large positive number, and
+        # on this library it returns +95 -- which is destructive here.  A warn
+        # would leave a wrong number in a run tree that looks fine.
+        raise ValueError(
+            "--auto-cleavage-offset estimates the COVERAGE caller's offset "
+            "(genomic A-fraction crest, searched in a 60-120 bp band) and "
+            "returns ~+95 bp; applying that under --peak-strategy clip_seeded "
+            "costs 46 points of P@10 (0.5209 -> 0.0551, "
+            "results/algo_headroom/A4_resolution table T7), because tier-1 PAS "
+            "are already ON the cleavage base. Use --cleavage-offset auto for "
+            "the clip-anchored estimator, --cleavage-offset <int> for a "
+            "declared constant, or run --auto-cleavage-offset with a coverage "
+            "strategy."
+        )
+
+    # The per-library clip-anchored estimate: the read-weighted mean of
+    # (clip position - reported base) over every tier-1 cluster, transcript
+    # oriented.  Read back out of the sidecars the caller has already written
+    # (--pas-features on writes clip_offset_mean per site), so it costs one
+    # pass over a text file and no pass over anything expensive.
+    _support_pairs = ([(support_path_for(b), "+") for b in all_pos_beds]
+                      + [(support_path_for(b), "-") for b in all_neg_beds])
+    _emit_inferred = str(
+        getattr(variable_config, "emit_inferred_cleavage", "on")) == "on"
+    _clip_est = None
+    _clip_diag = {"available": False}
+    if _emit_inferred or _offset_mode == "auto":
+        _clip_est, _clip_diag = estimate_clip_anchored_offset(_support_pairs)
+        if _clip_diag.get("available"):
+            log.info(
+                "clip-anchored cleavage offset: %+.4f bp over %d clip reads in "
+                "%d tier-1 sites (per strand: %s). MEASURED, not applied "
+                "unless --cleavage-offset auto.",
+                _clip_est, _clip_diag["n_clip_reads"], _clip_diag["n_sites"],
+                _clip_diag["by_strand"],
+            )
+        elif _clip_diag.get("missing_column"):
+            log.warning(
+                "clip-anchored cleavage offset unavailable: the caller's "
+                "sidecars carry no clip_offset_mean column (--pas-features "
+                "off). --cleavage-offset auto cannot be resolved; "
+                "inferred_cleavage will report the offset in force."
+            )
+
+    # The legacy issue-#72 estimator still runs for the COVERAGE strategies it
+    # was built for; only clip_seeded refuses it (above).
+    _legacy_est = _legacy_diag = None
     if _auto_offset:
-        # Data-driven mode: infer the offset from the called peaks + FASTA.
         from ema.countmatrix.cleavage_offset import resolve_cleavage_offset
 
-        _genome_fasta = getattr(args, "genome_fasta", None)
-        _cleavage_offset, _offset_diag = resolve_cleavage_offset(
-            _cleavage_offset,
-            auto=True,
+        _legacy_est, _legacy_diag = resolve_cleavage_offset(
+            _offset_const, auto=True,
             bed_paths=list(all_pos_beds) + list(all_neg_beds),
-            genome_fasta=_genome_fasta,
+            genome_fasta=getattr(args, "genome_fasta", None),
         )
-    if _cleavage_offset > 0:
-        from ema.countmatrix.cleavage_offset import rewrite_bed_3prime_offset
 
-        # clip_seeded places tier-1 PAS at the observed poly(A) clip site (the
-        # true cleavage coordinate, recorded as a >0 BED score); only its
-        # coverage-only tier (score 0) carries the R2 read-length offset.
-        _skip_supported = str(getattr(args, "strategy", "")) == "clip_seeded"
-        _n_shifted = 0
+    _offset_mode, _cleavage_offset, _rows = resolve_offset_for_run(
+        getattr(variable_config, "cleavage_offset", "none"),
+        strategy=_strategy,
+        auto_legacy=_auto_offset,
+        clip_estimate=_clip_est if _clip_diag.get("available") else None,
+        legacy_estimate=_legacy_est,
+    )
+
+    # inferred_cleavage is computed from the PRE-SHIFT coordinates, so it and
+    # a shifted pasbed.bed agree instead of double-counting the offset.
+    _offset_by_tier = {
+        1: _cleavage_offset if _rows in ("all", "tier1") else 0,
+        2: _cleavage_offset if _rows in ("all", "tier2") else 0,
+    }
+    if _emit_inferred:
+        _n_inferred = 0
         for _bed in list(all_pos_beds) + list(all_neg_beds):
             try:
-                _n_shifted += rewrite_bed_3prime_offset(
-                    _bed, _cleavage_offset, skip_supported=_skip_supported
-                )
+                _n_inferred += append_inferred_cleavage(
+                    _bed, support_path_for(_bed), _offset_by_tier)
+            except OSError:
+                continue
+        if _n_inferred:
+            log.info(
+                "inferred_cleavage written for %d PAS (offset by tier: %s); "
+                "pasbed.bed coordinates are NOT changed by this column.",
+                _n_inferred, _offset_by_tier,
+            )
+
+    _n_shifted = 0
+    if _cleavage_offset != 0:
+        for _bed in list(all_pos_beds) + list(all_neg_beds):
+            try:
+                _n_shifted += rewrite_bed_cleavage_offset(
+                    _bed, _cleavage_offset, rows=_rows)
             except FileNotFoundError:
                 # A strand may legitimately produce no BED for a dataset.
                 continue
         log.info(
-            "3' cleavage-offset correction: shifted %d PAS 3' ends downstream "
-            "by %d bp (%s)%s", _n_shifted, _cleavage_offset,
-            "auto-estimated" if _auto_offset else "--cleavage-offset",
-            " [clip-supported tier exempt]" if _skip_supported else "",
+            "3' cleavage-offset correction: shifted %d PAS by %+d bp "
+            "(transcript orientation, rows=%s, mode=%s)",
+            _n_shifted, _cleavage_offset, _rows, _offset_mode,
         )
-        _stats = {
-            "cleavage_offset_bp": _cleavage_offset,
-            "n_pas_shifted": _n_shifted,
-            "auto": _auto_offset,
-        }
-        if _offset_diag is not None:
-            _stats["diagnostics"] = _offset_diag
-        # There is no dedicated "cleavage_offset" stage dir, so
-        # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
-        # real-run validation, not unit tests). The offset is a peak-calling
-        # correction -> persist alongside the peak-calling outputs. Use a local
-        # alias: a later `import json` in this function makes bare `json`
-        # function-local, so the module-level name is shadowed here.
+
+    _stats = {
+        "cleavage_offset_mode": _offset_mode,
+        "cleavage_offset_bp": _cleavage_offset,
+        "rows_shifted": _rows if _cleavage_offset else "none",
+        "n_pas_shifted": _n_shifted,
+        "clip_anchored_estimate_bp": (
+            round(_clip_est, 4) if _clip_est is not None else None),
+        "clip_anchored_diagnostics": _clip_diag,
+        "emit_inferred_cleavage": _emit_inferred,
+        "auto_cleavage_offset": _auto_offset,
+        "legacy_estimator_diagnostics": _legacy_diag,
+    }
+    # There is no dedicated "cleavage_offset" stage dir, so
+    # save_stats("cleavage_offset", ...) KeyErrors on self.dirs (caught in
+    # real-run validation, not unit tests). The offset is a peak-calling
+    # correction -> persist alongside the peak-calling outputs. Use a local
+    # alias: a later `import json` in this function makes bare `json`
+    # function-local, so the module-level name is shadowed here.
+    #
+    # Written only when this block DID something, exactly as v2 was: a run
+    # with the v2 settings (--cleavage-offset none, --emit-inferred-cleavage
+    # off) must not leave an extra file in the tree, or the byte-identity
+    # check has an extra artefact to explain.
+    if _cleavage_offset != 0 or _emit_inferred:
         import json as _json_coff
         with open(
             output_mgr.path("peak_calling", "cleavage_offset_stats.json"), "w"
@@ -1263,6 +1905,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
         # stage does), so atlas_of stays empty here.
         _pas_filter_result = _apply_pas_filters(output_mgr)
         _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
+        # peakAtail-prime --pas-features: append the seam's columns to the
+        # run-root sidecar written above.  Additive; nothing else moves.
+        _write_pas_features(_pas_filter_result)
 
         # Find closest gene for each PAS
         _pas_gene_stage = _add_stage("PAS→gene assignment", total=1)
@@ -1271,6 +1916,9 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
             max_distance=getattr(args, "max_gene_distance", 5000),
             utr_multiplier=getattr(args, "utr_multiplier", 2.0),
             include_extended=getattr(args, "include_extended", False),
+            pas_gene_rescue=getattr(args, "pas_gene_rescue", "off"),
+            pas_gene_rescue_min_mol=getattr(
+                args, "pas_gene_rescue_min_mol", 0),
         )
         _advance(_pas_gene_stage)
 
@@ -1609,12 +2257,18 @@ def _run_pipeline_body(progress=None, plot_engines: list[str] | None = None) -> 
     # write_pas_gene_artifacts / record_pas_drops in each per-dataset worker.
     _pas_filter_result = _apply_pas_filters(output_mgr)
     _ip_of: dict = (_pas_filter_result or {}).get("ip_of", {})
+    # peakAtail-prime --pas-features.  The multi-BAM path has no run-root
+    # pas_support.tsv to extend (its PAS were re-keyed by merge_pas_beds), so
+    # this writes a standalone pas_features.tsv in the merged id space.
+    _write_pas_features(_pas_filter_result)
 
     genes = find_close(
         utr_lengths=utr_lengths,
         max_distance=getattr(args, "max_gene_distance", 5000),
         utr_multiplier=getattr(args, "utr_multiplier", 2.0),
         include_extended=getattr(args, "include_extended", False),
+        pas_gene_rescue=getattr(args, "pas_gene_rescue", "off"),
+        pas_gene_rescue_min_mol=getattr(args, "pas_gene_rescue_min_mol", 0),
     )
 
     output_mgr.save_stats("gtf_annotation", {

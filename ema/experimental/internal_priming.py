@@ -98,13 +98,39 @@ def check_internal_priming(sequence, pas_pos: int, strand: str,
                                  a_stretch, a_fraction)
 
 
+class _NullWriter:
+    """A write sink for the features-only scan (``output_path=None``)."""
+
+    def write(self, _line: str) -> None:  # pragma: no cover - trivial
+        return
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+def _open_or_null(path):
+    return _NullWriter() if path is None else open(path, "w")
+
+
+def _bed_score(parts: list) -> int:
+    """BED column 5 as an int (0 when absent or non-numeric)."""
+    try:
+        return int(parts[4])
+    except (IndexError, ValueError):
+        return 0
+
+
 def filter_internal_priming(bed_path: str, genome_fasta: str,
-                            output_path: str,
+                            output_path: str | None,
                             window_left: int = 10,
                             window_right: int = 30,
                             a_stretch: int = 6,
                             a_fraction: float = 0.7,
-                            mode: str = "annotate") -> dict:
+                            mode: str = "annotate",
+                            features=None) -> dict:
     """Check peaks for genomic A-rich stretches indicating internal priming.
 
     Reads a BED file, checks the genomic sequence around each PAS for
@@ -118,6 +144,18 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
         window_right: bp downstream of PAS to check (default 30).
         a_stretch: Minimum consecutive A's to flag as internal priming (default 6).
         a_fraction: Alternative: flag if A-fraction in window exceeds this (default 0.7).
+        output_path: Where to write the (possibly filtered) BED.  ``None``
+            scans without writing a BED at all -- the peakAtail-prime
+            features-only pass, which needs the genome open over the same
+            rows but changes nothing.  ``mode`` must be ``"annotate"`` then.
+        features: Optional
+            :class:`ema.countmatrix.pas_features.FeatureCollector`.  When
+            given, each row also contributes its per-site scoring features,
+            computed INSIDE this loop from the already-open genome -- there
+            is no second pass over the FASTA and no second pass over the BED.
+            Collecting features never changes which rows are written or
+            flagged; ``ip_tool_flag`` is emitted **in addition to** the veto,
+            never instead of it.
         mode: ``"annotate"`` (default) or ``"filter"``.
             * ``"annotate"`` -- an internally-primed peak is likely real
               alternative-PAS signal, not noise, so EVERY peak is written to
@@ -144,14 +182,26 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
         logger.error("pyfaidx not installed. Run: pip install pyfaidx")
         logger.error("Skipping internal priming filter.")
         # Copy input to output unchanged
-        import shutil
-        shutil.copy2(bed_path, output_path)
+        if output_path is not None:
+            import shutil
+            shutil.copy2(bed_path, output_path)
         return {"total": 0, "passed": 0, "filtered": 0, "filtered_fraction": 0,
                 "flagged": 0, "flagged_fraction": 0, "mode": mode, "flags": {},
                 "error": "pyfaidx not installed"}
 
     if mode not in ("annotate", "filter"):
         raise ValueError(f"filter_internal_priming: mode must be 'annotate' or 'filter', got {mode!r}")
+    if output_path is None and mode != "annotate":
+        raise ValueError(
+            "filter_internal_priming: output_path=None only makes sense with "
+            f"mode='annotate' (a scan that drops nothing), got mode={mode!r}"
+        )
+
+    if features is not None:
+        from ema.countmatrix.pas_features import (
+            bed_cleavage, feature_window, ip_covariates, na_features,
+            orient_window, sequence_features,
+        )
 
     genome = Fasta(genome_fasta)
 
@@ -161,7 +211,7 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
     flagged = 0
     flags: dict[str, bool] = {}
 
-    with open(bed_path) as infile, open(output_path, 'w') as outfile:
+    with open(bed_path) as infile, _open_or_null(output_path) as outfile:
         for line in infile:
             total += 1
             parts = line.strip().split('\t')
@@ -195,9 +245,31 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
                 outfile.write(line)
                 passed += 1
                 flags[pas_id] = False
+                if features is not None:
+                    # seq_ok 0, every sequence column NA -- go through add()
+                    # so the collector owns its own storage format.
+                    features.add(pas_id, chrom, strand,
+                                 bed_cleavage(start, end, strand),
+                                 _bed_score(parts), na_features())
                 continue
 
             flags[pas_id] = is_internal_priming
+            if features is not None:
+                # Sequence features from the SAME open contig record, one
+                # extra slice of 71 nt.  `seq` is the string the veto just
+                # tested, so ip_tool_afrac/arun describe exactly that window
+                # under whatever --ip-window-left/right the run used.
+                _afrac, _arun = ip_covariates(seq)
+                _fs, _fe = feature_window(pas_pos, strand)
+                _tseq, _r0 = orient_window(
+                    str(genome[chrom][_fs:_fe]), pas_pos, strand, _fs)
+                _feat = sequence_features(_tseq, _r0)
+                _feat["ip_tool_flag"] = int(is_internal_priming)
+                _feat["ip_tool_afrac"] = round(_afrac, 4)
+                _feat["ip_tool_arun"] = _arun
+                features.add(pas_id, chrom, strand,
+                             bed_cleavage(start, end, strand),
+                             _bed_score(parts), _feat)
             if is_internal_priming:
                 flagged += 1
                 logger.debug(f"Internal priming: {chrom}:{pas_pos} strand={strand} seq={seq[:20]}...")
@@ -208,6 +280,8 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
                 outfile.write(line)
                 passed += 1
 
+    if features is not None:
+        stats_features = features.stats()
     filtered_fraction = filtered / total if total > 0 else 0
     flagged_fraction = flagged / total if total > 0 else 0
 
@@ -221,6 +295,8 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
         "mode": mode,
         "flags": flags,
     }
+    if features is not None:
+        stats["features"] = stats_features
 
     logger.info(f"Internal priming filter (mode={mode}): {total} total, {passed} passed, "
                 f"{filtered} filtered ({filtered_fraction:.1%}), {flagged} flagged ({flagged_fraction:.1%})")

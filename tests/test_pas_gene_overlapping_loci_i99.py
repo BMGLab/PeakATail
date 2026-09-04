@@ -78,7 +78,7 @@ def overlapping_locus(tmp_path):
     return endbed, utr_lengths
 
 
-def _run_find_close(tmp_path, endbed, utr_lengths, pos_rows, neg_rows):
+def _run_find_close(tmp_path, endbed, utr_lengths, pos_rows, neg_rows, **kw):
     posbed = tmp_path / "pos.bed"
     negbed = tmp_path / "neg.bed"
     posbed.write_text("".join(pos_rows))
@@ -91,6 +91,7 @@ def _run_find_close(tmp_path, endbed, utr_lengths, pos_rows, neg_rows):
         annotatedbed_dir=str(tmp_path / "annotated.bed"),
         mergebed=str(tmp_path / "merged.bed"),
         utr_lengths=utr_lengths,
+        **kw,
     )
 
 
@@ -374,3 +375,46 @@ def test_unclamped_minus_record_still_gets_an_exact_terminus():
     assert lo.iloc[0] == hi.iloc[0] == 20_000   # 15,000 + 5,000
     assert body_start.iloc[0] == 20_000
     assert body_end.iloc[0] == 40_000
+
+
+# ---------------------------------------------------------------------------
+# Composition with peakAtail-prime's --pas-gene-rescue (PR #100 merge)
+#
+# The two features touch the same function and must not undo each other: the
+# precedence above decides WHICH gene owns a PAS, and only then does the
+# rescue re-grade the PAS it was given.  Applying the rescue to CANDIDATES
+# instead would break the hard rule, because `_would_drop_pas` outranks
+# `_no_utr_record` in the precedence: re-grading a nested miRNA's candidate
+# row from TIER_3 to TIER_2 would make it the only surviving candidate and
+# hand it its protein-coding host's PAS.
+# ---------------------------------------------------------------------------
+
+def test_the_rescue_cannot_hand_a_pas_to_a_gene_with_no_utr_record(
+        tmp_path, real_chr17_loci):
+    """`--pas-gene-rescue inside` must not reopen issue #99's hard rule."""
+    endbed, utr_lengths, pos_rows, neg_rows = real_chr17_loci
+    rescued = _run_find_close(tmp_path, endbed, utr_lengths, pos_rows,
+                              neg_rows, pas_gene_rescue="inside")
+
+    for thief in NESTED_THIEVES:
+        assert utr_lengths.get(thief, 0) == 0, "fixture assumption: no 3'UTR"
+        assert thief not in set(rescued["gene_id"]), (
+            f"--pas-gene-rescue inside let {thief} — a gene with no "
+            "three_prime_utr record — take a PAS from its host"
+        )
+
+
+def test_the_rescue_does_not_change_which_gene_owns_a_pas(tmp_path,
+                                                          real_chr17_loci):
+    """It is a GRADE, not an assignment: every PAS keeps the same gene."""
+    endbed, utr_lengths, pos_rows, neg_rows = real_chr17_loci
+    off = _run_find_close(tmp_path, endbed, utr_lengths, pos_rows, neg_rows)
+    on = _run_find_close(tmp_path, endbed, utr_lengths, pos_rows, neg_rows,
+                         pas_gene_rescue="inside")
+
+    shared = off.index.intersection(on.index)
+    assert len(shared) == len(off), "the rescue lost a PAS the default kept"
+    assert (off.loc[shared, "gene_id"] == on.loc[shared, "gene_id"]).all(), (
+        "the rescue re-assigned a PAS to a different gene; it may only "
+        "re-grade the winner the annotation-aware precedence chose"
+    )

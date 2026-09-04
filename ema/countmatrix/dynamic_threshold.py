@@ -32,10 +32,28 @@ MEASURED, NOT INFERRED (issue #101):
 THE BOUND IS ON BY DEFAULT.  A crash is not a behaviour worth preserving, and
 :func:`resolve_l_end` carries an identity guarantee -- for every in-range
 threshold the bounded and unbounded branches return the SAME element -- so
-bounding can only change a run that would otherwise have aborted.  The
-``clamp`` argument exists so a caller that needs the historical abort (the
-``peakAtail-prime`` branch pins v2 byte-for-byte and exposes
-``--dynamic-threshold-clamp off`` for it) can still ask for it explicitly.
+bounding can only change a run that would otherwise have aborted.
+
+ONE IMPLEMENTATION, NOT TWO.  ``peakAtail-prime`` (PR #100) landed its own
+copy of this module behind ``--dynamic-threshold-clamp``, defaulting to
+``off`` so that v2 (commit ``9dfdefb``) stayed reproducible down to its
+``IndexError``.  The merge of ``develop`` into that branch consolidated the
+two on THIS one: the bound is on by default and no command line, YAML key or
+library keyword can turn it off.
+
+``--dynamic-threshold-clamp`` therefore survives only as an ACCEPTED NO-OP,
+kept so that the branch's documented v2-compat command line and every
+existing config keep parsing.  Both of its values now mean the same thing
+(bounded), and so does the ``dynamic_threshold_clamp=`` keyword the peak
+loops still accept.  What the branch's byte-for-byte v2 promise still buys is
+unchanged and exact, because of the identity guarantee: every v2 run that
+PRODUCED OUTPUT produces the same output here.  The only runs that differ are
+the ones v2 aborted, and those emitted nothing to be identical to.
+
+The ``clamp`` argument on :func:`resolve_l_end` and
+:class:`DynamicThresholdGuard` is retained for the unit tests that pin the
+identity guarantee, which have to be able to evaluate the unbounded branch to
+prove the bounded one agrees with it.  No production caller passes it.
 """
 from __future__ import annotations
 
@@ -55,8 +73,8 @@ OUT_OF_RANGE_HINT = (
     "dynamic threshold (%d) outgrew the live read window (%d ends): "
     "l_end = data_array[-%d] is out of range%s. This is issue #101, and it "
     "is reachable only with --dynamic-threshold. The look-back index is "
-    "bounded by default; re-enable that (do not pass "
-    "dynamic_threshold_clamp=False), lower --lambda-fold-change, or drop "
+    "bounded on every production path, so reaching this means the live "
+    "window was EMPTY; lower --lambda-fold-change, or drop "
     "--dynamic-threshold (the default)."
 )
 
