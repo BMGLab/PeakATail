@@ -1,5 +1,12 @@
 # Changelog
 
+> **Next release: 0.3.0 (minor, not patch).** The `Unreleased` entries below
+> change the flagless call set — the internal-priming veto now runs by default
+> when a genome FASTA is present (~17% fewer calls) — so under SemVer at 0.x this
+> is a minor bump, never a patch. `pyproject.toml`, `CITATION.cff` and the
+> bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
+> `## 0.3.0` at tag time.
+
 ## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
 
 ### Breaking changes

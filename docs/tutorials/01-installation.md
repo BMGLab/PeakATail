@@ -81,7 +81,7 @@ uv run ema --version
 Expected output (version number matches `pyproject.toml`):
 
 ```
-ema, version 0.2.0
+ema, version 0.3.0
 ```
 
 Running `ema --help` lists every subcommand:
