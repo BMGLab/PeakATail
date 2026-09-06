@@ -487,7 +487,14 @@ def _build_diff_isoform_groups(
             continue
         for gene_id, transcript_id, *_rest in entries:
             utr_id = f"{gene_id}::{transcript_id}"
-            utr_pas_members.setdefault(utr_id, []).append(pas_id)
+            members = utr_pas_members.setdefault(utr_id, [])
+            # A spliced 3'UTR contributes several `three_prime_utr` records for
+            # one transcript, so `entries` can name the same (gene, transcript)
+            # more than once.  Appending blindly puts duplicate columns into
+            # bg_cols, and the fisher strategy's `int(agg1[p])` then receives a
+            # Series instead of a scalar and raises TypeError.
+            if pas_id not in members:
+                members.append(pas_id)
             gene_of_utr[utr_id] = gene_id
 
     # Gene-level fallback bucketing.  Only the PAS->gene assignment is
@@ -523,9 +530,14 @@ def _build_diff_isoform_groups(
 
     if isoform_agg == "within_utr":
         gene_to_all_pas: dict[str, list] = {}
-        for pas_id, entries in gene_fallback_map.items():
+        # Same rank-free PAS->gene map used for the fallback bucketing above.
+        # This previously read `gene_fallback_map`, a name that is never bound
+        # in this function -- it belongs to run_length -- so every
+        # `--isoform-agg within_utr` invocation died with NameError before
+        # reaching any test.
+        for pas_id, gene_id in _build_gene_id_map(adata).items():
             if pas_id in diff_cols:
-                gene_to_all_pas.setdefault(entries[0][0], []).append(pas_id)
+                gene_to_all_pas.setdefault(gene_id, []).append(pas_id)
 
         groups: list[dict] = []
         for utr_id, members in utr_pas_members.items():
