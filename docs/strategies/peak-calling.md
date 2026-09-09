@@ -5,7 +5,7 @@ The peak-calling stage finds polyadenylation sites (PAS) within each merged
 registered strategies — each implements `PeakFinderStrategy` in
 `ema/strategies/`, each registered via `@register("<name>")`.
 
-Selection is CLI-level: `ema run --peak-strategy <name>` or `strategy:` in the
+Selection is CLI-level: `peakatail run --peak-strategy <name>` or `strategy:` in the
 YAML config.
 
 ## Strategy overview
@@ -349,5 +349,5 @@ accuracy-oriented choice where the chemistry supports it; it uses
 
 ## See also
 
-- [`ema run`](../cli/run.md) — `--peak-strategy` flag selects the strategy
+- [`peakatail run`](../cli/run.md) — `--peak-strategy` flag selects the strategy
 - [PeakATail Technical Report](https://github.com/BMGLab/PeakATail/blob/develop/reports/PeakATail_Technical_Report.pdf) — full benchmark methodology

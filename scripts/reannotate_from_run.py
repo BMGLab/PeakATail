@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Branch a completed ``ema run`` into a new trim / clustering variant WITHOUT
+"""Branch a completed ``peakatail run`` into a new trim / clustering variant WITHOUT
 re-running peak calling.
 
 THIN SHIM: this script is now a CLI wrapper around
 :func:`ema.reannotate.reannotate_run` — the same function backing the
-``ema reannotate`` subcommand (``ema/cli/reannotate.py``).  It exists so
+``peakatail reannotate`` subcommand (``ema/cli/reannotate.py``).  It exists so
 existing invocations of this script keep working unchanged; new callers
-should prefer ``ema reannotate`` directly.
+should prefer ``peakatail reannotate`` directly.
 
 Peak calling (streaming the BAMs) is the expensive stage.  The "trim" —
 ``find_close(max_gene_distance, utr_multiplier, include_extended)`` — and
@@ -20,11 +20,11 @@ depends only on artifacts a base run already wrote to disk:
 
 ``reannotate_run`` reuses the *exact* tested internals the pipeline uses
 (``find_close`` + the per-dataset worker ``run_one_dataset_downstream``), so a
-branch is behaviourally identical to having run ``ema run`` with those trim /
+branch is behaviourally identical to having run ``peakatail run`` with those trim /
 clustering parameters — it just skips peak calling.
 
-This was the standalone form of what became ``ema reannotate``.  Validate
-against one dataset before trusting a wide sweep: run a base ``ema run`` on
+This was the standalone form of what became ``peakatail reannotate``.  Validate
+against one dataset before trusting a wide sweep: run a base ``peakatail run`` on
 one GSM, then branch it here with the SAME trim params and confirm the
 resulting clusters.h5ad matches the base run's.
 
@@ -58,7 +58,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base-run", type=Path, required=True,
-                    help="Completed `ema run` output dir to branch from.")
+                    help="Completed `peakatail run` output dir to branch from.")
     ap.add_argument("--out", type=Path, required=True,
                     help="Fresh output dir for this branch (must not equal --base-run).")
     ap.add_argument("--gtf", type=Path, required=True, help="Same GTF as the base run.")
@@ -89,7 +89,7 @@ def main() -> None:
                     help="Path to external cluster labels TSV (--cluster-method external).")
 
     # ── cell/PAS filters (match the base run's defaults unless overriding) ─
-    # Defaults MUST match ema run's schema defaults (config_schema.py) so a
+    # Defaults MUST match peakatail run's schema defaults (config_schema.py) so a
     # branch with unchanged params reproduces the base run's clustering:
     # min_read=1500, min_cells=3, min_pas_per_cell=50 (bridges to min_genes).
     ap.add_argument("--min-read", type=int, default=1500)

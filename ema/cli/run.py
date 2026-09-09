@@ -1,4 +1,4 @@
-"""`ema run` — full pipeline subcommand.
+"""`peakatail run` — full pipeline subcommand.
 
 This module is intentionally thin. The pipeline body lives in
 ``ema.main`` and is not modified by the CLI overhaul.

@@ -1,6 +1,6 @@
-# `ema reannotate`
+# `peakatail reannotate`
 
-`ema reannotate` branches a completed `ema run` into a **new trim / filter /
+`peakatail reannotate` branches a completed `peakatail run` into a **new trim / filter /
 clustering variant without re-running peak calling**. Peak calling (streaming
 the BAMs) is the expensive stage; the trim (`find_close`) and everything
 downstream of it (annotate → preprocess → cluster) is cheap and depends only on
@@ -8,13 +8,13 @@ artifacts a base run already wrote to disk. So a parameter sweep over
 gene-distance, cell/PAS filters, or clustering settings can reuse **one** set of
 raw peak calls and branch it many times.
 
-It reuses the exact same internals as `ema run`'s downstream section
+It reuses the exact same internals as `peakatail run`'s downstream section
 (`find_close` + `run_one_dataset_downstream` + provenance reconcile + manifest
-writing), so a branch is behaviourally identical to having run `ema run` with
+writing), so a branch is behaviourally identical to having run `peakatail run` with
 those parameters — it just skips peak calling.
 
 !!! note "When to use it"
-    - You have a finished `ema run` and want to test different
+    - You have a finished `peakatail run` and want to test different
       `--max-gene-distance`, `--min-cells`, `--min-pas-per-cell`,
       `--resolution`, `--n-neighbors`, or `--cluster-method` values **without
       paying for peak calling again**.
@@ -24,9 +24,9 @@ those parameters — it just skips peak calling.
 !!! warning "When NOT to use it"
     - You want to change a **peak-calling** parameter (strategy, lambda,
       prominence, merge). Those change the raw peaks, so you must re-run
-      `ema run`.
+      `peakatail run`.
     - The base run has no `unified/concatenated.mtx` + `posbed.bed`/`negbed.bed`
-      (i.e. it wasn't produced by a recent `ema run`).
+      (i.e. it wasn't produced by a recent `peakatail run`).
 
 ## The output is a complete, chainable run
 
@@ -39,12 +39,12 @@ steps**:
 - E2 `run_manifest.json` (hub-indexable)
 - `03_gtf_annotation/<ds>/annotatedpas.bed`, root `pasbed.bed`, `branch_manifest.json`
 
-So `ema switch diff`, `ema switch length`, `ema switch trend`, and the hub all
+So `peakatail switch diff`, `peakatail switch length`, `peakatail switch trend`, and the hub all
 consume a reannotated run exactly as they would a base run.
 
 ## One branch, one `--out` (exit code 1 if not)
 
-Every branch **must** have its own `--out` directory. Two `ema reannotate`
+Every branch **must** have its own `--out` directory. Two `peakatail reannotate`
 processes pointed at the same `--out` write the same
 `04_pas_gene_assignment/<ds>/pas_gene.tsv`, `05_annotated_matrix/<ds>/*` and
 `07_clustering/<ds>/clusters.h5ad` paths, so the artifacts that survive are an
@@ -54,15 +54,15 @@ an `--out`) ran concurrently under Nextflow and produced three different
 `pas_gene.tsv` row counts for **identical** declared parameters, grouped by
 write time.
 
-So `ema reannotate` now **refuses to start** when another live `ema reannotate`
+So `peakatail reannotate` now **refuses to start** when another live `peakatail reannotate`
 already holds the same `--out`. It takes an exclusive `flock` on
 `<out>/.ema_reannotate.lock` before any work begins; if that claim fails it
 exits **immediately with exit code 1**, writing nothing, and prints who holds
 the directory:
 
 ```console
-$ ema reannotate --base-run runs/base --out runs/branch_gd3000 --gtf ref.gtf
-Error: --out is already in use by another running `ema reannotate`:
+$ peakatail reannotate --base-run runs/base --out runs/branch_gd3000 --gtf ref.gtf
+Error: --out is already in use by another running `peakatail reannotate`:
 /path/runs/branch_gd3000 (held by pid=48211 host=node07 started=2026-09-03T23:34:14)
 — two branches writing one output dir interleave their artifacts and silently
 corrupt both. Give every branch its OWN --out; a duplicate branch_name in a
@@ -85,10 +85,10 @@ $ echo $?
       file description, so the kernel releases it the moment that process exits
       — including a crash or a `kill`. A branch that died never blocks the
       re-run, and you never need to delete `.ema_reannotate.lock` by hand. If
-      the refusal fires, some `ema reannotate` really is alive on that
+      the refusal fires, some `peakatail reannotate` really is alive on that
       directory.
 
-    The lock is advisory and only guards against a second `ema reannotate`; it
+    The lock is advisory and only guards against a second `peakatail reannotate`; it
     does not stop an unrelated program from writing into `--out`.
 
 `.ema_reannotate.lock` is a zero-value bookkeeping file (dot-prefixed, never
@@ -111,7 +111,7 @@ visible.
 
 ```bash
 # Branch a base run into a 3000 bp gene-distance + resolution-0.5 variant
-uv run ema reannotate \
+uv run peakatail reannotate \
   --base-run peakatail_runs/emaout_2026-05-11_120000 \
   --out      peakatail_runs/branch_gd3000_res0p5 \
   --gtf      Homo_sapiens.GRCh38.99.gtf \
@@ -128,8 +128,8 @@ CLI flag — nothing is pinned internally.
 ### Inputs
 | Flag | Type | Default | Meaning |
 |---|---|---|---|
-| `--base-run` | DIR | — (required) | A completed `ema run` output dir to branch from. |
-| `--out` | DIR | — (required) | Where to write the new variant run. Must be unique per branch — a second `ema reannotate` on the same `--out` is refused with exit code 1, see [One branch, one `--out`](#one-branch-one-out-exit-code-1-if-not). |
+| `--base-run` | DIR | — (required) | A completed `peakatail run` output dir to branch from. |
+| `--out` | DIR | — (required) | Where to write the new variant run. Must be unique per branch — a second `peakatail reannotate` on the same `--out` is refused with exit code 1, see [One branch, one `--out`](#one-branch-one-out-exit-code-1-if-not). |
 | `--gtf` | FILE | — (required) | Same GTF as the base run. |
 
 ### Trim (`find_close`)

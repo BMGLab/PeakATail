@@ -1,4 +1,4 @@
-"""`ema collapse` — pool samtools-merge RG-suffix run tags in a unified matrix.
+"""`peakatail collapse` — pool samtools-merge RG-suffix run tags in a unified matrix.
 
 Corrects a ``before``-merge run whose barcodes were split by ``samtools merge``
 RG suffixing, WITHOUT re-running peak calling. See :mod:`ema.datasets.collapse`.

@@ -113,7 +113,7 @@ power to rank strategies. Two concrete changes follow:
 
 ## 3. Which parameter actually controls the result?
 
-**Experiment.** 13 `ema reannotate` branches off the *same* cohort peak-calls
+**Experiment.** 13 `peakatail reannotate` branches off the *same* cohort peak-calls
 (`trim_cluster_grid.tsv`), sweeping `max_gene_distance`, `utr_multiplier`,
 `include_extended`, `resolution`, `n_neighbors`, and clustering method —
 one factor at a time, 17 datasets each.
@@ -183,7 +183,7 @@ distance* — meaning `include_extended` is the real knob on that axis and
 > duplicated, so the PAS catalogue is fixed and **only the PAS→gene assignment
 > diverges**. Clustering parameters cannot affect gene assignment, so this is not
 > a parameter effect; the grouping tracks **write time**, the signature of a
-> shared-state race between concurrently running `ema reannotate` branches.
+> shared-state race between concurrently running `peakatail reannotate` branches.
 >
 > The parameter-free spread (51,129 ↔ 67,409) **exceeds** the spread the trim
 > sweep is trying to measure (58,982 for `d5000_ext` vs 67,409 for `default`).
@@ -198,7 +198,7 @@ distance* — meaning `include_extended` is the real knob on that axis and
 ## 4. Do 3′UTRs shorten as the tumour progresses?
 
 **Experiment.** Per cell type, PDUI is computed per cell and averaged per stage
-(Normal → StageI → IVprimary → Met); `ema switch trend` fits an ordered-stage
+(Normal → StageI → IVprimary → Met); `peakatail switch trend` fits an ordered-stage
 slope and Spearman ρ. 24 cell types.
 
 This is the sweep's central biological claim, and it does not survive three
@@ -256,7 +256,7 @@ or depth-matched subsampling across stages — neither of which this sweep ran.
 
 ## 5. Are the differential-APA hits trustworthy?
 
-**Experiment.** `ema switch diff` per cell type: `fisher` (exhaustive within-gene
+**Experiment.** `peakatail switch diff` per cell type: `fisher` (exhaustive within-gene
 screen) and `nb_multi` (omnibus LRT). `nb_pairwise` was **not run**.
 
 **No.** Across 90 cell-type × contrast tests, Fisher declares a **mean of 42.9 %**
@@ -295,7 +295,7 @@ Two further limits belong next to any hit list:
 - Contrasts are **incomplete and unbalanced**: only 13–18 cell types have each
   of the six stage pairs, so a gene "found in Met vs Normal but not Met vs StageI"
   may simply lack the comparison.
-- **`ema switch match` output is unusable.** `cluster_match.tsv` reports
+- **`peakatail switch match` output is unusable.** `cluster_match.tsv` reports
   `match_confidence = 0.0102` for *every* pair, and each cluster matches
   essentially every other cluster — the `marker_overlap` matching is saturated.
   **`canonical_cluster` must not be used** as a cross-dataset identity.

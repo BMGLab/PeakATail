@@ -168,7 +168,7 @@ def compare_diff_strategies(
 
     Args:
         h5ad_path: Path to a clustered AnnData h5ad produced by
-            ``ema run`` / ``ema cluster``.
+            ``peakatail run`` / ``ema cluster``.
         pasbed_path: Optional PAS BED file for coordinate annotation.  When
             supplied, genomic coordinates are joined onto output TSVs.
         gtf_path: Optional GTF path (reserved for future isoform-aware

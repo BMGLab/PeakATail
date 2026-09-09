@@ -90,7 +90,7 @@ n_pairs=$(($(wc -l < "$SELECTION_TSV") - 1))
 log "gene selection written -> $SELECTION_TSV ($n_pairs celltype-gene pairs, $(ls "$GENE_LISTS_DIR" | wc -l) celltypes)"
 
 ########################################################################
-# 2. Render geneviews, one `ema switch geneview` call per celltype (all its
+# 2. Render geneviews, one `peakatail switch geneview` call per celltype (all its
 #    selected genes in one call — the CLI renders a panel per gene), then
 #    flatten figures/ up one level for a clean browsable tree.
 ########################################################################

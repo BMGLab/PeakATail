@@ -1,4 +1,4 @@
-"""`ema switch geneview` — gene-track visualisation for per-cluster PAS usage."""
+"""`peakatail switch geneview` — gene-track visualisation for per-cluster PAS usage."""
 from __future__ import annotations
 
 import logging
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
     multiple=True,
     type=click.Path(exists=True, dir_okay=False),
     help=(
-        "Differential TSV from `ema switch diff` (repeatable). "
+        "Differential TSV from `peakatail switch diff` (repeatable). "
         "Used to auto-select top-N genes by volcano score. "
         "Optional when --gene-id is supplied."
     ),
@@ -163,7 +163,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
 
     try:
         log.info(
-            "ema switch geneview: h5ad=%s top_genes=%d cluster_key=%s",
+            "peakatail switch geneview: h5ad=%s top_genes=%d cluster_key=%s",
             kwargs["h5ad"],
             kwargs["top_genes"],
             kwargs["cluster_key"],
@@ -395,7 +395,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
                     _gene_client.advance(1)
 
         log.info(
-            "ema switch geneview complete: %d/%d gene(s) rendered into %s",
+            "peakatail switch geneview complete: %d/%d gene(s) rendered into %s",
             rendered_count,
             len(gene_list),
             figs_dir,
@@ -407,7 +407,7 @@ def geneview(ctx: click.Context, **kwargs) -> None:
         try:
             from ema.viz._meta import write_figures_index
 
-            write_figures_index(figs_dir, command="ema switch geneview")
+            write_figures_index(figs_dir, command="peakatail switch geneview")
         except Exception as exc:
             log.warning("write_figures_index failed: %s", exc)
 

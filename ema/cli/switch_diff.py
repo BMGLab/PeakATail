@@ -1,4 +1,4 @@
-"""`ema switch diff` — differential APA test across cluster pairs."""
+"""`peakatail switch diff` — differential APA test across cluster pairs."""
 from __future__ import annotations
 
 import logging
@@ -155,7 +155,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
     )
 
     try:
-        log.info("ema switch diff: %d h5ad input(s); strategy=%s count_mode=%s",
+        log.info("peakatail switch diff: %d h5ad input(s); strategy=%s count_mode=%s",
                  len(kwargs["h5ad"]), kwargs["strategy"], kwargs["count_mode"])
         # Issue #74 trap removal. The default for --count-mode was flipped
         # reads->cells (see ema/cli/config_schema.py) so the out-of-the-box

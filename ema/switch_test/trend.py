@@ -1,6 +1,6 @@
 """A3: ordered-stage APA trend aggregation.
 
-``ema switch length`` computes a per-cluster PDUI (or proportion / entropy)
+``peakatail switch length`` computes a per-cluster PDUI (or proportion / entropy)
 value, but treats clusters as an unordered set. When the clusters are actually
 an ORDERED series — disease stages (Normal → StageI → … → Metastasis),
 timepoints, differentiation pseudo-stages — the scientific question is the
@@ -213,7 +213,7 @@ def derive_distal_fraction(
 ):
     """Derive a per-(gene, cell) DISTAL-USAGE scalar from a per-PAS proportion table.
 
-    ``ema switch length --strategy proportion`` reports one row per (gene,
+    ``peakatail switch length --strategy proportion`` reports one row per (gene,
     PAS, cell) with the fraction of that gene's reads landing on that PAS
     (``proportion``) and the PAS's rank along the transcript (``1`` = most
     proximal ... max rank = most distal). This collapses that per-PAS table
@@ -455,7 +455,7 @@ def distal_proportion_trend(
 
     Args:
         df: Long-format ``proportion`` table (one row per gene/pas/cell) —
-            e.g. the direct output of ``ema switch length --strategy
+            e.g. the direct output of ``peakatail switch length --strategy
             proportion``, after the padding fix (zero-coverage rows already
             omitted; a stale/pre-fix table with padded rows would silently
             include the padding in the "distal" mean, since a padded row's

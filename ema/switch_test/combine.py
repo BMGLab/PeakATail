@@ -1,6 +1,6 @@
 """A2: combine stage-labelled clustered h5ads for grouped switch analysis.
 
-``ema switch {diff,length}`` compare cells grouped by an obs key (``--cluster-key``).
+``peakatail switch {diff,length}`` compare cells grouped by an obs key (``--cluster-key``).
 To ask a *cross-dataset* question — "does APA differ across disease stages /
 timepoints, within each cell type?" — the per-dataset ``clusters.h5ad`` files
 first have to be stitched into one AnnData whose ``obs[group_key]`` carries the
@@ -9,10 +9,10 @@ cell type is contrasted independently).
 
 That stitching was the only genuinely-new glue in
 ``scripts/b3_stage_celltype_switch.py`` (everything else just calls the real
-``ema switch`` statistics). This module promotes it to a package feature. The
+``peakatail switch`` statistics). This module promotes it to a package feature. The
 pure :func:`combine_labeled` carries the logic and is unit-testable on tiny
 synthetic AnnData; :func:`combine_to_dir` is the on-disk wrapper used by
-``ema switch combine``.
+``peakatail switch combine``.
 """
 from __future__ import annotations
 

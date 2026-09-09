@@ -27,7 +27,7 @@ cell types or conditions. The tool is packaged as the `ema` CLI, installable via
 - **Cluster cells by 3' UTR usage.** PAS-by-cell count matrices are processed through TF-IDF + LSI
   dimensionality reduction and Leiden community detection so clusters reflect 3' isoform choice, not
   total expression level.
-- **Identify cell-type-specific PAS switching.** `ema switch diff` runs Fisher exact tests or negative
+- **Identify cell-type-specific PAS switching.** `peakatail switch diff` runs Fisher exact tests or negative
   binomial regression across every cluster pair and reports differentially used PAS with FDR control.
 
 ## Install
@@ -106,7 +106,7 @@ STAR \
 **Step 1 — Run the full pipeline** (peak-calling + clustering):
 
 ```bash
-ema run --config example.yaml
+peakatail run --config example.yaml
 ```
 
 The `example.yaml` at the repo root shows the full schema. At minimum, provide a `datasets` block
@@ -130,7 +130,7 @@ Each dataset gets a `clusters.h5ad` inside `per_dataset/<id>/`.
 **Step 3 — Test for differential APA** between cluster pairs:
 
 ```bash
-ema switch diff \
+peakatail switch diff \
   --h5ad emaout/per_dataset/sample1/clusters.h5ad \
   --strategy fisher \
   --fdr 0.05

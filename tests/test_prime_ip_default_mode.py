@@ -32,7 +32,7 @@ An explicit ``--ip-filter-mode annotate`` is honoured verbatim and is what
 
 Every test below fails on the pre-fix literal.  ``test_..._drops_ip_flagged_sites``
 is the one that matters: it drives the real seam, ``ema.main._apply_pas_filters``,
-with ``args`` seeded from the schema exactly the way ``ema run`` seeds it for a
+with ``args`` seeded from the schema exactly the way ``peakatail run`` seeds it for a
 run with no flags at all, and asserts a flagged site is GONE from the BED on
 disk.  With ``default="annotate"`` restored it fails with the flagged row still
 present and ``filtered == 0`` -- i.e. it reproduces the defect.

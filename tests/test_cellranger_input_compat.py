@@ -52,7 +52,7 @@ RG_IDS = (
     "pbmc_10k_v3:0:1:HFWFVDMXX:2",
 )
 
-# Shipped `ema run` backstops (ema/cli/run.py::_BACKSTOP).  read_check reads
+# Shipped `peakatail run` backstops (ema/cli/run.py::_BACKSTOP).  read_check reads
 # these off variable_config at call time, so the test must set them.
 SEQ_LEN = 150
 CB_LEN = 16
@@ -60,7 +60,7 @@ CB_LEN = 16
 
 @pytest.fixture(autouse=True)
 def _shipped_read_config():
-    """Point variable_config at the defaults `ema run` would use, then restore."""
+    """Point variable_config at the defaults `peakatail run` would use, then restore."""
     saved = {
         k: getattr(variable_config, k)
         for k in ("seqlen", "cb_len", "barcode_tag", "ignore_chro")
@@ -193,7 +193,7 @@ def test_underscore_bearing_read_groups_keep_separate_columns(tmp_path: Path) ->
 
     177 barcodes in this fixture are seen under *both* read groups.  Any RG
     sanitising/dropping merges those two cells into one matrix column --
-    exactly the `ema merge` data-corruption mode (0e).
+    exactly the `peakatail merge` data-corruption mode (0e).
     """
     index, _ = _call_both_strands(tmp_path)
     samples = {split_cb(cb)[0] for cb in index.mapping}

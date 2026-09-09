@@ -73,7 +73,11 @@ dev = [
 all = ["peakatail[dev]"]
 
 [project.scripts]
-ema = "ema.cli:main"
+# `peakatail` is the command. `ema` is kept as a deprecated alias so that
+# existing user scripts and published pipelines keep running; it prints a
+# notice to stderr and delegates to the same entry point.
+peakatail = "ema.cli:main"
+ema = "ema.cli:ema_deprecated_main"
 
 [project.urls]
 Homepage = "https://github.com/BMGLab/PeakATail"

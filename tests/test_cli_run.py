@@ -1,4 +1,4 @@
-"""Contract tests for `ema run`."""
+"""Contract tests for `peakatail run`."""
 from click.testing import CliRunner
 
 from ema.cli import main

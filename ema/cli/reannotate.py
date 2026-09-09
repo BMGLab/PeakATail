@@ -1,13 +1,13 @@
-"""`ema reannotate` — branch a completed ``ema run`` into a new trim / filter /
+"""`peakatail reannotate` — branch a completed ``peakatail run`` into a new trim / filter /
 clustering variant WITHOUT re-running peak calling.
 
 Peak calling (streaming the BAMs) is the expensive stage.  This subcommand
-reuses the raw peak-call artifacts a base ``ema run`` already wrote
+reuses the raw peak-call artifacts a base ``peakatail run`` already wrote
 (``posbed.bed`` / ``negbed.bed`` / ``unified/concatenated*.mtx``) and re-runs
 only the cheap downstream stages — trim (``find_close``) -> annotate ->
-preprocess -> cluster — through the SAME tested internals ``ema run`` uses.
+preprocess -> cluster — through the SAME tested internals ``peakatail run`` uses.
 The result is a complete, chainable run dir: ``ema.data.Run.from_dir()`` loads
-it directly and ``ema switch {diff,length,trend}`` can consume its
+it directly and ``peakatail switch {diff,length,trend}`` can consume its
 ``07_clustering/<ds>/clusters.h5ad`` files.
 
 All the actual work lives in :func:`ema.reannotate.reannotate_run` — this
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 @common_options(include_output=False)
 @click.option("--base-run", "base_run", required=True,
               type=click.Path(exists=True, file_okay=False, resolve_path=True),
-              help="Completed `ema run` output dir to branch from.")
+              help="Completed `peakatail run` output dir to branch from.")
 @click.option("--out", "out", required=True,
               type=click.Path(file_okay=False, resolve_path=True),
               help="Fresh output dir for this branch (must differ from --base-run).")
@@ -68,7 +68,7 @@ log = logging.getLogger(__name__)
               default=None,
               help="Path to external cluster labels TSV (--cluster-method external).")
 # ── cell/PAS filters (match the base run's defaults unless overriding) ───
-# Defaults MUST match ema run's schema defaults (config_schema.py) so a
+# Defaults MUST match peakatail run's schema defaults (config_schema.py) so a
 # branch with unchanged params reproduces the base run's clustering:
 # min_read=1500, min_cells=3, min_pas_per_cell=50 (bridges to min_genes).
 @click.option("--min-read", "min_read", type=int, default=1500, show_default=True)
@@ -115,7 +115,7 @@ log = logging.getLogger(__name__)
                    "matrix only (requires --annotation-bed). Still fully labeled in "
                    "annotatedpas.bed.")
 def reannotate(**kwargs) -> None:
-    """Branch a completed `ema run` into a new trim/cluster variant, skipping
+    """Branch a completed `peakatail run` into a new trim/cluster variant, skipping
     peak calling."""
     out_dir = Path(kwargs["out"])
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -131,7 +131,7 @@ def reannotate(**kwargs) -> None:
     )
 
     try:
-        log.info("ema reannotate: %s -> %s", kwargs["base_run"], out_dir)
+        log.info("peakatail reannotate: %s -> %s", kwargs["base_run"], out_dir)
         if kwargs.get("threads") is not None:
             log.info("ResourceManager: --threads=%d (absolute ceiling)", kwargs["threads"])
 
@@ -173,7 +173,7 @@ def reannotate(**kwargs) -> None:
         except ReannotateError as e:
             raise click.ClickException(str(e))
         log.info(
-            "ema reannotate: DONE — %d dataset(s) -> %s",
+            "peakatail reannotate: DONE — %d dataset(s) -> %s",
             len(manifest.get("datasets", [])), out_dir,
         )
     finally:

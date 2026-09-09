@@ -4,7 +4,7 @@
 a NaN entry with a value that is not already a category (a gene id absent from
 this cell type, or the ``"-"`` unknown/strand placeholder) raised
 ``TypeError: Cannot setitem on a Categorical with a new category`` under
-pandas 2.x, which crashed every ``ema switch diff`` run whose var carried a
+pandas 2.x, which crashed every ``peakatail switch diff`` run whose var carried a
 categorical ``gene_id`` (observed: fisher/mwu produced 0 output).
 """
 import pandas as pd

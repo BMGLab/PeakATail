@@ -1,4 +1,4 @@
-"""`ema switch match` — cross-dataset cluster matching."""
+"""`peakatail switch match` — cross-dataset cluster matching."""
 from __future__ import annotations
 
 import logging
@@ -83,7 +83,7 @@ def match(ctx: click.Context, **kwargs) -> None:
     )
 
     try:
-        log.info("ema switch match: strategy=%s, %d datasets",
+        log.info("peakatail switch match: strategy=%s, %d datasets",
                  kwargs["strategy"], len(kwargs["h5ad"]))
         from ema.clustering.cross_dataset import get_match_strategy
         strat = get_match_strategy(

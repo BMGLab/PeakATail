@@ -1,4 +1,4 @@
-"""`ema reannotate` refuses an ``--out`` that another branch already holds.
+"""`peakatail reannotate` refuses an ``--out`` that another branch already holds.
 
 Companion to tests/test_pas_gene_artifacts_atomic_write.py. That file proves
 a SINGLE artifact write can't be torn; this one proves the two runs never get

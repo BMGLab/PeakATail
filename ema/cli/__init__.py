@@ -1,13 +1,13 @@
 """Click root group for PeakATail.
 
 The single `ema` entry point. Subcommands:
-    ema run                  — full pipeline
-    ema switch {diff,length,match} — per-cluster analyses
-    ema merge                — merge BAMs
-    ema parse-gtf            — pre-warm GTF cache
-    ema reannotate           — branch a completed run into a new trim/cluster variant
-    ema wizard               — interactive setup
-    (bare `ema`)             — same as `ema wizard`
+    peakatail run                  — full pipeline
+    peakatail switch {diff,length,match} — per-cluster analyses
+    peakatail merge                — merge BAMs
+    peakatail parse-gtf            — pre-warm GTF cache
+    peakatail reannotate           — branch a completed run into a new trim/cluster variant
+    peakatail wizard               — interactive setup
+    (bare `ema`)             — same as `peakatail wizard`
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _get_version() -> str:
 
 
 @click.group(
-    name="ema",
+    name="peakatail",
     invoke_without_command=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -34,10 +34,27 @@ def _get_version() -> str:
 def main(ctx: click.Context) -> None:
     """PeakATail — single-cell poly(A) site detection and APA analysis."""
     if ctx.invoked_subcommand is None:
-        # Bare `ema` → wizard
+        # Bare `peakatail` → wizard
         from ema.cli import wizard  # local import: lets test monkeypatch
         rc = wizard.run()
         sys.exit(rc)
+
+
+def ema_deprecated_main() -> None:
+    """Deprecated `ema` console script; delegates to :func:`main`.
+
+    The command was renamed to `peakatail` to match the package and the tool's
+    published name. This alias exists so that scripts, Snakemake/Nextflow rules
+    and published pipelines that call `ema` keep working, and is announced on
+    stderr so the notice never contaminates stdout that a caller may be parsing.
+    """
+    print(
+        "peakatail: the `ema` command has been renamed to `peakatail`. "
+        "`ema` still works and behaves identically, but is deprecated and will "
+        "be removed in a future release.",
+        file=sys.stderr,
+    )
+    main()
 
 
 # Subcommand registration happens after import. We import the leaves at
@@ -125,7 +142,7 @@ def cli():
     # smoke tests still rely on (test_region_fetch.py patches sys.argv with
     # the original flag names so peak_calling can seed variable_config at
     # import time).  Everything else flows through the Click subcommands.
-    parser = argparse.ArgumentParser(prog="ema", add_help=False)
+    parser = argparse.ArgumentParser(prog="peakatail", add_help=False)
     parser.add_argument("--config", dest="config", type=str, default=None)
     parser.add_argument("--bamDir", dest="_bam_dir", type=str, default=None)
     parser.add_argument("--sequenceLen", dest="_seqlen", type=int, default=None)

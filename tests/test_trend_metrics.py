@@ -1,4 +1,4 @@
-"""Tests for `ema switch trend --metric` / `--combine`.
+"""Tests for `peakatail switch trend --metric` / `--combine`.
 
 Covers:
   (a) --metric pdui produces the exact same output as the (unset) default.
@@ -45,7 +45,7 @@ def _pdui_table(gene: str = "G1", vals=(0.9, 0.5, 0.1)) -> pd.DataFrame:
 
 def _proportion_table(gene: str = "G1", distal_vals=(0.8, 0.5, 0.2)) -> pd.DataFrame:
     """Two-PAS gene: rank=1 (proximal), rank=2 (distal). Mirrors the real
-    ``ema switch length -s proportion`` schema (gene_id/transcript_id/pas_id/
+    ``peakatail switch length -s proportion`` schema (gene_id/transcript_id/pas_id/
     rank/cell/proportion/cluster + a few extra columns the derivation ignores).
     """
     rows = []
