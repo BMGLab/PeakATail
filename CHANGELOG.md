@@ -7,6 +7,34 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
+
+### Fixed
+
+- **`ema switch diff --isoform-agg between_utr` now populates `gene_id`.** Under
+  that scope the unit of a row is a 3'UTR isoform, so `pas_id` reads
+  `GENE::TRANSCRIPT` — which is not a key into either annotation lookup, both of
+  which join on a PAS id. `gene_id` was therefore written **empty** for every
+  row and the gene appeared only in `diff_group_id`. The failure was silent:
+  joining `between_utr` output to `per_gene` output on `gene_id` — the obvious
+  comparison, and the column was present — matched **nothing** and reported 0 %
+  overlap rather than raising (the correct figure on the same data was 96 %).
+  `gene_id` now carries the group's gene, i.e. the same value as
+  `diff_group_id`.
+
+### Changed
+
+- **`between_utr` output no longer carries the `chrom`, `start`, `end` and
+  `strand` columns.** A whole 3'UTR has no single cleavage position, so these
+  were always blank; they are now **omitted from the TSV entirely** so that a
+  join keyed on them fails with a missing-column error instead of quietly
+  matching nothing. `per_gene` and `within_utr` output is unchanged — both keep
+  PAS as the row unit, so their coordinates are meaningful and their `gene_id`
+  was never blank. Consumers of `between_utr` TSVs that read coordinates
+  positionally or by name must be updated; `ema.switch_test.long_output`
+  (`findings_long`) already reads them defensively and is unaffected (it emits
+  an empty `pas_uid` for such rows, exactly as it did for the blank columns).
+
 ## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
 
 ### Breaking changes
