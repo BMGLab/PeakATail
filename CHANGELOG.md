@@ -1,13 +1,6 @@
 # Changelog
 
-> **Next release: 0.3.0 (minor, not patch).** The `Unreleased` entries below
-> change the flagless call set — the internal-priming veto now runs by default
-> when a genome FASTA is present (~17% fewer calls) — so under SemVer at 0.x this
-> is a minor bump, never a patch. `pyproject.toml`, `CITATION.cff` and the
-> bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
-> `## 0.3.0` at tag time.
-
-## Unreleased — label-independent `switch diff` pre-filter (issue #94)
+## 0.3.0 — 2026-09-10
 
 ### Added
 
@@ -40,7 +33,6 @@
 
 - `--marker-top-n`'s help text and its runtime warning now name
   `--prefilter-min-cells` as the safe way to get the speed.
-## Unreleased — `switch diff` per-pair TSV column documentation (issue #94)
 
 ### Fixed
 
@@ -62,7 +54,6 @@
 
 `docs/concepts/output-files.md` was checked and is not stale: it describes the
 lead columns generically and defers to the CLI page for the full schema.
-## Unreleased — `--marker-top-n` no longer narrows the UTR background (issue #94)
 
 ### Fixed
 
@@ -84,7 +75,6 @@ lead columns generically and defers to the CLI page for the full schema.
   defect that no longer exists); an `INFO` line states the background rule
   instead. The label double-dip in the *selection* is unchanged and still
   warns — that half of issue #94 is why `--marker-top-n` defaults to `0`.
-## Unreleased — `nb_pairwise` dispersion floor (issue #94)
 
 ### Fixed
 
@@ -119,7 +109,6 @@ lead columns generically and defers to the CLI page for the full schema.
   permutation-calibrated q (or dispersion shrinkage toward a trend), which is
   still open on issue #94. `docs/strategies/diff.md` and
   `docs/cli/switch-diff.md` now say so.
-## Unreleased — spliced 3'UTRs no longer double-count a PAS (all consumers)
 
 ### Fixed
 
@@ -155,7 +144,6 @@ lead columns generically and defers to the CLI page for the full schema.
   `TypeError: cannot convert the series to <class 'int'>`.
 - `--marker-top-n`'s help text and its runtime warning now name
   `--prefilter-min-cells` as the safe way to get the speed.
-## Unreleased — the NB library-size offset, and three ways a withheld q-value lied
 
 ### Fixed
 
@@ -198,7 +186,6 @@ lead columns generically and defers to the CLI page for the full schema.
   ground truth from `fisher` alone; the prose was checked by nothing and is now
   covered for `nb_pairwise` and `nb_multi`.
 
-## Unreleased — the release that mints a DOI
 
 ### Fixed
 
@@ -226,7 +213,6 @@ lead columns generically and defers to the CLI page for the full schema.
   maintainer to draft the Release by hand, and records that Zenodo takes the
   archived record's authors and title from `CITATION.cff` as of tag time.
 
-## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
 
 ### Fixed
 
@@ -253,7 +239,6 @@ lead columns generically and defers to the CLI page for the full schema.
   positionally or by name must be updated; `ema.switch_test.long_output`
   (`findings_long`) already reads them defensively and is unaffected (it emits
   an empty `pas_uid` for such rows, exactly as it did for the blank columns).
-## Unreleased — spliced 3'UTRs in `switch diff --isoform-agg`
 
 ### Fixed
 
@@ -271,7 +256,6 @@ lead columns generically and defers to the CLI page for the full schema.
 
   Reported in #109. The `NameError` that PR also describes was already fixed on
   `develop` in `7b50a5f`; this lands the remaining half.
-## Unreleased — the command is now `peakatail` (`ema` deprecated)
 
 ### Breaking changes
 
@@ -303,7 +287,6 @@ lead columns generically and defers to the CLI page for the full schema.
   `ema/...` source path is unchanged. Renaming the Python package is a separate,
   larger change and is deliberately not bundled here.
 
-## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
 
 ### Breaking changes
 
@@ -381,7 +364,6 @@ lead columns generically and defers to the CLI page for the full schema.
   the fixture really does expose the defect), and an end-to-end `run_diff`
   comparison of a `--marker-top-n 200` run against a `--marker-top-n 0` run of
   the same input over the 400 PAS they share.
-## Unreleased — switch length: degenerate proximal==distal pairs
 
 ### Fixed
 
@@ -433,7 +415,6 @@ lead columns generically and defers to the CLI page for the full schema.
   proximal and distal on DIFFERENT strands.` The guard still **fails** the
   run on a degenerate row — it is a real defect, just not a strand one — and
   the message now says so.
-## Unreleased — concurrent-branch safety
 
 ### Fixed
 
@@ -468,7 +449,6 @@ lead columns generically and defers to the CLI page for the full schema.
   produce one of the two complete files (never a byte-level mix), and a
   write that raises leaves the previous file untouched. File **contents** are
   unchanged — only the instant at which they become visible.
-## Unreleased — PAS→gene assignment in overlapping loci
 
 ### Fixed
 
@@ -551,7 +531,6 @@ its `off` default, so nothing changes unless it is asked for. Pinned by
 `test_the_rescue_cannot_hand_a_pas_to_a_gene_with_no_utr_record` and
 `test_the_rescue_does_not_change_which_gene_owns_a_pas` in
 `tests/test_pas_gene_overlapping_loci_i99.py`.
-## Unreleased — `--dynamic-threshold` no longer aborts the run (issue #101)
 
 **`--dynamic-threshold --lambda-fold-change 2.0` — the parameter reference's
 own first entry under "find more PAS" — used to abort the caller with a bare
@@ -623,7 +602,6 @@ keeps its `clamp` argument for the unit tests that pin that guarantee — they
 have to be able to evaluate the unbounded branch to prove the bounded one
 agrees with it — and no production caller passes it.
 
-## Unreleased (branch `peakAtail-prime`) — the dynamic-threshold crash guard
 
 **`--dynamic-threshold` at its documented companion setting
 (`--lambda-fold-change 2.0`, the parameter reference's first entry under "find
@@ -677,7 +655,6 @@ published PeakATail number is affected.
   `--dynamic-threshold-clamp off` (14 flag/value pairs), so the documented
   compat command stays the complete list.
 
-## Unreleased (branch `peakAtail-prime`) — the default that was a no-op
 
 **`--ip-filter-mode`'s default was v2's `annotate`, so the branch's one
 behavioural default dropped nothing.** `--ip-filter-default auto` turned the
@@ -803,7 +780,6 @@ See `results/prime_bench/` for the re-validation: the v2 compatibility pin is
 still byte-for-byte v2 on both slices, and the branch default now differs from
 v2 in exactly the expected way (fewer, more precise calls).
 
-## Unreleased (branch `peakAtail-prime`) — the cleavage-offset column, the QC that stopped lying, and the seam that drops lncRNAs
 
 Four small, separately-measured changes (TASK E). **One of them is a genuine
 accuracy default (`--ip-filter` turns itself on), one replaces an estimator
@@ -1017,7 +993,6 @@ including its clip-rate log line; only `run_config.json` / `run_manifest.json`
 differ, by the keys that record the new options.
 `tests/test_prime_v2_compat_golden.py::_v2_settings()` pins all five new knobs.
 
-## Unreleased (branch `peakAtail-prime`) — the calibrated per-site score
 
 **One new capability, three flags, and it is OFF by default because the
 pre-registered criterion said so.**
@@ -1127,7 +1102,6 @@ against long reads**.
 same comparison gives Kinnex t5 **+0.0129**; on the other 22 contigs it is
 **−0.0380**. Any atlas-independent claim from this branch has to be genome-wide.
 
-## Unreleased (branch `peakAtail-prime`) — per-site scoring features
 
 **One new flag. It appends columns to a sidecar and changes nothing else.**
 
@@ -1263,7 +1237,6 @@ better than the plain rule against long reads. The veto stays a hard gate.
 
 ---
 
-## Unreleased (branch `peakAtail-prime`) — read acceptance geometry
 
 **Two new flags. Both default to the previous behaviour, and one of them
 does so because the measurement said to.**
@@ -1378,7 +1351,6 @@ Compute on the PBMC slice at 8 threads: wall 6:31 → 8:38 (1.32×), peak RSS
 1.16 GB → 1.74 GB (1.53×, over the 1.5× guard rail of `manuscript/24`
 §3.2.4 — declared, not hidden). On the mouse slice, 1.17× wall and 1.01× RSS.
 
-## Unreleased — caller memory and CPU
 
 Peak RSS and wall time only: **every output file is byte-identical** at the
 default settings. Verified end-to-end by re-running two full benchmark arms
@@ -1498,7 +1470,6 @@ at 613 s instead of 733 s and the cell-barcode filter at 25 s instead of 64 s.
   `mmread` → CSC → CSR → CSC chain and `preprocessing`'s transpose are the
   remaining multi-GB copies on a whole-genome run.
 
-## Unreleased — read-level poly(A) evidence
 
 ### Added
 - **`ema/countmatrix/polya.py`: PeakATail now reads poly(A) evidence off the
@@ -1732,7 +1703,6 @@ at 613 s instead of 733 s and the cell-barcode filter at 25 s instead of 64 s.
   `read_check`'s 5-tuple return is deliberately unchanged.
   `tests/test_polya_three_path_agreement.py` pins that the three paths
   produce identical BED output and identical per-PAS counts.
-## Unreleased
 
 ### Added
 - **`--cleavage-offset` — data-driven 3' cleavage-site offset correction
