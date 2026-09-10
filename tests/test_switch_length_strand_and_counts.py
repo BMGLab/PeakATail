@@ -1,4 +1,4 @@
-"""`ema switch length` — strand-aware proximal/distal selection + count source.
+"""`peakatail switch length` — strand-aware proximal/distal selection + count source.
 
 Two independent defects are covered here (plan `10_caller_fix_plan.md`, 0b/0c):
 
@@ -114,7 +114,7 @@ def test_unresolvable_pasbed_must_not_silently_invert(tmp_path):
     """No pasbed => REFUSE. Ranking by adata.var order is a plus-strand guess.
 
     Was xfail(strict): `run_length` silently ranked PAS by input order and
-    `ema switch length` had no --pasbed flag at all.
+    `peakatail switch length` had no --pasbed flag at all.
     """
     h5 = _write_inputs(tmp_path)
     moved = tmp_path / "elsewhere" / "pasbed.bed"
@@ -254,7 +254,7 @@ def test_pdui_on_tfidf_X_is_measurably_wrong(tmp_path):
 def test_counts_layer_survives_switch_combine_concat():
     """``ad.concat(join='outer', merge='first')`` must carry layers['counts'].
 
-    ``ema switch combine`` is between clustering (which stashes the layer)
+    ``peakatail switch combine`` is between clustering (which stashes the layer)
     and ``switch length`` (which reads it); if concat dropped it, the stash
     would never reach the consumer.
     """

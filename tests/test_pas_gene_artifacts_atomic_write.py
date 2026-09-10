@@ -119,7 +119,7 @@ def test_pas_gene_tsv_destination_never_observes_partial_write(tmp_path):
 
 
 def test_concurrent_writers_to_same_path_never_produce_a_torn_file(tmp_path):
-    """Simulates the actual bug: two `ema reannotate` branches (e.g. from a
+    """Simulates the actual bug: two `peakatail reannotate` branches (e.g. from a
     duplicate branch_name) racing to write the SAME pas_gene.tsv path
     concurrently. With the atomic temp+rename fix, the file must ALWAYS end
     up as one writer's complete, valid output -- never a byte-level mix

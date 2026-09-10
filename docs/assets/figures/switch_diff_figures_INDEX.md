@@ -1,6 +1,6 @@
 # Figures index
 
-Produced by `ema switch diff`.
+Produced by `peakatail switch diff`.
 
 Directory: `/home/user/PeakATail/peakatail_runs/full_v8_2026-05-11_152746/switch_diff_2026-05-11_205015/figures`
 

@@ -505,7 +505,7 @@ def preprocessing(sparse_matrix, pas_ids, collist,
         min_genes: minimum number of PAS a cell must have (default lowered for APA)
         gene_ids: Optional array (aligned to ``pas_ids``) of gene assignments
             from :func:`ema.annotate.annotate`.  When supplied, it is stored as
-            ``adata.var['gene_id']`` so downstream tools (``ema switch
+            ``adata.var['gene_id']`` so downstream tools (``peakatail switch
             length --isoform-agg per_gene``) can aggregate PAS within a gene
             without re-reading the BED/GTF.  Passing ``None`` keeps the legacy
             behaviour (no gene column).

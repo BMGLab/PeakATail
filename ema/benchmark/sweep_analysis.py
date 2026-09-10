@@ -990,7 +990,7 @@ def harvest_filter_effect_pas_counts(scenario_dirs: dict) -> pd.DataFrame:
     caveat: ``atlas_mode=filter`` / ``ip_filter_mode=filter`` / ``annot_filter``
     drop PAS from THAT scenario's own result list too, not only from
     clustering -- so this delta doubles as "how many PAS this filter removes").
-    Also surfaces the per-filter drop stats ``ema run`` itself wrote
+    Also surfaces the per-filter drop stats ``peakatail run`` itself wrote
     (``atlas_stats.json``, ``04_pas_gene_assignment/peak_filters_stats.json``)
     when present, for the exact filter mechanism's own accounting.
     """

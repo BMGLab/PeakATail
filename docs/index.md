@@ -10,7 +10,7 @@ or any aligner that emits the standard 10x-style tag schema. UMI (`UB`) tags are
 **not** required or used: PeakATail counts raw read 3′ ends, not UMI-deduplicated
 molecules. It clusters cells by their
 3' UTR usage patterns and tests for differential alternative polyadenylation (APA) between
-cell types or conditions. The tool is packaged as the `ema` CLI, installable via `pip` or
+cell types or conditions. The tool is packaged as the `peakatail` CLI, installable via `pip` or
 `uv`.
 
 !!! tip "Input requirements"
@@ -27,7 +27,7 @@ cell types or conditions. The tool is packaged as the `ema` CLI, installable via
 - **Cluster cells by 3' UTR usage.** PAS-by-cell count matrices are processed through TF-IDF + LSI
   dimensionality reduction and Leiden community detection so clusters reflect 3' isoform choice, not
   total expression level.
-- **Identify cell-type-specific PAS switching.** `ema switch diff` runs Fisher exact tests or negative
+- **Identify cell-type-specific PAS switching.** `peakatail switch diff` runs Fisher exact tests or negative
   binomial regression across every cluster pair and reports differentially used PAS with FDR control.
 
 ## Install
@@ -106,7 +106,7 @@ STAR \
 **Step 1 — Run the full pipeline** (peak-calling + clustering):
 
 ```bash
-ema run --config example.yaml
+peakatail run --config example.yaml
 ```
 
 The `example.yaml` at the repo root shows the full schema. At minimum, provide a `datasets` block
@@ -130,7 +130,7 @@ Each dataset gets a `clusters.h5ad` inside `per_dataset/<id>/`.
 **Step 3 — Test for differential APA** between cluster pairs:
 
 ```bash
-ema switch diff \
+peakatail switch diff \
   --h5ad emaout/per_dataset/sample1/clusters.h5ad \
   --strategy fisher \
   --fdr 0.05
@@ -146,7 +146,7 @@ Results land in `switch_diff_<timestamp>/` inside the same run directory.
 
     ---
 
-    Every `ema` subcommand, flag, and option documented with types,
+    Every `peakatail` subcommand, flag, and option documented with types,
     defaults, and examples.
 
     [:octicons-arrow-right-24: CLI reference](cli/)

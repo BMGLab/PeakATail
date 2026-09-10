@@ -1,7 +1,7 @@
 """Single source of truth for every CLI flag's default value.
 
 All defaults are now derived from :class:`ema.cli.config_schema.RunConfig`,
-including switch-subcommand-only flags (``ema switch diff/length/match``).
+including switch-subcommand-only flags (``peakatail switch diff/length/match``).
 
 Adding a flag:
     * Add a dataclass field on RunConfig in ``ema/cli/config_schema.py``.

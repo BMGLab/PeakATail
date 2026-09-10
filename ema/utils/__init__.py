@@ -7,7 +7,7 @@ from ema.utils.resource_manager import ResourceManager  # noqa: F401
 #: ``ema.clustering.clustering.clustering()`` stashes the input matrix here
 #: BEFORE any strategy's ``normalize()`` runs, because ``leiden_tfidf``
 #: overwrites ``.X`` in place with ``log1p(TF * IDF * scale_factor)``.  Every
-#: count consumer (``ema switch length`` PDUI, ``ema switch diff``) must read
+#: count consumer (``peakatail switch length`` PDUI, ``peakatail switch diff``) must read
 #: this layer in preference to ``.X``; see
 #: :func:`ema.switch_test.runner.build_count_dfs`.
 COUNTS_LAYER = "counts"

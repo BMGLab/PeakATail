@@ -39,7 +39,7 @@ def _stash_counts_layer(adata: ad.AnnData) -> ad.AnnData:
     Every clustering strategy normalises ``.X`` IN PLACE -- ``leiden_tfidf``
     replaces it with ``log1p(TF * IDF * scale_factor)``, ``leiden_libsize``
     with scaled log1p CPM -- and nothing in the package kept a raw copy.
-    Downstream count consumers (``ema switch length`` PDUI, ``ema switch
+    Downstream count consumers (``peakatail switch length`` PDUI, ``peakatail switch
     diff``) then quantified TF-IDF weights as if they were reads: 100% of the
     non-zero ``proximal_reads``/``distal_reads`` in the shipped 3'UTR tables
     were non-integer, and 10.6% of cluster-pair dPDUI signs flipped against
@@ -48,7 +48,7 @@ def _stash_counts_layer(adata: ad.AnnData) -> ad.AnnData:
     Stashing costs one reference to the matrix the caller already handed us
     (it is copied, not aliased, because the strategies mutate ``.X``), and
     ``anndata.concat(join="outer", merge="first")`` carries layers through
-    ``ema switch combine``, so the layer survives to the switch tests.
+    ``peakatail switch combine``, so the layer survives to the switch tests.
 
     An existing ``counts`` layer is never overwritten -- if a caller already
     supplied one it is authoritative.

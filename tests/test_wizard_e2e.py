@@ -71,7 +71,7 @@ def test_wizard_merge_mode(tmp_path):
 
     answers = {
         "select": [
-            "Merge BAMs (ema merge)",   # mode pick
+            "Merge BAMs (peakatail merge)",   # mode pick
         ],
         "path": [
             str(CHR22_BAM),             # BAM #1
@@ -102,7 +102,7 @@ def test_wizard_parse_gtf_mode():
     """Wizard → parse-gtf mode → exits 0 (cache hit or fresh parse)."""
     answers = {
         "select": [
-            "Pre-warm GTF cache (ema parse-gtf)",  # mode
+            "Pre-warm GTF cache (peakatail parse-gtf)",  # mode
         ],
         "path": [
             str(GTF),                              # GTF path
@@ -178,7 +178,7 @@ pas_gap: 100
         ],
     }
 
-    # The new wizard dispatches `ema run --config <yaml>` via subprocess so
+    # The new wizard dispatches `peakatail run --config <yaml>` via subprocess so
     # output streams live and exit codes propagate. We exercise that path
     # directly here -- if the subprocess fails the captured output is
     # surfaced verbatim instead of being swallowed by CliRunner.

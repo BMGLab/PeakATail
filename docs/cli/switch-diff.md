@@ -1,8 +1,8 @@
-# `ema switch diff`
+# `peakatail switch diff`
 
-`ema switch diff` tests for differential alternative polyadenylation (APA)
+`peakatail switch diff` tests for differential alternative polyadenylation (APA)
 between every pair of Leiden clusters in one or more `clusters.h5ad` files
-produced by `ema run`. For each cluster pair (c1, c2) and each PAS that passes
+produced by `peakatail run`. For each cluster pair (c1, c2) and each PAS that passes
 the cell-count filter, the command runs the selected statistical strategy
 (default: Fisher exact test) and writes one TSV per pair under a
 `switch_diff_<timestamp>/differential/` subdirectory.
@@ -15,17 +15,17 @@ run self-contained. Source: `ema/cli/common.py::resolve_subcommand_output_dir`
 and `detect_run_dir`.
 
 !!! note "When to use it"
-    - You have finished `ema run` and want to identify PAS that are
+    - You have finished `peakatail run` and want to identify PAS that are
       differentially used between cell types or conditions.
     - You want to rank genes by how strongly their 3' isoform choice differs
       between two cluster populations.
-    - You are feeding results into `ema switch geneview` to visualise
+    - You are feeding results into `peakatail switch geneview` to visualise
       per-cluster PAS distributions for the top hits.
 
 !!! warning "When NOT to use it"
-    - You have not yet run `ema run` — you need `clusters.h5ad` first.
+    - You have not yet run `peakatail run` — you need `clusters.h5ad` first.
     - You want to quantify the absolute level of 3' UTR shortening per cluster,
-      not the pairwise difference. Use `ema switch length` for that.
+      not the pairwise difference. Use `peakatail switch length` for that.
     - You have more than ~20 clusters and want to test all pairwise combinations
       with a strategy other than `fisher`. NB-based strategies scale as O(n_pairs);
       use `--cluster-pairs` to limit to biologically meaningful contrasts.
@@ -33,7 +33,7 @@ and `detect_run_dir`.
 ## Quick example
 
 ```bash
-uv run ema switch diff \
+uv run peakatail switch diff \
   --h5ad peakatail_runs/emaout_2026-05-11_120000/per_dataset/sample1/clusters.h5ad \
   --strategy fisher \
   --fdr 0.05 \
@@ -50,7 +50,7 @@ What lands on disk after this command (inside the originating run dir):
 ## Full `--help` output
 
 ```text
-Usage: ema switch diff [OPTIONS]
+Usage: peakatail switch diff [OPTIONS]
 
   Differential APA test (Fisher / NB regression) across cluster pairs.
 
@@ -115,17 +115,17 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--h5ad` / `-i` | PATH (repeatable) | — | One or more `clusters.h5ad` files from `ema run`. Repeating this flag accumulates all h5ads into one run; all-pairs testing is performed within each h5ad independently, then results are merged. Required. |
+| `--h5ad` / `-i` | PATH (repeatable) | — | One or more `clusters.h5ad` files from `peakatail run`. Repeating this flag accumulates all h5ads into one run; all-pairs testing is performed within each h5ad independently, then results are merged. Required. |
 | `--pasbed` | PATH | — | Optional PAS BED file. When present it is used to auto-discover coordinate columns for the output TSV (chrom, start, end, strand). If not given, the runner looks for `pasbed.bed` next to each `--h5ad` file (walking up to 4 parent directories). |
 | `--gtf` | PATH | — | Optional GTF annotation file. Currently passed through to the runner but not used by the `fisher` strategy. Accepted for forward compatibility. |
-| `--cluster-key` | TEXT | `leiden` | The `adata.obs` column containing cluster labels. Change this when using `--external-clusters` in `ema run` or a custom labelling scheme. |
+| `--cluster-key` | TEXT | `leiden` | The `adata.obs` column containing cluster labels. Change this when using `--external-clusters` in `peakatail run` or a custom labelling scheme. |
 | `--cluster-pairs` | TEXT | — | Restrict testing to specific cluster pairs. Format: `c1,c2;c3,c4` (semicolon-separated pairs, comma-separated within each pair). When omitted, all pairwise combinations are tested. |
 
 ### Strategy options
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--strategy` / `-s` | TEXT | `fisher` | Differential APA strategy. Run `ema switch diff --list-strategies` to see registered names. `fisher` applies a within-gene Fisher exact test (see Within-gene Fisher framing below). |
+| `--strategy` / `-s` | TEXT | `fisher` | Differential APA strategy. Run `peakatail switch diff --list-strategies` to see registered names. `fisher` applies a within-gene Fisher exact test (see Within-gene Fisher framing below). |
 | `--marker-top-n` | INT | `0` (disabled) | **Speed shortcut, not a statistical filter — leave it at 0.** Pre-filters the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Any non-zero value ranks those markers with the **same cluster labels** the differential test then contrasts (a label double-dip), so the reported q-values are **not FDR-calibrated** — see [Why `--marker-top-n` defaults to 0](#why---marker-top-n-defaults-to-0). When set, the markers TSV is saved to `markers.tsv` for inspection. |
 | `--marker-method` | TEXT | `wilcoxon` | Marker ranking method passed to `scanpy.tl.rank_genes_groups`. Options include `wilcoxon`, `t-test`, `logreg`. |
 | `--min-cells-per-group` | INT | 10 | Minimum number of cells (with non-zero counts for NB strategies) in each cluster group for a PAS to be included in differential testing. PAS failing this filter in either cluster of a pair are dropped. Source: `ema/cli/config_schema.py`, `ema/switch_test/runner.py::run_diff`. |
@@ -181,7 +181,7 @@ Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
 | `fisher --count-mode cells --marker-top-n 0` | **3.0 %** | **0 / 20** |
 
 Only `--marker-top-n 0` controls the FDR, so it is now the default: a flagless
-`ema switch diff` is calibrated. Any non-zero value still works but logs a loud
+`peakatail switch diff` is calibrated. Any non-zero value still works but logs a loud
 warning — use it as a **speed shortcut / ranking screen** on large datasets
 (NB strategies scale badly in the number of PAS), never as evidence of
 significance. If you need both speed and calibration, cut the search space
@@ -248,9 +248,9 @@ Volcano plot (log2FC vs -log10 qvalue) per cluster pair. Written by
 
 ## How it relates to other commands
 
-- **[`ema run`](run.md)** — produces the `clusters.h5ad` and `pasbed.bed` inputs.
-- **[`ema switch geneview`](switch-geneview.md)** — consumes the `differential/*.tsv` files via `--diff-tsv` to auto-rank genes for per-cluster track plots.
-- **[`ema switch length`](switch-length.md)** — complementary quantification; results can be overlaid in `geneview`.
+- **[`peakatail run`](run.md)** — produces the `clusters.h5ad` and `pasbed.bed` inputs.
+- **[`peakatail switch geneview`](switch-geneview.md)** — consumes the `differential/*.tsv` files via `--diff-tsv` to auto-rank genes for per-cluster track plots.
+- **[`peakatail switch length`](switch-length.md)** — complementary quantification; results can be overlaid in `geneview`.
 
 ## See also
 

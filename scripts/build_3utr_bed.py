@@ -2,7 +2,7 @@
 """Extract a merged, strand-aware 3'UTR-only BED from a GTF.
 
 Used by the FILTER_EFFECT experiment's ``annot_filter_3utr`` scenario:
-``ema run --annot-filter --annotation-bed <this output>`` keeps only PAS
+``peakatail run --annot-filter --annotation-bed <this output>`` keeps only PAS
 that fall inside an annotated transcript 3'UTR, which is a narrower (and
 biologically more specific) region set than the default ``--annot-filter``
 fallback (``ema/annotate/gtftobed.py``'s gene-body BED, source_type="gene").

@@ -112,17 +112,17 @@ Combinations:
 
 ```bash
 # Defaults: both tiers active (recommended)
-ema run --config example.yaml
+peakatail run --config example.yaml
 
 # Distance only — for strategies that already have good valley logic
-ema run --config example.yaml --min-pas-prominence -1
+peakatail run --config example.yaml --min-pas-prominence -1
 
 # Prominence only — for libraries where you don't trust the read-length
 # auto-detect, but still want lambda-driven valley collapse
-ema run --config example.yaml --min-pas-spacing 0
+peakatail run --config example.yaml --min-pas-spacing 0
 
 # Baseline (no merge at all) — exact pre-merger behaviour, for reproducibility
-ema run --config example.yaml --min-pas-spacing 0 --min-pas-prominence -1
+peakatail run --config example.yaml --min-pas-spacing 0 --min-pas-prominence -1
 ```
 
 ## Wiring across execution paths
@@ -165,5 +165,5 @@ length-shift analysis.
 ## See also
 
 - [Peak-Calling Strategies](peak-calling.md) — how PAS summits are produced upstream
-- [`ema run`](../cli/run.md) — `--min-pas-spacing` and `--min-pas-prominence` flags
+- [`peakatail run`](../cli/run.md) — `--min-pas-spacing` and `--min-pas-prominence` flags
 - [PeakATail Technical Report](https://github.com/BMGLab/PeakATail/blob/develop/reports/PeakATail_Technical_Report.pdf) — Section 5 covers the merger in depth

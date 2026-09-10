@@ -381,7 +381,7 @@ class variable_config:
     #
     # THIS IS THE BRANCH DEFAULT AND IT IS DELIBERATELY THE ONLY COPY OF IT.
     # An earlier revision left the legacy global at "fixed" and put the branch
-    # default only in RunConfig, so `ema run` used one geometry and a direct
+    # default only in RunConfig, so `peakatail run` used one geometry and a direct
     # library call the other -- and `RunConfig.apply_to_legacy_globals()` then
     # leaked "true" into the process globals halfway through a pytest session,
     # making 15 tests order-dependent.  One default, one place.
@@ -500,7 +500,7 @@ class variable_config:
 @dataclass
 class filter_config:
     # Class defaults must match ema/cli/defaults.py::DEFAULTS so a bare
-    # `ema run` invocation (no --config and no --min-* flags) produces the
+    # `peakatail run` invocation (no --config and no --min-* flags) produces the
     # same numbers regardless of which surface set them.  Pre-fix:
     # DEFAULTS["min-read"] was 1500 but the class attribute was 2000, so
     # the result you got depended on whether the YAML loader had run yet.

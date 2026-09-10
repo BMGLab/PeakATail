@@ -1,4 +1,4 @@
-"""Contract tests for `ema switch *`."""
+"""Contract tests for `peakatail switch *`."""
 import pytest
 from click.testing import CliRunner
 

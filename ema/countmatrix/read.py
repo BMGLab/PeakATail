@@ -80,7 +80,7 @@ def read_check(
             legacy-global default is v2's ``"fixed"`` -- so every existing
             library caller and unit test keeps v2 behaviour.  The BRANCH
             default lives in the CLI schema (``RunConfig.read_geometry``),
-            which is what ``ema run`` bridges into the legacy global.
+            which is what ``peakatail run`` bridges into the legacy global.
         exclude_flags: SAM flag mask; a read with any of these bits set is
             skipped (``samtools view -F``).  ``None`` (default) reads
             ``variable_config.read_exclude_flags``, whose default is ``0`` =
@@ -260,7 +260,7 @@ def read_check(
     # -- the barcode half is a fixed-length ACGTN string and can never hold
     # one, so any RG (underscores included) round-trips exactly.
     #
-    # Do NOT sanitise or drop underscore-bearing RGs here.  `ema merge`
+    # Do NOT sanitise or drop underscore-bearing RGs here.  `peakatail merge`
     # stamps RG = dataset_id and `samtools merge` derives RG ids from file
     # names, so `sampleA_rep1` / `sampleB_rep1` are ordinary values; mapping
     # them onto a shared fallback (or onto `_`->`-`, which collides

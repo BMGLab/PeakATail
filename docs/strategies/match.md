@@ -4,7 +4,7 @@ Cross-dataset matching assigns canonical cluster IDs when the same experiment
 is processed in multiple batches, or when you want to align cell populations
 across independent samples. Each strategy reads a list of `.h5ad` files
 (one per dataset), each of which must have `obs["leiden"]` populated by a
-prior `ema run` or clustering step. The output is a DataFrame mapping every
+prior `peakatail run` or clustering step. The output is a DataFrame mapping every
 `(dataset_id, original_cluster)` pair to a `canonical_cluster` integer.
 
 For CLI usage see [../cli/switch-match.md](../cli/switch-match.md).

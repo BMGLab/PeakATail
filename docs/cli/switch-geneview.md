@@ -1,6 +1,6 @@
-# `ema switch geneview`
+# `peakatail switch geneview`
 
-`ema switch geneview` renders gene-track panels showing per-cluster PAS
+`peakatail switch geneview` renders gene-track panels showing per-cluster PAS
 coverage and proportions for a set of genes. For each gene, it builds a panel
 with depth-normalised per-cluster PAS read bars, optional isoform structure
 (from a GTF), and optional PDUI / proportion / entropy score overlays (from a
@@ -20,11 +20,11 @@ originating run directory as `peakatail_runs/<run>/switch_geneview_<timestamp>/`
 Source: `ema/cli/common.py::resolve_subcommand_output_dir`.
 
 !!! note "When to use it"
-    - You have run `ema switch diff` and want to visualise the top differentially
+    - You have run `peakatail switch diff` and want to visualise the top differentially
       used genes as per-cluster PAS track plots.
     - You have a specific gene of interest and want to see how PAS usage differs
       across all clusters.
-    - You want to overlay PDUI scores from `ema switch length` on the per-cluster
+    - You want to overlay PDUI scores from `peakatail switch length` on the per-cluster
       coverage bars to connect quantitative scores to the raw data.
 
 !!! warning "When NOT to use it"
@@ -39,14 +39,14 @@ Source: `ema/cli/common.py::resolve_subcommand_output_dir`.
 
 ```bash
 # Auto-pick top 10 genes from a diff result
-uv run ema switch geneview \
+uv run peakatail switch geneview \
   --diff-tsv peakatail_runs/emaout_.../switch_diff_<ts>/differential/fisher_0_vs_1.tsv \
   --pasbed peakatail_runs/emaout_.../per_dataset/sample1/pasbed.bed \
   --h5ad peakatail_runs/emaout_.../per_dataset/sample1/clusters.h5ad \
   --top-genes 10
 
 # Explicit gene with isoform overlay and PDUI score
-uv run ema switch geneview \
+uv run peakatail switch geneview \
   --gene-id ACTB \
   --gene-id MYC \
   --diff-tsv peakatail_runs/emaout_.../switch_diff_<ts>/differential/fisher_0_vs_1.tsv \
@@ -67,7 +67,7 @@ What lands on disk after the first command:
 ## Full `--help` output
 
 ```text
-Usage: ema switch geneview [OPTIONS]
+Usage: peakatail switch geneview [OPTIONS]
 
   Gene-track visualisation: per-cluster PAS coverage and proportions.
 
@@ -102,11 +102,11 @@ Options:
                                   png+svg+html as appropriate.
   --no-plots                      Disable all plotting (alias for --plot-
                                   engine none).
-  --diff-tsv PATH                 Differential TSV from `ema switch diff`
+  --diff-tsv PATH                 Differential TSV from `peakatail switch diff`
                                   (repeatable). Used to auto-select top-N genes
                                   by volcano score. Optional when --gene-id is
                                   supplied.
-  --length-tsv PATH               PDUI / proportion / entropy TSV from `ema
+  --length-tsv PATH               PDUI / proportion / entropy TSV from `peakatail
                                   switch length`. When present, overlays
                                   strategy scores on per-cluster bars.
   --pasbed PATH                   pasbed.bed — PAS coordinates (BED6 format).
@@ -129,10 +129,10 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--h5ad` / `-i` | PATH | — | Single `clusters.h5ad` file from `ema run`. Must have `gene_id` in `adata.var` (written when `--gtf` was provided to `ema run`). The Leiden cluster labels (`adata.obs[cluster_key]`) drive the per-cluster display. Required. |
+| `--h5ad` / `-i` | PATH | — | Single `clusters.h5ad` file from `peakatail run`. Must have `gene_id` in `adata.var` (written when `--gtf` was provided to `peakatail run`). The Leiden cluster labels (`adata.obs[cluster_key]`) drive the per-cluster display. Required. |
 | `--pasbed` | PATH | — | PAS BED file in BED6 format (chrom, start, end, pas_id, score, strand). Loaded to retrieve genomic coordinates for PAS track positioning. Required. |
-| `--diff-tsv` | PATH (repeatable) | — | One or more differential TSV files from `ema switch diff`. Each TSV is parsed for `cluster1`, `cluster2`, `gene_id`, and volcano columns. Multiple TSVs for the same cluster pair are concatenated. Optional when `--gene-id` is provided; required otherwise. |
-| `--length-tsv` | PATH | — | PDUI, proportion, or entropy TSV from `ema switch length`. When provided, score values are overlaid on per-cluster PAS bars. Optional. |
+| `--diff-tsv` | PATH (repeatable) | — | One or more differential TSV files from `peakatail switch diff`. Each TSV is parsed for `cluster1`, `cluster2`, `gene_id`, and volcano columns. Multiple TSVs for the same cluster pair are concatenated. Optional when `--gene-id` is provided; required otherwise. |
+| `--length-tsv` | PATH | — | PDUI, proportion, or entropy TSV from `peakatail switch length`. When provided, score values are overlaid on per-cluster PAS bars. Optional. |
 | `--gtf` | PATH | — | Ensembl/GENCODE GTF file. When provided, isoform structure is loaded via `ema.viz._gene_track_helpers.load_isoforms_for_gene` and drawn as a transcript model track below the PAS bars. Optional; failures are logged as warnings and do not abort the run. |
 
 ### Gene selection
@@ -146,7 +146,7 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--cluster-key` | TEXT | `leiden` | `adata.obs` column carrying cluster labels. Change this if `ema run` was called with `--external-clusters` or a custom labelling. |
+| `--cluster-key` | TEXT | `leiden` | `adata.obs` column carrying cluster labels. Change this if `peakatail run` was called with `--external-clusters` or a custom labelling. |
 
 ### Output
 
@@ -182,7 +182,7 @@ Extensions: `.png` (matplotlib), `.svg` (matplotlib with svg format), `.html`
 
 Written by `ema.viz._meta.write_figures_index`. JSON manifest of all figure
 files in the directory with their paths and the originating command
-(`"ema switch geneview"`). Failures to write this file are caught and logged
+(`"peakatail switch geneview"`). Failures to write this file are caught and logged
 as warnings (the figures are not affected).
 
 **`figures/figures_INDEX.md`**
@@ -192,9 +192,9 @@ Markdown index of figure files in the `figures/` directory, generated alongside
 
 ## How it relates to other commands
 
-- **[`ema run`](run.md)** — produces `clusters.h5ad` and `pasbed.bed`. Gene annotation in `adata.var["gene_id"]` is required.
-- **[`ema switch diff`](switch-diff.md)** — produces the `differential/*.tsv` files consumed via `--diff-tsv` for auto gene ranking.
-- **[`ema switch length`](switch-length.md)** — produces the PDUI / proportion / entropy TSV consumed via `--length-tsv` for score overlay.
+- **[`peakatail run`](run.md)** — produces `clusters.h5ad` and `pasbed.bed`. Gene annotation in `adata.var["gene_id"]` is required.
+- **[`peakatail switch diff`](switch-diff.md)** — produces the `differential/*.tsv` files consumed via `--diff-tsv` for auto gene ranking.
+- **[`peakatail switch length`](switch-length.md)** — produces the PDUI / proportion / entropy TSV consumed via `--length-tsv` for score overlay.
 
 ## See also
 

@@ -1,6 +1,6 @@
 # CLI Reference
 
-PeakATail is invoked through the `ema` command. All subcommands share a common
+PeakATail is invoked through the `peakatail` command. All subcommands share a common
 set of logging, threading, and plotting flags documented on the individual pages.
 Run any subcommand with `--help` to see its full flag list.
 
@@ -8,15 +8,15 @@ Run any subcommand with `--help` to see its full flag list.
 
 | Command | Purpose |
 |---|---|
-| [`ema run`](run.md) | Run the full pipeline: BAM input → peak calling → clustering → cluster matching |
-| [`ema reannotate`](reannotate.md) | Branch a finished run into a new trim/filter/clustering variant **without re-peak-calling** |
-| [`ema switch diff`](switch-diff.md) | Differential APA test (Fisher or NB regression) across cluster **pairs** (use `--cluster-pairs` for meaningful contrasts) |
-| [`ema switch length`](switch-length.md) | Per-cluster 3' UTR shortening/lengthening (PDUI, proportion, entropy) — **not** pairwise |
-| `ema switch trend` | Ordered-covariate (e.g. stage-progression) APA-length trend: slope + Spearman + direction |
-| `ema switch combine` | Stitch stage/celltype-labelled `clusters.h5ad` into one grouped h5ad for cross-group testing |
-| [`ema switch match`](switch-match.md) | Cross-dataset cluster matching (marker overlap, MNN, or Jaccard) |
-| [`ema switch geneview`](switch-geneview.md) | Gene-track visualisation: per-cluster PAS coverage panels |
-| `ema collapse` | Pool `samtools merge` RG-suffixed run tags back into per-library cells |
+| [`peakatail run`](run.md) | Run the full pipeline: BAM input → peak calling → clustering → cluster matching |
+| [`peakatail reannotate`](reannotate.md) | Branch a finished run into a new trim/filter/clustering variant **without re-peak-calling** |
+| [`peakatail switch diff`](switch-diff.md) | Differential APA test (Fisher or NB regression) across cluster **pairs** (use `--cluster-pairs` for meaningful contrasts) |
+| [`peakatail switch length`](switch-length.md) | Per-cluster 3' UTR shortening/lengthening (PDUI, proportion, entropy) — **not** pairwise |
+| `peakatail switch trend` | Ordered-covariate (e.g. stage-progression) APA-length trend: slope + Spearman + direction |
+| `peakatail switch combine` | Stitch stage/celltype-labelled `clusters.h5ad` into one grouped h5ad for cross-group testing |
+| [`peakatail switch match`](switch-match.md) | Cross-dataset cluster matching (marker overlap, MNN, or Jaccard) |
+| [`peakatail switch geneview`](switch-geneview.md) | Gene-track visualisation: per-cluster PAS coverage panels |
+| `peakatail collapse` | Pool `samtools merge` RG-suffixed run tags back into per-library cells |
 
 Each `switch` command has a **distinct aim and grouping** — `diff` is pairwise
 between cluster/cell groups, `length` is a per-group absolute score, `trend` is
@@ -29,13 +29,13 @@ every cluster pair.
 ```mermaid
 flowchart LR
     bam["BAM file(s)"]
-    run["ema run"]
+    run["peakatail run"]
     h5ad["clusters.h5ad\nper_dataset/<id>/"]
     pasbed["pasbed.bed\nper_dataset/<id>/"]
-    diff["ema switch diff\nswitch_diff_<ts>/"]
-    length["ema switch length\nswitch_length_<ts>/"]
-    match["ema switch match\nswitch_match_<ts>/"]
-    geneview["ema switch geneview\nswitch_geneview_<ts>/"]
+    diff["peakatail switch diff\nswitch_diff_<ts>/"]
+    length["peakatail switch length\nswitch_length_<ts>/"]
+    match["peakatail switch match\nswitch_match_<ts>/"]
+    geneview["peakatail switch geneview\nswitch_geneview_<ts>/"]
 
     bam --> run
     run --> h5ad

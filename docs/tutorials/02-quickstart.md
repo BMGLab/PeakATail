@@ -76,14 +76,14 @@ Key field explanations pulled from `ema/cli/config_schema.py::RunConfig`:
 | `atlas` | path | `None` | When set, PAS are snapped to the reference atlas instead of de-novo coordinates. |
 | `atlas_distance` | int | `50` | Maximum snap distance in bp. |
 
-For a full list of parameters see `ema run --help` or the [CLI reference](../cli/index.md).
+For a full list of parameters see `peakatail run --help` or the [CLI reference](../cli/index.md).
 
 ---
 
 ## Step 2 — Run the pipeline
 
 ```bash
-uv run ema run --config my_run.yaml --threads 4
+uv run peakatail run --config my_run.yaml --threads 4
 ```
 
 `--threads 4` limits the parallel worker pool to four CPUs. Omit it to let PeakATail auto-detect your machine's core count.
@@ -147,10 +147,10 @@ print(adata)
 
 ## Step 4 — Run differential testing
 
-Point `ema switch diff` at the h5ad produced above:
+Point `peakatail switch diff` at the h5ad produced above:
 
 ```bash
-uv run ema switch diff \
+uv run peakatail switch diff \
   --h5ad peakatail_runs/emaout_<timestamp>/07_clustering/sample1/clusters.h5ad \
   --pasbed peakatail_runs/emaout_<timestamp>/01_peak_calling/sample1/pasbed.bed \
   --strategy fisher \

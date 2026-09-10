@@ -2,7 +2,7 @@
 
 ## System prerequisites
 
-PeakATail calls `samtools` and `bedtools` at runtime via subprocess. Both must be on your `PATH` before you run `ema run`.
+PeakATail calls `samtools` and `bedtools` at runtime via subprocess. Both must be on your `PATH` before you run `peakatail run`.
 
 === "Debian / Ubuntu"
 
@@ -75,19 +75,19 @@ uv python install 3.11
 ## Verify the installation
 
 ```bash
-uv run ema --version
+uv run peakatail --version
 ```
 
 Expected output (version number matches `pyproject.toml`):
 
 ```
-ema, version 0.3.0
+peakatail, version 0.3.0
 ```
 
-Running `ema --help` lists every subcommand:
+Running `peakatail --help` lists every subcommand:
 
 ```
-Usage: ema [OPTIONS] COMMAND [ARGS]...
+Usage: peakatail [OPTIONS] COMMAND [ARGS]...
 
   PeakATail — single-cell poly(A) site detection and APA analysis.
 
@@ -105,10 +105,10 @@ Commands:
 
 ## Optional: pre-warm the GTF cache
 
-The first `ema run` invocation parses your GTF to build a gene-end BED and a UTR-lengths table. For large GTFs (Ensembl GRCh38 is ~1 GB) this takes a few minutes. You can do it up front so it does not delay your first pipeline run:
+The first `peakatail run` invocation parses your GTF to build a gene-end BED and a UTR-lengths table. For large GTFs (Ensembl GRCh38 is ~1 GB) this takes a few minutes. You can do it up front so it does not delay your first pipeline run:
 
 ```bash
-uv run ema parse-gtf --gtf /path/to/Homo_sapiens.GRCh38.99.gtf
+uv run peakatail parse-gtf --gtf /path/to/Homo_sapiens.GRCh38.99.gtf
 ```
 
 The cache is stored next to the GTF file in a `gtf_cache/` directory and is reused automatically on subsequent runs.

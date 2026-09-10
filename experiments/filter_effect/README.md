@@ -12,20 +12,20 @@ opt-in: `bash run_sweep.sh --phase phase3` (never runs as part of the default
 (`PREP_3UTR_BED`, `FILTER_EFFECT_BRANCH`, reusing `GEX_CELLTYPE` /
 `SWITCH_COMBINE` / `SWITCH_CELLTYPE` verbatim).
 
-## Mechanism: `ema reannotate`, NOT a fresh peak-call
+## Mechanism: `peakatail reannotate`, NOT a fresh peak-call
 
 Peak-calling is the expensive step and it's already done: Phase 3 branches
 off **`runs/grid/lg_annotate`** — the 6-GSM subset, `lambda_gradient`, atlas
 annotate + ip annotate run Phase 2's `GRID_RUN` already produced (row
 `lg_annotate` in `peakcall_grid.tsv`, "keep-all atlas + fasta"). Each
-scenario is an `ema reannotate --base-run runs/grid/lg_annotate` branch —
+scenario is an `peakatail reannotate --base-run runs/grid/lg_annotate` branch —
 cheap (trim → annotate → preprocess → cluster only), no BAM streaming.
 
 This is also what makes "PAS results keep everything, filter only applies
-downstream" literally true here (unlike a fresh filtered `ema run` would be
+downstream" literally true here (unlike a fresh filtered `peakatail run` would be
 — see the retracted first attempt at this experiment, corrected after
 team-lead review): the PAS filters (new `--atlas-filter` / `--ip-filter` /
-`--annot-filter` flags on `ema reannotate`, added in this PR) are applied to
+`--annot-filter` flags on `peakatail reannotate`, added in this PR) are applied to
 a **copy** of `lg_annotate`'s `posbed.bed`/`negbed.bed` written into each
 branch's own `--out` directory, immediately before `find_close()`.
 `lg_annotate`'s own `posbed.bed`/`negbed.bed`/`annotatedpas.bed` are never
@@ -37,7 +37,7 @@ so the drop is confined to the downstream matrix, exactly as asked.
 
 ## Scenarios (one-factor-at-a-time against `baseline`)
 
-| scenario | `ema reannotate` flags (beyond `--base-run runs/grid/lg_annotate --gtf ...`) |
+| scenario | `peakatail reannotate` flags (beyond `--base-run runs/grid/lg_annotate --gtf ...`) |
 |---|---|
 | `baseline` | none — reproduces `lg_annotate`'s downstream byte-for-byte |
 | `atlas_filter` | `--atlas-filter` (drops PAS with no atlas match; reuses `lg_annotate`'s cached `unified/atlas_status.tsv`) |
@@ -45,14 +45,14 @@ so the drop is confined to the downstream matrix, exactly as asked.
 | `ip_filter` | `--ip-filter --genome-fasta <fa>` (drops PAS flagged as internal-priming artifacts) |
 
 Then per scenario (unchanged from the original design, reusing Phase 1's
-processes): `scripts/gex_celltyping.py` → `ema switch combine --group-key
-stage --split-key celltype` → per-celltype `ema switch diff` (fisher,
-nb_multi) + `ema switch length` (classic, shannon) + `ema switch trend
+processes): `scripts/gex_celltyping.py` → `peakatail switch combine --group-key
+stage --split-key celltype` → per-celltype `peakatail switch diff` (fisher,
+nb_multi) + `peakatail switch length` (classic, shannon) + `peakatail switch trend
 --stage-order Normal,StageI,IVprimary,Met`.
 
 ## 3'UTR-only annotation BED
 
-`annot_filter_3utr` needs a 3'UTR-*only* BED, not `ema reannotate
+`annot_filter_3utr` needs a 3'UTR-*only* BED, not `peakatail reannotate
 --annot-filter`'s default fallback (no `--annotation-bed` given → the
 GTF-derived gene BED, `ema/annotate/gtftobed.py`, `source_type="gene"` —
 whole gene bodies, not 3'UTRs). Built once by `PREP_3UTR_BED` via

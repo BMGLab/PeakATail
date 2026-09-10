@@ -1,6 +1,6 @@
-# `ema run`
+# `peakatail run`
 
-`ema run` executes the complete PeakATail pipeline: it reads one or more BAM
+`peakatail run` executes the complete PeakATail pipeline: it reads one or more BAM
 files, calls poly(A) sites (PAS) per strand, builds cell-by-PAS count matrices,
 annotates PAS with gene identities from a GTF file, filters low-quality
 barcodes, and clusters cells using TF-IDF + LSI + Leiden. One `clusters.h5ad`
@@ -18,15 +18,15 @@ files as their primary input.
 
 !!! warning "When NOT to use it"
     - You already have `clusters.h5ad` files from a previous run and only want
-      to test differential APA. Use `ema switch diff` directly.
+      to test differential APA. Use `peakatail switch diff` directly.
     - You want to change only the clustering resolution without re-running peak
-      calling. Re-running `ema run` repeats the entire pipeline; there is
+      calling. Re-running `peakatail run` repeats the entire pipeline; there is
       currently no checkpoint resume.
 
 ## Quick example
 
 ```bash
-uv run ema run \
+uv run peakatail run \
   --config example.yaml \
   --threads 8 \
   --peak-strategy lambda_gradient \
@@ -47,7 +47,7 @@ After this command completes, the following files are on disk (example with
 ## Full `--help` output
 
 ```text
-Usage: ema run [OPTIONS]
+Usage: peakatail run [OPTIONS]
 
   Run the full PeakATail pipeline.
 
@@ -341,7 +341,7 @@ switch, `--polya-clip-filter`.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--peak-strategy` | TEXT | `lambda_gradient` | Algorithm used to call PAS peaks. Run `ema run --list-strategies` to see registered names. `lambda_gradient` is the recommended production strategy (highest precision in benchmark runs); pass `--peak-strategy original` for the unfiltered baseline. |
+| `--peak-strategy` | TEXT | `lambda_gradient` | Algorithm used to call PAS peaks. Run `peakatail run --list-strategies` to see registered names. `lambda_gradient` is the recommended production strategy (highest precision in benchmark runs); pass `--peak-strategy original` for the unfiltered baseline. |
 | `--lambda-window` | INT | 5000 | Window size in bp used to estimate local background signal lambda. Increase for sparse data where the default window may include too few reads. |
 | `--lambda-method` | TEXT | `median` | Estimator for lambda within the window. `median` is robust to outliers; `mean` may be inflated by nearby peaks. |
 | `--lambda-fold-change` | FLOAT | 2.0 | A region must exceed `lambda * fold_change` to be called as a peak. Raise to 3.0–4.0 to reduce false positives in noisy data. |
@@ -786,7 +786,7 @@ coordinates on the `-` strand (`pos` = BED `end` on `+`, BED `start` on `-`):
     `internal_priming` flag (and, in `--ip-filter-mode filter`, a drop set)
     that is wrong for roughly 3–4 % of `-`-strand sites in each direction
     (sites missed and sites wrongly flagged). Re-run the filter
-    (`ema reannotate --genome-fasta`) if you use the per-site flag.
+    (`peakatail reannotate --genome-fasta`) if you use the per-site flag.
 
 ### Annotation
 
@@ -815,7 +815,7 @@ coordinates on the `-` strand (`pos` = BED `end` on `+`, BED `start` on `-`):
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--match-method` | TEXT | `marker_overlap` | Strategy for assigning canonical cluster IDs across datasets. See [`ema switch match`](switch-match.md). |
+| `--match-method` | TEXT | `marker_overlap` | Strategy for assigning canonical cluster IDs across datasets. See [`peakatail switch match`](switch-match.md). |
 | `--n-top-markers` | INT | 50 | Number of top marker PAS per cluster used by `marker_overlap` for cross-dataset Jaccard comparison. |
 
 ### Logging and observability
@@ -856,7 +856,7 @@ All paths below are relative to the run root
 : Union of `pos.bed` and `neg.bed`. BED6 format: chrom, start, end, pas_id, score, strand.
 
 **`per_dataset/<id>/pasbed.bed`**
-: Filtered and (optionally atlas-snapped) PAS coordinates. BED6. This is the canonical PAS BED consumed by `ema switch diff` and `ema switch geneview`. Source: `ema/outputs.py::write_per_dataset_beds`.
+: Filtered and (optionally atlas-snapped) PAS coordinates. BED6. This is the canonical PAS BED consumed by `peakatail switch diff` and `peakatail switch geneview`. Source: `ema/outputs.py::write_per_dataset_beds`.
 
 **`per_dataset/<id>/filtered_cb.tsv`**
 : Single-column TSV of barcodes passing the `--min-read` filter. Header: `barcode\tmin_read=<n>`. Source: `ema/outputs.py::write_filtered_cb`.
@@ -868,7 +868,7 @@ All paths below are relative to the run root
 : Filtered AnnData before clustering. Inspect this to confirm the cell and PAS counts after quality filtering. Source: `ema/outputs.py::write_preprocessed_h5ad`.
 
 **`per_dataset/<id>/clusters.h5ad`**
-: Final AnnData with Leiden cluster labels in `obs["leiden"]` and gene annotations in `var["gene_id"]`. Primary input for all `ema switch` subcommands.
+: Final AnnData with Leiden cluster labels in `obs["leiden"]` and gene annotations in `var["gene_id"]`. Primary input for all `peakatail switch` subcommands.
 
 **`per_dataset/<id>/pas_gene.tsv`**
 : Two-column TSV (`pas_id`, `gene_id`) mapping every PAS to its annotated gene. Source: `ema/outputs.py::write_pas_gene_artifacts`.
@@ -894,7 +894,7 @@ every output file is byte-identical to a `--peak-workers 1` run (pinned by
 runs below).
 
 Measured on one machine (dual-socket, `/usr/bin/time -v` peak RSS = the
-largest single process, wall = whole `ema run`, `--peak-strategy
+largest single process, wall = whole `peakatail run`, `--peak-strategy
 clip_seeded`, plots off):
 
 | Dataset | BAM | Cells × PAS | Flags | Wall | Peak RSS |
@@ -927,13 +927,13 @@ change.
 
 ## How it relates to other commands
 
-After `ema run` completes, use the per-dataset `clusters.h5ad` and `pasbed.bed`
+After `peakatail run` completes, use the per-dataset `clusters.h5ad` and `pasbed.bed`
 files as inputs to the switch subcommands:
 
-- **[`ema switch diff`](switch-diff.md)** — differential APA between Leiden cluster pairs.
-- **[`ema switch length`](switch-length.md)** — per-cluster PDUI / proportion / entropy quantification.
-- **[`ema switch match`](switch-match.md)** — align cluster identities across multiple datasets.
-- **[`ema switch geneview`](switch-geneview.md)** — visualise per-cluster PAS usage for specific genes.
+- **[`peakatail switch diff`](switch-diff.md)** — differential APA between Leiden cluster pairs.
+- **[`peakatail switch length`](switch-length.md)** — per-cluster PDUI / proportion / entropy quantification.
+- **[`peakatail switch match`](switch-match.md)** — align cluster identities across multiple datasets.
+- **[`peakatail switch geneview`](switch-geneview.md)** — visualise per-cluster PAS usage for specific genes.
 
 ## See also
 

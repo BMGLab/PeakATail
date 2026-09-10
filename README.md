@@ -64,16 +64,16 @@ cp example.yaml my_run.yaml
 # Edit my_run.yaml — set datasets[].bams, gtf, seqlen, cb_len, barcode_tag
 
 # Step 2: run the full pipeline (peak calling → annotation → clustering)
-uv run ema run --config my_run.yaml --threads 4
+uv run peakatail run --config my_run.yaml --threads 4
 
 # Step 3: differential APA between every cluster pair
-uv run ema switch diff \
+uv run peakatail switch diff \
     -i peakatail_runs/<run>/per_dataset/<ds>/clusters.h5ad \
     --pasbed peakatail_runs/<run>/per_dataset/<ds>/pasbed.bed \
     --strategy fisher
 
 # Step 4: 3'UTR length quantification across clusters
-uv run ema switch length \
+uv run peakatail switch length \
     -i peakatail_runs/<run>/per_dataset/<ds>/clusters.h5ad \
     --strategy classic
 ```
@@ -98,10 +98,10 @@ peakatail_runs/emaout_20240501_143022/
             annotated_cells.tsv      # column index for annotated_matrix.mtx
             preprocessed.h5ad        # filtered AnnData before clustering
             clusters.h5ad            # AnnData with leiden cluster labels
-    switch_diff_<ts>/                # output of `ema switch diff` (auto-routed)
-    switch_length_<ts>/              # output of `ema switch length` (auto-routed)
-    switch_match_<ts>/               # output of `ema switch match` (auto-routed)
-    switch_geneview_<ts>/            # output of `ema switch geneview` (auto-routed)
+    switch_diff_<ts>/                # output of `peakatail switch diff` (auto-routed)
+    switch_length_<ts>/              # output of `peakatail switch length` (auto-routed)
+    switch_match_<ts>/               # output of `peakatail switch match` (auto-routed)
+    switch_geneview_<ts>/            # output of `peakatail switch geneview` (auto-routed)
 ```
 
 ---
@@ -140,12 +140,12 @@ peakatail_runs/emaout_20240501_143022/
 | `preprocessed.h5ad` | `per_dataset/<ds>/` | AnnData after cell/PAS filtering, before cluster labels are assigned |
 | `clusters.h5ad` | `per_dataset/<ds>/` | AnnData with `leiden` cluster labels in `.obs`; primary input for all `switch` subcommands |
 
-### Differential APA stage (`ema switch diff`)
+### Differential APA stage (`peakatail switch diff`)
 
 | File | Location | Description |
 |---|---|---|
 | `diff_<c1>_vs_<c2>.tsv` | `switch_diff_<ts>/` | Per-cluster-pair differential APA results table |
-| `cluster_match.tsv` | `switch_match_<ts>/` | Cross-dataset cluster correspondence scores (`ema switch match`) |
+| `cluster_match.tsv` | `switch_match_<ts>/` | Cross-dataset cluster correspondence scores (`peakatail switch match`) |
 | `pdui_classic.tsv` | `switch_length_<ts>/` | Per-cell PDUI scores when strategy is `classic` |
 | `proportion.tsv` | `switch_length_<ts>/` | Per-cell per-PAS proportion scores when strategy is `proportion` |
 | `entropy_shannon.tsv` | `switch_length_<ts>/` | Per-cell Shannon entropy scores when strategy is `shannon` |
@@ -154,24 +154,24 @@ peakatail_runs/emaout_20240501_143022/
 
 ## Available CLI commands
 
-All commands are accessed through the `ema` entry point installed by `pip install -e .`.
+All commands are accessed through the `peakatail` entry point installed by `pip install -e .`. The old `ema` command still works as a deprecated alias.
 
 | Command | Description | Docs |
 |---|---|---|
-| `ema run` | Run the full pipeline: peak calling, annotation, clustering | [cli/run](https://bmglab.github.io/PeakATail/cli/run/) |
-| `ema reannotate` | Branch a finished run into a new trim/filter/clustering variant without re-peak-calling | [cli/reannotate](https://bmglab.github.io/PeakATail/cli/reannotate/) |
-| `ema switch diff` | Differential APA test across cluster pairs (Fisher / NB regression) | [cli/switch-diff](https://bmglab.github.io/PeakATail/cli/switch-diff/) |
-| `ema switch length` | 3'UTR shortening/lengthening quantification (PDUI variants) | [cli/switch-length](https://bmglab.github.io/PeakATail/cli/switch-length/) |
-| `ema switch trend` | Ordered-covariate (e.g. stage-progression) APA-length trend: slope + Spearman + direction | [cli](https://bmglab.github.io/PeakATail/cli/) |
-| `ema switch combine` | Stitch stage/celltype-labelled `clusters.h5ad` files into one grouped h5ad for cross-group testing | [cli](https://bmglab.github.io/PeakATail/cli/) |
-| `ema switch match` | Cross-dataset cluster matching | [cli/switch-match](https://bmglab.github.io/PeakATail/cli/switch-match/) |
-| `ema switch geneview` | Gene-track visualisation: per-cluster PAS coverage and proportions | [cli/switch-geneview](https://bmglab.github.io/PeakATail/cli/switch-geneview/) |
-| `ema collapse` | Pool `samtools merge` RG-suffixed run tags back into per-library cells | [cli](https://bmglab.github.io/PeakATail/cli/) |
-| `ema merge` | Merge multiple BAM files into one sorted and indexed BAM | [cli/merge](https://bmglab.github.io/PeakATail/cli/merge/) |
-| `ema parse-gtf` | Pre-warm the GTF cache so subsequent runs start immediately | [cli/parse-gtf](https://bmglab.github.io/PeakATail/cli/parse-gtf/) |
-| `ema wizard` | Interactive setup wizard (also invoked by bare `ema`) | [cli/wizard](https://bmglab.github.io/PeakATail/cli/wizard/) |
+| `peakatail run` | Run the full pipeline: peak calling, annotation, clustering | [cli/run](https://bmglab.github.io/PeakATail/cli/run/) |
+| `peakatail reannotate` | Branch a finished run into a new trim/filter/clustering variant without re-peak-calling | [cli/reannotate](https://bmglab.github.io/PeakATail/cli/reannotate/) |
+| `peakatail switch diff` | Differential APA test across cluster pairs (Fisher / NB regression) | [cli/switch-diff](https://bmglab.github.io/PeakATail/cli/switch-diff/) |
+| `peakatail switch length` | 3'UTR shortening/lengthening quantification (PDUI variants) | [cli/switch-length](https://bmglab.github.io/PeakATail/cli/switch-length/) |
+| `peakatail switch trend` | Ordered-covariate (e.g. stage-progression) APA-length trend: slope + Spearman + direction | [cli](https://bmglab.github.io/PeakATail/cli/) |
+| `peakatail switch combine` | Stitch stage/celltype-labelled `clusters.h5ad` files into one grouped h5ad for cross-group testing | [cli](https://bmglab.github.io/PeakATail/cli/) |
+| `peakatail switch match` | Cross-dataset cluster matching | [cli/switch-match](https://bmglab.github.io/PeakATail/cli/switch-match/) |
+| `peakatail switch geneview` | Gene-track visualisation: per-cluster PAS coverage and proportions | [cli/switch-geneview](https://bmglab.github.io/PeakATail/cli/switch-geneview/) |
+| `peakatail collapse` | Pool `samtools merge` RG-suffixed run tags back into per-library cells | [cli](https://bmglab.github.io/PeakATail/cli/) |
+| `peakatail merge` | Merge multiple BAM files into one sorted and indexed BAM | [cli/merge](https://bmglab.github.io/PeakATail/cli/merge/) |
+| `peakatail parse-gtf` | Pre-warm the GTF cache so subsequent runs start immediately | [cli/parse-gtf](https://bmglab.github.io/PeakATail/cli/parse-gtf/) |
+| `peakatail wizard` | Interactive setup wizard (also invoked by bare `ema`) | [cli/wizard](https://bmglab.github.io/PeakATail/cli/wizard/) |
 
-Use `--list-strategies` on `ema run`, `ema switch diff`, `ema switch length`, and `ema switch match` to see the strategies registered in the current installation.
+Use `--list-strategies` on `peakatail run`, `peakatail switch diff`, `peakatail switch length`, and `peakatail switch match` to see the strategies registered in the current installation.
 
 Every command accepts `--help` for full flag documentation.
 
@@ -179,7 +179,7 @@ Every command accepts `--help` for full flag documentation.
 
 ## Available strategies
 
-### Peak calling (`ema run --peak-strategy`)
+### Peak calling (`peakatail run --peak-strategy`)
 
 | Name | Description |
 |---|---|
@@ -188,7 +188,7 @@ Every command accepts `--help` for full flag documentation.
 | `sierra_iterative` | Sierra-style iterative peak subtraction; finds multiple PAS per UTR |
 | `lambda_gradient` | Local-lambda estimation combined with gradient-based peak delineation |
 
-### Clustering (`ema run --cluster-method`)
+### Clustering (`peakatail run --cluster-method`)
 
 | Name | Description |
 |---|---|
@@ -196,7 +196,7 @@ Every command accepts `--help` for full flag documentation.
 | `leiden_libsize` | Library-size normalisation followed by PCA and Leiden community detection |
 | `external` | Load pre-computed cluster labels from a file instead of running clustering |
 
-### Cross-dataset cluster matching (`ema switch match --strategy` / `ema run --match-method`)
+### Cross-dataset cluster matching (`peakatail switch match --strategy` / `peakatail run --match-method`)
 
 | Name | Description |
 |---|---|
@@ -204,7 +204,7 @@ Every command accepts `--help` for full flag documentation.
 | `jaccard` | Match clusters by Jaccard similarity of cell sets |
 | `mnn` | Mutual nearest neighbours in a shared LSI embedding |
 
-### 3'UTR length quantification (`ema switch length --strategy`)
+### 3'UTR length quantification (`peakatail switch length --strategy`)
 
 | Name | Output file | Description |
 |---|---|---|
@@ -212,7 +212,7 @@ Every command accepts `--help` for full flag documentation.
 | `proportion` | `proportion.tsv` | Per-PAS proportion vector: reads per PAS as fraction of gene total per cell |
 | `shannon` | `entropy_shannon.tsv` | Shannon entropy of the per-PAS proportion distribution per (gene, cell) |
 
-### Differential APA testing (`ema switch diff --strategy`)
+### Differential APA testing (`peakatail switch diff --strategy`)
 
 | Name | Description |
 |---|---|

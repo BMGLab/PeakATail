@@ -1,4 +1,4 @@
-"""Single source of truth for every parameter ``ema run`` consumes.
+"""Single source of truth for every parameter ``peakatail run`` consumes.
 
 This module defines :class:`RunConfig`, a dataclass whose fields hold the
 canonical defaults, types, choices, CLI flag names, and YAML keys for
@@ -85,12 +85,12 @@ class FieldSpec:
             globals (used for purely CLI-only fields like ``--config``).
         applies_to: Optional frozenset of subcommand names this field is
             relevant to (e.g. ``frozenset({"switch_diff"})``).  ``None``
-            means the field applies everywhere (i.e. ``ema run`` + all
-            subcommands).  Fields that don't apply to ``ema run`` should
+            means the field applies everywhere (i.e. ``peakatail run`` + all
+            subcommands).  Fields that don't apply to ``peakatail run`` should
             set ``skip_legacy_bridge=True`` so the bridge ignores them.
             This attribute is purely informational — the YAML loader and
             Click generators do NOT filter on it, so switch-only fields
-            are harmless on ``ema run``.
+            are harmless on ``peakatail run``.
     """
     cli_flag: Optional[str] = None
     yaml_key: Optional[str] = None
@@ -226,7 +226,7 @@ V2_COMPAT_OMITTED_FLAGS: tuple[str, ...] = (
 
 @dataclass
 class RunConfig:
-    """Canonical parameter container for ``ema run``.
+    """Canonical parameter container for ``peakatail run``.
 
     Use :meth:`from_click_kwargs` to construct from a Click invocation,
     :meth:`from_yaml` to construct from a YAML file, and
@@ -820,7 +820,7 @@ class RunConfig:
         ),
     )
 
-    # ─── filters (D6: wired into `ema run`; see ema/main.py::_apply_pas_filters) ──
+    # ─── filters (D6: wired into `peakatail run`; see ema/main.py::_apply_pas_filters) ──
     ip_filter: bool = field(
         default=False,
         metadata=_spec(
@@ -1296,10 +1296,10 @@ class RunConfig:
     )
 
     # ─── switch diff parameters ──────────────────────────────────────────
-    # These fields are consumed by `ema switch diff`.  They live in RunConfig
+    # These fields are consumed by `peakatail switch diff`.  They live in RunConfig
     # so the YAML loader recognises them (they appear in _LIVE_KEYS) and so
     # defaults are schema-derived instead of duplicated in _SUBCOMMAND_DEFAULTS.
-    # skip_legacy_bridge=True keeps them out of the `ema run` legacy bridge.
+    # skip_legacy_bridge=True keeps them out of the `peakatail run` legacy bridge.
     # Issue #94: the default was 200, which pre-selected the tested PAS with
     # the SAME cluster labels the test then contrasts (a label double-dip) and
     # additionally shrank the within-gene Fisher denominator.  Under a

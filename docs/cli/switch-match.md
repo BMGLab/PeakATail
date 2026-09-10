@@ -1,7 +1,7 @@
-# `ema switch match`
+# `peakatail switch match`
 
-`ema switch match` assigns canonical cluster identities across two or more
-`clusters.h5ad` files produced by `ema run`. When the same experiment is
+`peakatail switch match` assigns canonical cluster identities across two or more
+`clusters.h5ad` files produced by `peakatail run`. When the same experiment is
 processed in multiple datasets (e.g. different time points, conditions, or
 replicates), cluster labels from Leiden are arbitrary integers that do not
 correspond between datasets. This command finds which cluster in dataset A
@@ -24,7 +24,7 @@ Source: `ema/cli/common.py::resolve_subcommand_output_dir`.
       cluster labels for cross-condition comparison.
     - You want to verify that clusters are reproducible across biological
       replicates before pooling differential APA results.
-    - You are running `ema switch diff` on multiple datasets and need canonical
+    - You are running `peakatail switch diff` on multiple datasets and need canonical
       cluster IDs to interpret shared vs. unique cluster populations.
 
 !!! warning "When NOT to use it"
@@ -38,7 +38,7 @@ Source: `ema/cli/common.py::resolve_subcommand_output_dir`.
 ## Quick example
 
 ```bash
-uv run ema switch match \
+uv run peakatail switch match \
   --h5ad peakatail_runs/emaout_.../per_dataset/sampleA/clusters.h5ad \
   --h5ad peakatail_runs/emaout_.../per_dataset/sampleB/clusters.h5ad \
   --strategy marker_overlap \
@@ -54,7 +54,7 @@ What lands on disk:
 ## Full `--help` output
 
 ```text
-Usage: ema switch match [OPTIONS]
+Usage: peakatail switch match [OPTIONS]
 
   Cross-dataset cluster matching (marker_overlap / mnn / jaccard).
 
@@ -104,7 +104,7 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--strategy` / `-s` | TEXT | `marker_overlap` | Matching algorithm. Run `ema switch match --list-strategies` to see all registered names. |
+| `--strategy` / `-s` | TEXT | `marker_overlap` | Matching algorithm. Run `peakatail switch match --list-strategies` to see all registered names. |
 | `--n-top-markers` | INT | 50 | Number of top marker PAS per cluster to use for `marker_overlap`. Higher values include more PAS in the Jaccard fingerprint; lower values are faster. Has no effect on `mnn` or `jaccard` (accepted for API compatibility). |
 | `--mnn-components` | INT | 30 | Number of TruncatedSVD (LSI) components for the shared embedding used by `--strategy mnn`. More components capture finer structure but increase cost. Source: `ema/clustering/cross_dataset/mnn.py::MNNStrategy`. |
 | `--mnn-k-neighbors` | INT | 10 | Number of nearest neighbours searched per cell in the MNN step. Larger k produces denser MNN graphs and slower kNN search but may improve matching for sparse clusters. Source: `ema/clustering/cross_dataset/mnn.py::MNNStrategy`. |
@@ -178,9 +178,9 @@ Written by all three strategies. Canonical mapping table.
 
 ## How it relates to other commands
 
-- **[`ema run`](run.md)** — produces the `clusters.h5ad` inputs. The `leiden` column in `obs` is required.
-- **[`ema switch diff`](switch-diff.md)** — use `cluster_match.tsv` to interpret which clusters are comparable across datasets before running pairwise differential APA.
-- **[`ema switch geneview`](switch-geneview.md)** — visualise PAS usage for canonically matched clusters.
+- **[`peakatail run`](run.md)** — produces the `clusters.h5ad` inputs. The `leiden` column in `obs` is required.
+- **[`peakatail switch diff`](switch-diff.md)** — use `cluster_match.tsv` to interpret which clusters are comparable across datasets before running pairwise differential APA.
+- **[`peakatail switch geneview`](switch-geneview.md)** — visualise PAS usage for canonically matched clusters.
 
 ## See also
 

@@ -201,7 +201,7 @@ def rank_pas_by_genomic_position(
     Downstream consumers only ever compare ranks *within* a gene (min ==
     proximal, max == distal), so the two conventions never collide — each is
     only ever populated by its own aggregation path (``per_gene`` vs
-    ``per_isoform``) within a single ``ema switch length`` invocation.
+    ``per_isoform``) within a single ``peakatail switch length`` invocation.
 
     Args:
         pas_gene_strand: DataFrame with columns ``pas_id``, ``gene_id``,
