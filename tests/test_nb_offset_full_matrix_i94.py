@@ -170,3 +170,57 @@ def test_marker_top_n_does_not_move_nb_multi_omnibus_pvalues(nb_multi_run):
         f"{mismatched}. The omnibus call in run_diff must also pass "
         "full_count_matrix=diff_df_denom (issue #94)."
     )
+
+
+# ---------------------------------------------------------------------------
+# `full_count_matrix` is a documented parameter on a public strategy, so it
+# must validate its input rather than silently produce nonsense. A matrix
+# missing rows would give those cells library size 0 -> clamped to 1 ->
+# log(1) = 0, a wildly wrong depth, and the p-values collapse toward 0.0 with
+# no exception raised. fisher already guards this; the NB strategies now match.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("strategy", ["nb_pairwise", "nb_multi"])
+def test_full_count_matrix_must_contain_every_cell(strategy):
+    import numpy as np
+    import pandas as pd
+
+    from ema.switch_test.strategies import get_diff_strategy
+
+    rng = np.random.default_rng(3)
+    cells = [f"c{i}" for i in range(60)]
+    pas = [f"P{i}" for i in range(6)]
+    counts = pd.DataFrame(rng.poisson(5, size=(60, 6)), index=cells, columns=pas)
+    labels = pd.Series(["A"] * 20 + ["B"] * 20 + ["C"] * 20, index=cells)
+
+    strat = get_diff_strategy(strategy)
+    kwargs = dict(count_matrix=counts, cluster_labels=labels,
+                  min_cells_per_group=1)
+    if not strat.supports_multi_condition:
+        kwargs.update(cluster1="A", cluster2="B")
+
+    with pytest.raises(ValueError, match="every cell"):
+        strat.test(full_count_matrix=counts.iloc[10:], **kwargs)
+
+
+@pytest.mark.parametrize("strategy", ["nb_pairwise", "nb_multi"])
+def test_full_count_matrix_must_be_a_column_superset(strategy):
+    import numpy as np
+    import pandas as pd
+
+    from ema.switch_test.strategies import get_diff_strategy
+
+    rng = np.random.default_rng(3)
+    cells = [f"c{i}" for i in range(60)]
+    pas = [f"P{i}" for i in range(6)]
+    counts = pd.DataFrame(rng.poisson(5, size=(60, 6)), index=cells, columns=pas)
+    labels = pd.Series(["A"] * 20 + ["B"] * 20 + ["C"] * 20, index=cells)
+
+    strat = get_diff_strategy(strategy)
+    kwargs = dict(count_matrix=counts, cluster_labels=labels,
+                  min_cells_per_group=1)
+    if not strat.supports_multi_condition:
+        kwargs.update(cluster1="A", cluster2="B")
+
+    with pytest.raises(ValueError, match="column-superset"):
+        strat.test(full_count_matrix=counts[pas[:3]], **kwargs)

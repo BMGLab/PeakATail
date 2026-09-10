@@ -123,6 +123,13 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A re-run or re-pushed tag would otherwise fail on the duplicate
+          # upload, and `github_release` (needs: publish) would never run --
+          # leaving the package on PyPI with no Release and therefore no DOI.
+          # The tag check already pins the version to pyproject, so "already
+          # there" is success, not a silent overwrite.
+          skip-existing: true
 
   github_release:
     name: Create the GitHub Release
@@ -166,9 +173,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A pre-release tag (v0.3.0rc1, -beta...) must not be archived as a
+          # citable version: Zenodo mints a DOI for every published Release.
+          prerelease=""
+          if ! printf '%s' "${GITHUB_REF_NAME#v}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            prerelease="--prerelease"
+            echo "::notice::$GITHUB_REF_NAME looks like a pre-release; marking the Release accordingly."
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "PeakATail $GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             --verify-tag \
+            $prerelease \
             dist/*

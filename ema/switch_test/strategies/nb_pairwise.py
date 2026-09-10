@@ -324,8 +324,31 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         # (issue #94). ``full_count_matrix`` carries the unrestricted matrix
         # when the caller narrowed the columns; the grouped UTR paths do NOT
         # pass it, because there the per-group scoping IS the analysis unit.
+        # Mirror fisher's superset guard. `full_count_matrix` is a documented
+        # parameter on a public strategy, so "no in-package caller does this"
+        # is not the standard: a row-deficient matrix would silently give those
+        # cells library size 0 -> clamped to 1 -> log(1)=0, i.e. a wildly wrong
+        # depth, and the p-values collapse to 0.0 with no exception and no
+        # warning. Validate instead of papering over it with fillna.
+        if full_count_matrix is not None:
+            missing_cols = [c for c in mat_sub.columns
+                            if c not in full_count_matrix.columns]
+            if missing_cols:
+                raise ValueError(
+                    "full_count_matrix must be a column-superset of "
+                    f"count_matrix; {{len(missing_cols)}} tested PAS are absent "
+                    f"from it (e.g. {{missing_cols[:3]}})"
+                )
+            missing_rows = mat_sub.index.difference(full_count_matrix.index)
+            if len(missing_rows):
+                raise ValueError(
+                    "full_count_matrix must contain every cell of "
+                    f"count_matrix; {{len(missing_rows)}} are absent (e.g. "
+                    f"{{list(missing_rows[:3])}}). Those cells would otherwise "
+                    "be assigned a library size of 0."
+                )
         _depth_src = mat_sub if full_count_matrix is None else \
-            full_count_matrix.reindex(index=mat_sub.index).fillna(0.0)
+            full_count_matrix.loc[mat_sub.index]
         lib_sizes = _depth_src.values.sum(axis=1).astype(np.float64)
         lib_sizes = np.where(lib_sizes < 1, 1.0, lib_sizes)  # avoid log(0)
         log_lib_size = np.log(lib_sizes)

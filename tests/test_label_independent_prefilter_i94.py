@@ -354,17 +354,18 @@ def test_select_expressed_pas_counts_cells_not_reads():
 
 
 # ---------------------------------------------------------------------------
-# The invariance promise is fisher-only.
+# The invariance promise -- once fisher-only, now general.
 #
 # The docs, the CHANGELOG and two runtime warnings all used to state, without
 # qualification, that a pre-selection "never changes a test" and that every
 # surviving p-value is bit-identical to the unrestricted run's. That holds for
 # fisher, which is handed ``full_count_matrix`` for its denominator. It is
-# false for the NB strategies: they accept ``full_count_matrix`` via
-# ``**_ignored`` and derive the GLM's per-cell library-size offset from the
-# matrix they were actually given (``nb_pairwise.py``: ``lib_sizes =
-# mat_sub.values.sum(axis=1)``), so restricting the columns moves every
-# offset, every coefficient and every p-value.
+# false for the NB strategies until 0.3.0: they accepted
+# ``full_count_matrix`` via ``**_ignored`` and derived the GLM's per-cell
+# library-size offset from the matrix they were actually given, so restricting
+# the columns moved every offset, coefficient and p-value. They now take the
+# offset from the unrestricted matrix, so the promise holds for them too --
+# which is what the second test below pins.
 #
 # These two tests pin BOTH halves of the real behaviour. If the offset is ever
 # fixed to use the full matrix (issue #124), the second test fails loudly --
