@@ -217,3 +217,19 @@ def test_release_is_serialised_and_survives_a_repushed_tag() -> None:
         "and `github_release` (needs: publish) never runs -- package on PyPI, "
         "no Release, no DOI"
     )
+
+
+def test_release_workflow_shell_steps_use_valid_git_flags() -> None:
+    """A CI-only shell bug costs a whole release cycle.
+
+    `git fetch --depth=0` is not "no limit" -- it is an error ("depth 0 is not
+    a positive number"), and it failed the very ancestry guard it was meant to
+    implement. Nothing was published, because that guard runs before the PyPI
+    upload, but the tag had to be deleted and re-cut. Cheap to pin.
+    """
+    text = RELEASE_WF.read_text()
+    assert "--depth=0" not in text, (
+        "`--depth=0` is invalid for git fetch; use `fetch-depth: 0` on "
+        "actions/checkout and a plain `git fetch` here"
+    )
+    assert "--depth 0" not in text, "same, spelled with a space"
