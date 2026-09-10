@@ -313,6 +313,10 @@ def map_pas_to_isoforms(
             }
 
         PAS that fall outside every known UTR are absent from the dict.
+        Each ``(gene_id, transcript_id)`` appears at most ONCE per PAS: a
+        spliced 3'UTR intersects the same PAS from several of its exon
+        records, and those duplicates are dropped before ranking, so ``rank``
+        and ``total_pas_in_transcript`` always describe the distinct PAS set.
 
     Raises:
         FileNotFoundError: If *pasbed_path* does not exist.
@@ -339,6 +343,23 @@ def map_pas_to_isoforms(
 
     if intersect_df.empty:
         return {}
+
+    # A spliced 3'UTR is annotated by one `three_prime_utr` record per exon,
+    # so a PAS falling inside more than one record of the SAME transcript
+    # comes back from bedtools once per record.  Left in, those rows emit the
+    # same (pas_id, gene_id, transcript_id) entry repeatedly, give that one
+    # PAS two different `rank` values and inflate `total_pas_in_transcript` --
+    # every consumer of the map then double-counts the site.  Drop them HERE,
+    # before ranking, so `rank` and `total_pas_in_transcript` are computed
+    # from the DISTINCT PAS set and all consumers are fixed at once.
+    # `keep="first"` preserves the bedtools output order, so unaffected
+    # transcripts are untouched.  (The duplicated rows carry identical
+    # `transcript_pos`: `_compute_transcript_pos` reads the transcript's whole
+    # exon list, not the intersected record, so which copy survives cannot
+    # change the position.)
+    intersect_df = intersect_df.drop_duplicates(
+        subset=["pas_id", "gene_id", "transcript_id"], keep="first"
+    )
 
     # Compute transcript-coordinate position (vectorized via apply)
     intersect_df["transcript_pos"] = intersect_df.apply(

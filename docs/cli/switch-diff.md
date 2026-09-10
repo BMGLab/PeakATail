@@ -167,7 +167,10 @@ unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
 marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
 unrestricted matrix for the denominator, so `--marker-top-n N` changes only
 *which* PAS are tested and reported, and each reported p-value is bit-identical
-to the one the unrestricted run produces. The numbers in the table below were
+to the one the unrestricted run produces. The same holds under
+`--isoform-agg within_utr` / `between_utr`: each group's background is built
+from **all** of its PAS, and the selection only decides which rows are
+reported. The numbers in the table below were
 measured before that fix; the label double-dip they are driven by is unchanged.
 
 Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
@@ -187,6 +190,30 @@ warning — use it as a **speed shortcut / ranking screen** on large datasets
 significance. If you need both speed and calibration, cut the search space
 with something independent of the labels instead (e.g. `--cluster-pairs`,
 `--min-cells-per-group`, or a PAS list from a separate dataset).
+
+## `nb_pairwise` and the dispersion floor
+
+`nb_pairwise` clips its per-PAS Negative-Binomial dispersion to `[1e-4, 10]`.
+A PAS that lands on the **lower** clip is fitted as a Poisson GLM, whose Wald
+standard error is a lower bound — so its p-value is anti-conservative. In the
+same label-permutation null as above, 8.5 % of null tests hit that floor and
+those tests produced **67 % of `nb_pairwise`'s false `q < 0.05` hits**.
+
+Such rows are now marked `dispersion_floored = True` in the per-pair TSV and
+their `qvalue` column is left **empty (`NaN`)**, so a `qvalue < fdr` filter can
+never call them significant. The row and its raw `pvalue` are still written —
+read that p-value as a *lower bound*, not as an error rate.
+
+!!! warning "nb_pairwise q-values need permutation calibration"
+
+    Withholding the floored rows removes the dominant source of
+    anti-conservatism, but it does **not** make the remaining `nb_pairwise`
+    q-values calibrated (`nb_pairwise --marker-top-n 0` still put 5.1 % of null
+    p-values below 0.05 and produced a hit in 20/20 permutation runs, the
+    dispersion-floor tail being the bulk of it). If a `nb_pairwise` q-value has
+    to carry an error-rate claim, calibrate it against a label-permutation null
+    of your own data. `fisher --count-mode cells --marker-top-n 0` is the
+    configuration measured to control the FDR out of the box.
 
 ## Within-gene Fisher framing
 
