@@ -71,6 +71,20 @@ _VERSION_MENTION_ALLOWLIST = {
     "docs/RELEASING.md": "SemVer illustrations (`0.3.0` -> `0.4.0`)",
     ".github/workflows/release.yml": "a comment example (`e.g. v0.3.0`)",
     "tests/test_version_sync.py": "this file's own allowlist",
+    "docs/cli/switch-diff.md": (
+        "historical references ('before 0.3.0 the NB offset was computed "
+        "from the restricted matrix'), which date WHEN a behaviour changed "
+        "and must NOT move with the version. They collide with this check "
+        "only while 0.3.0 is the current version"
+    ),
+    "tests/test_label_independent_prefilter_i94.py": (
+        "same: a docstring dating the NB library-size offset fix"
+    ),
+    "tests/test_changelog_section.py": (
+        "sample version numbers in CHANGELOG fixtures -- these are test data, "
+        "not mirrors of the project version, and pinning them to the real one "
+        "would make the fixtures change every release"
+    ),
 }
 
 # Lockfiles pin hundreds of third-party packages, any of which may coincide

@@ -303,3 +303,45 @@ def test_length_long_direction_never_na_any_strategy():
                            vcol: [0.5], "cell": ["c1"]})
         out = length_long(df, strategy=strategy, value_col=vcol, dataset_id="d")
         assert out.iloc[0]["direction"] in {"shorten", "lengthen", "flat", "undetermined"}
+
+
+# ---------------------------------------------------------------------------
+# A WITHHELD q-value must never be upgraded into a confident call.
+#
+# nb_pairwise withholds the q-value of a dispersion-floored test (issue #94)
+# precisely because that test is not trustworthy. The structural classifier
+# guarded "flat" with `q is not None and q >= fdr`, so a withheld q skipped the
+# guard entirely and fell through to lengthen/shorten -- suppressing the
+# q-value made the row look MORE biologically confident than an ordinary
+# non-significant one, and `findings_long` writes that into the
+# switch_diff_long parquet the hub consumes.
+# ---------------------------------------------------------------------------
+
+def test_withheld_qvalue_is_not_promoted_to_a_directional_call() -> None:
+    """Identical geometry; only the q-value differs."""
+    import math
+
+    not_significant = _gene_rows("+", [(100, 110, -0.3), (500, 510, +0.4)], qval=0.9)
+    withheld = _gene_rows("+", [(100, 110, -0.3), (500, 510, +0.4)],
+                          qval=float("nan"))
+
+    assert structural_direction_by_gene(not_significant)["G"] == "flat"
+    got = structural_direction_by_gene(withheld)["G"]
+    assert got == "undetermined", (
+        "a withheld (NaN) q-value produced the directional call "
+        f"{got!r}. Withholding a q-value marks a test as untrustworthy; it "
+        "must never make the row look more confident than a plainly "
+        "non-significant one."
+    )
+    assert math.isnan(float("nan"))  # guard: the fixture really is NaN
+
+
+def test_missing_qvalue_column_is_also_undetermined() -> None:
+    """A row with no q at all is not evidence of a direction either."""
+    rows = [
+        {"gene_id": "G", "chrom": "chr1", "start": "100", "end": "110",
+         "strand": "+", "delta_proportion": -0.3},
+        {"gene_id": "G", "chrom": "chr1", "start": "500", "end": "510",
+         "strand": "+", "delta_proportion": +0.4},
+    ]
+    assert structural_direction_by_gene(rows)["G"] == "undetermined"

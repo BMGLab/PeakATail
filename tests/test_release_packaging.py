@@ -133,3 +133,87 @@ def test_contributing_documents_zenodo_release() -> None:
     assert "zenodo" in text
     assert "doi" in text
     assert "github release" in text
+
+
+# ---------------------------------------------------------------------------
+# The guards that protect a PERMANENT PyPI version and a permanent DOI.
+#
+# These were added after a review found that a `workflow_dispatch` run on a
+# branch would upload to PyPI while the tag-guarded Release job was skipped --
+# version burned, no Release, no DOI, every step green. A later review then
+# found that deleting each of those guards left the entire suite passing: the
+# only test parsing this workflow checked jobs/needs/id-token/the publish
+# action, so the fixes themselves shipped unprotected. These pin them.
+# ---------------------------------------------------------------------------
+
+def _release_jobs() -> dict:
+    return yaml.safe_load(RELEASE_WF.read_text())["jobs"]
+
+
+def _step_names(job: dict) -> list[str]:
+    return [s.get("name", "") for s in job["steps"]]
+
+
+def test_publish_cannot_run_off_a_tag() -> None:
+    """Without this, workflow_dispatch on a branch publishes to PyPI while
+    `github_release` is skipped -- burning the version with no DOI."""
+    guard = _release_jobs()["publish"].get("if", "")
+    assert "refs/tags/" in guard, (
+        "the `publish` job has no tag guard, so a non-tag run can upload to "
+        f"PyPI: if={guard!r}"
+    )
+
+
+def test_github_release_job_exists_and_is_tag_guarded() -> None:
+    """Zenodo mints a DOI from a published GitHub Release, not from a tag."""
+    jobs = _release_jobs()
+    assert "github_release" in jobs, (
+        "no job creates a GitHub Release, so Zenodo would never fire and no "
+        "DOI would be minted"
+    )
+    rel = jobs["github_release"]
+    assert "refs/tags/" in rel.get("if", "")
+    assert rel["permissions"]["contents"] == "write"
+    assert "publish" in rel["needs"], (
+        "the Release must not be created for a version that failed to reach PyPI"
+    )
+
+
+def test_everything_that_can_fail_runs_before_the_upload() -> None:
+    """PyPI never lets a version be reused, so all checks live in `build`."""
+    build = _release_jobs()["build"]
+    names = " | ".join(_step_names(build)).lower()
+    for needle, why in [
+        ("tag matches", "tag-vs-pyproject check"),
+        ("tag is on main", "tag ancestry check"),
+        ("test suite", "the test suite on the tagged tree"),
+        ("release notes", "release-note generation"),
+    ]:
+        assert needle in names, (
+            f"the build job is missing {why}; it would run after the "
+            f"irreversible PyPI upload, or not at all. Steps: {names}"
+        )
+
+    # ...and they must precede the build itself.
+    order = _step_names(build)
+    build_idx = next(i for i, n in enumerate(order) if "Build distributions" in n)
+    for needle in ("tag matches", "tag is on main", "test suite", "release notes"):
+        idx = next(i for i, n in enumerate(order) if needle in n.lower())
+        assert idx < build_idx, f"{order[idx]!r} runs after the build step"
+
+
+def test_release_is_serialised_and_survives_a_repushed_tag() -> None:
+    doc = yaml.safe_load(RELEASE_WF.read_text())
+    assert "concurrency" in doc, (
+        "no concurrency group: a double tag push races two PyPI uploads"
+    )
+    assert doc["concurrency"].get("cancel-in-progress") is False, (
+        "a release must never be cancelled mid-publish"
+    )
+    publish_steps = _release_jobs()["publish"]["steps"]
+    pypi = next(s for s in publish_steps if "gh-action-pypi-publish" in s.get("uses", ""))
+    assert pypi.get("with", {}).get("skip-existing") is True, (
+        "without skip-existing a re-pushed tag fails on the duplicate upload "
+        "and `github_release` (needs: publish) never runs -- package on PyPI, "
+        "no Release, no DOI"
+    )

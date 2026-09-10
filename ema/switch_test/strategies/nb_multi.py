@@ -231,6 +231,7 @@ class NbMultiStrategy(DiffAPAStrategy):
         n_jobs: int = -1,
         sample_split: bool = False,
         split_seed: int = 0,
+        full_count_matrix: pd.DataFrame | None = None,
         **_ignored,  # pas_gene_map is fisher-only
     ) -> pd.DataFrame:
         """Run NB omnibus test across all cluster levels.
@@ -294,11 +295,20 @@ class NbMultiStrategy(DiffAPAStrategy):
                              "dispersion", "n_cells"]
                 )
             # Inference on the disjoint half B, restricted to selected PAS.
+            # Forward the depth source: half-A screening ALWAYS narrows the
+            # columns, so without this the recursive call computes its
+            # library-size offset over the selected subset -- reintroducing,
+            # on this path only, the very defect fixed above (issue #94). When
+            # the caller gave no full matrix, `mat` is itself unrestricted and
+            # is the right source.
             return self.test(
                 mat.loc[idx_B, selected], labs.loc[idx_B],
                 cluster1=cluster1, cluster2=cluster2,
                 min_cells_per_group=min_cells_per_group, n_jobs=n_jobs,
                 sample_split=False,
+                full_count_matrix=(
+                    full_count_matrix if full_count_matrix is not None else mat
+                ),
             )
 
         cluster_cats = sorted(labs.unique().tolist())
@@ -330,8 +340,40 @@ class NbMultiStrategy(DiffAPAStrategy):
         df_lrt = K - 1
         n_cells = len(mat)
 
-        # Library sizes
-        lib_sizes = mat.values.sum(axis=1).astype(np.float64)
+        # Library size must be the cell's SEQUENCING DEPTH, not the depth of
+        # whichever PAS survived a pre-selection: an offset that depends on
+        # which hypotheses you chose to test is not a depth proxy, and it made
+        # p-values shift by up to two orders of magnitude between an
+        # unrestricted run and a --marker-top-n / --prefilter-min-cells run
+        # (issue #94). ``full_count_matrix`` carries the unrestricted matrix
+        # when the caller narrowed the columns; the grouped UTR paths do NOT
+        # pass it, because there the per-group scoping IS the analysis unit.
+        # Mirror fisher's superset guard. `full_count_matrix` is a documented
+        # parameter on a public strategy, so "no in-package caller does this"
+        # is not the standard: a row-deficient matrix would silently give those
+        # cells library size 0 -> clamped to 1 -> log(1)=0, i.e. a wildly wrong
+        # depth, and the p-values collapse to 0.0 with no exception and no
+        # warning. Validate instead of papering over it with fillna.
+        if full_count_matrix is not None:
+            missing_cols = [c for c in mat.columns
+                            if c not in full_count_matrix.columns]
+            if missing_cols:
+                raise ValueError(
+                    "full_count_matrix must be a column-superset of "
+                    f"count_matrix; {{len(missing_cols)}} tested PAS are absent "
+                    f"from it (e.g. {{missing_cols[:3]}})"
+                )
+            missing_rows = mat.index.difference(full_count_matrix.index)
+            if len(missing_rows):
+                raise ValueError(
+                    "full_count_matrix must contain every cell of "
+                    f"count_matrix; {{len(missing_rows)}} are absent (e.g. "
+                    f"{{list(missing_rows[:3])}}). Those cells would otherwise "
+                    "be assigned a library size of 0."
+                )
+        _depth_src = mat if full_count_matrix is None else \
+            full_count_matrix.loc[mat.index]
+        lib_sizes = _depth_src.values.sum(axis=1).astype(np.float64)
         lib_sizes = np.where(lib_sizes < 1, 1.0, lib_sizes)
         log_lib_size = np.log(lib_sizes)
 

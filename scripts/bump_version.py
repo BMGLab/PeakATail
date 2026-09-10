@@ -115,8 +115,10 @@ def bump(new: str) -> int:
         else:
             print(f"  unchanged: {rel}")
     print(f"\n{old} -> {new} across {changed} file(s)")
-    print("Next: convert the CHANGELOG `## Unreleased` headings to "
-          f"`## {new} - <date>`, then tag v{new} on main.")
+    print(f"Next: collapse the CHANGELOG `## Unreleased` headings into ONE "
+          f"`## {new} - <date>` section, then tag v{new} on main.")
+    print("      (scripts/changelog_section.py joins duplicates if you sed "
+          "them all, but one section reads better in the Release body.)")
     return 0
 
 

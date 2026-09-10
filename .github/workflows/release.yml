@@ -15,6 +15,12 @@ on:
 permissions:
   contents: read
 
+# A second tag push while the first is still publishing would race two uploads
+# at the same PyPI version. Serialise, and never cancel a run mid-publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build sdist + wheel
@@ -23,6 +29,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # The tag-is-on-main check below needs real history, not a shallow
+          # clone of the tagged commit alone.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,6 +51,35 @@ jobs:
             echo "::error::PyPI never lets a version number be reused, so publishing the wrong one is permanent. Fix the tag or the version and retry." >&2
             exit 1
           fi
+
+      # Validate the notes HERE, in `build`, not in `github_release`. PyPI
+      # never lets a version number be reused, so any check that can fail must
+      # run before the upload: a CHANGELOG problem discovered after `publish`
+      # leaves the version permanently burned with no Release and no DOI.
+      # `ci.yml` triggers on pushes to develop/main and on PRs -- NOT on tags.
+      # So without these two steps a tag pushed at ANY commit on ANY branch
+      # publishes to PyPI permanently having run zero tests on that tree.
+      - name: Verify the tag is on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=0 origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not an ancestor of origin/main." >&2
+            echo "::error::Releases are cut from main. Merge the release PR first, then tag the merge commit." >&2
+            exit 1
+          fi
+
+      - name: Run the test suite on the tagged tree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+          pytest -q -rxX
+
+      - name: Verify the release notes can be generated
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python scripts/changelog_section.py "$GITHUB_REF_NAME" > /dev/null
 
       - name: Build distributions
         run: |
@@ -61,6 +100,11 @@ jobs:
   publish:
     name: Publish to PyPI
     needs: build
+    # Without this, a `workflow_dispatch` run on a branch uploads to PyPI while
+    # `github_release` (which IS tag-guarded) is skipped -- burning the version
+    # with no Release and no DOI, which is the exact failure this workflow was
+    # changed to prevent.
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Trusted publishing needs an OIDC token; the environment gate lets the
@@ -79,6 +123,13 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A re-run or re-pushed tag would otherwise fail on the duplicate
+          # upload, and `github_release` (needs: publish) would never run --
+          # leaving the package on PyPI with no Release and therefore no DOI.
+          # The tag check already pins the version to pyproject, so "already
+          # there" is success, not a silent overwrite.
+          skip-existing: true
 
   github_release:
     name: Create the GitHub Release
@@ -112,7 +163,8 @@ jobs:
       - name: Extract the release notes from CHANGELOG.md
         run: |
           set -euo pipefail
-          python scripts/changelog_section.py "${GITHUB_REF_NAME#v}" > release-notes.md
+          python scripts/changelog_section.py "$GITHUB_REF_NAME" \
+            --max-chars 120000 > release-notes.md
           echo "--- release notes ---"
           cat release-notes.md
 
@@ -121,9 +173,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # A pre-release tag (v0.3.0rc1, -beta...) must not be archived as a
+          # citable version: Zenodo mints a DOI for every published Release.
+          prerelease=""
+          if ! printf '%s' "${GITHUB_REF_NAME#v}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            prerelease="--prerelease"
+            echo "::notice::$GITHUB_REF_NAME looks like a pre-release; marking the Release accordingly."
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "PeakATail $GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             --verify-tag \
+            $prerelease \
             dist/*
