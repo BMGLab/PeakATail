@@ -29,23 +29,41 @@ def extract_section(text: str, version: str) -> str:
     """Return the body under ``## <version>``, without the heading itself.
 
     The heading may carry a trailing date and/or title (``## 0.2.0 (2026-05-10)
-    -- Product CLI``); an optional leading ``v`` is accepted. The body runs to
+    -- Product CLI``); an optional leading ``v`` is accepted. Each body runs to
     the next ``## `` heading or to end of file.
+
+    **All** matching sections are concatenated, not just the first. This
+    CHANGELOG accumulates one ``## Unreleased`` section per merged branch, and
+    the natural way to collapse two dozen of them is a single ``sed`` over the
+    headings -- which produces two dozen ``## <version>`` headings, not one.
+    Returning only the first would have published ~1.8% of the release as the
+    permanent DOI record, with no leftover ``Unreleased`` heading for
+    :func:`remaining_unreleased` to catch. This mirrors
+    ``tests/test_docs_consistency._unreleased_section``, which concatenates for
+    exactly the same reason after the same bug bit once already.
     """
     pattern = re.compile(
         r"^##[ \t]+v?" + re.escape(version) + r"(?![0-9A-Za-z.+-]).*$",
         re.MULTILINE,
     )
-    match = pattern.search(text)
-    if match is None:
+    matches = list(pattern.finditer(text))
+    if not matches:
         raise LookupError(
             f"CHANGELOG.md has no '## {version}' heading. "
             f"Collapse the 'Unreleased' sections into '## {version}' before tagging."
         )
-    rest = text[match.end():]
-    nxt = re.search(r"^##[ \t]", rest, re.MULTILINE)
-    body = rest[: nxt.start()] if nxt else rest
-    return body.strip("\n")
+    bodies = []
+    for match in matches:
+        rest = text[match.end():]
+        nxt = re.search(r"^##[ \t]", rest, re.MULTILINE)
+        bodies.append((rest[: nxt.start()] if nxt else rest).strip("\n"))
+    if len(matches) > 1:
+        print(
+            f"note: joined {len(matches)} '## {version}' sections into one set "
+            "of release notes",
+            file=sys.stderr,
+        )
+    return "\n\n".join(b for b in bodies if b)
 
 
 def remaining_unreleased(text: str) -> list[int]:
@@ -94,6 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
+    if args.max_chars and args.max_chars < 500:
+        ap.error("--max-chars must be at least 500 (the truncation notice "
+                 "alone is ~160 characters)")
+
     version = args.version.lstrip("v")
     try:
         body = extract_section(args.changelog.read_text(encoding="utf-8"), version)
@@ -127,9 +149,14 @@ def main(argv: list[str] | None = None) -> int:
             "limit. The complete changelog for this version is in "
             "[`CHANGELOG.md`](CHANGELOG.md).*"
         )
-        keep = args.max_chars - len(notice)
+        keep = max(0, args.max_chars - len(notice))
         cut = body.rfind("\n", 0, keep)          # never split mid-line
-        body = body[: cut if cut > 0 else keep] + notice
+        body = body[: cut if cut > 0 else keep]
+        if body.count("```") % 2:
+            # An odd fence count means the cut landed inside a code block; the
+            # unclosed fence would render the truncation notice as code.
+            body += "\n```"
+        body += notice
         print(
             f"note: notes truncated to {len(body)} chars "
             f"(limit {args.max_chars}); full text remains in CHANGELOG.md",

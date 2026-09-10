@@ -63,9 +63,12 @@ release.
    failure: it **verifies the tag matches `pyproject.toml`**, **verifies the
    release notes can be generated** from `CHANGELOG.md`, builds sdist + wheel,
    publishes to PyPI via trusted publishing (OIDC — no token stored), and then
-   **creates the GitHub Release** with both distributions attached. Everything
-   that can fail runs *before* the PyPI upload, because a version number can
-   never be reused.
+   **creates the GitHub Release** with both distributions attached. Every
+   check that *can* run before the PyPI upload does — tag-vs-version, tag-is-on-
+   main, the full test suite, and release-note generation — because a version
+   number can never be reused. Creating the Release necessarily happens after,
+   so if that step alone fails the package is on PyPI without a DOI: re-run the
+   job, or create the Release by hand from the same tag.
 7. **bioconda** — after the sdist is on PyPI, replace the placeholder `sha256` in
    `recipes/peakatail/meta.yaml` with the real digest and submit.
 
