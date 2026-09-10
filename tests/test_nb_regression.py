@@ -429,3 +429,82 @@ class TestRegistry:
             strategy = get_diff_strategy(name)
             with pytest.raises(ValueError, match="cluster1"):
                 strategy.test(count_matrix, cluster_labels)
+
+
+class TestNbPairwiseDispersionFloor:
+    """Issue #94: the 1e-4 dispersion floor manufactured significance.
+
+    Under a label-permutation null there is no true differential signal, so a
+    calibrated test should return no q < 0.05 call at all.  Before the fix, PAS
+    whose dispersion collapsed to the floor were fitted as Poisson (the Wald SE
+    is then a lower bound) and produced q < 0.05 hits anyway.  Such rows are now
+    flagged ``dispersion_floored`` and their q-value is withheld.
+
+    The fixture below is a fixed-seed Poisson matrix with per-cell library-size
+    heterogeneity and NO group effect; the labels are then permuted.  On
+    ``origin/develop`` it yields exactly one q < 0.05 hit, on a floored row.
+    """
+
+    @staticmethod
+    def _permutation_null(seed: int = 0, n_per_cluster: int = 40,
+                          n_pas: int = 120, mu: float = 5.0):
+        """Fixed-seed null matrix + permuted labels (no true group effect)."""
+        rng = np.random.default_rng(seed)
+        # Per-cell size factor -> realistic library-size spread; the counts
+        # themselves are Poisson given that factor, identical in both groups.
+        size_factor = rng.gamma(2.0, 0.5, size=2 * n_per_cluster)
+        counts = rng.poisson(
+            mu * size_factor[:, None] * np.ones(n_pas)
+        ).astype(np.float64)
+        cells = [f"cell_{i}" for i in range(2 * n_per_cluster)]
+        labels = np.array(["cluster_A"] * n_per_cluster
+                          + ["cluster_B"] * n_per_cluster)
+        rng.shuffle(labels)  # permutation null
+        count_matrix = pd.DataFrame(
+            counts, index=cells, columns=[f"pas_{j}" for j in range(n_pas)]
+        )
+        return count_matrix, pd.Series(labels, index=cells)
+
+    def _run(self):
+        from ema.switch_test.strategies import get_diff_strategy
+
+        count_matrix, cluster_labels = self._permutation_null()
+        return get_diff_strategy("nb_pairwise").test(
+            count_matrix, cluster_labels,
+            cluster1="cluster_A", cluster2="cluster_B",
+            min_cells_per_group=5, n_jobs=1,
+        )
+
+    def test_no_significant_hit_under_permutation_null(self):
+        """No q < 0.05 call may survive on permuted labels."""
+        results = self._run()
+        sig = results.index[results["qvalue"] < 0.05].tolist()
+        assert not sig, (
+            f"nb_pairwise reported {len(sig)} q<0.05 hit(s) under a "
+            f"label-permutation null: {sig} — dispersions "
+            f"{results.loc[sig, 'dispersion'].tolist()}"
+        )
+
+    def test_floored_rows_are_flagged_and_get_no_qvalue(self):
+        """Floored rows are marked and their q-value is withheld (NaN)."""
+        results = self._run()
+        assert "dispersion_floored" in results.columns
+        floored = results["dispersion_floored"].astype(bool)
+        # The fixture must actually exercise the floor, otherwise the test
+        # above would pass for the wrong reason.
+        assert floored.sum() > 0, "fixture no longer hits the dispersion floor"
+        assert results.loc[floored, "qvalue"].isna().all(), (
+            "dispersion-floored rows must not carry a q-value"
+        )
+        # ...and only those rows lose their q-value.
+        assert results.loc[~floored, "qvalue"].notna().all()
+        # The raw evidence is still reported for inspection.
+        assert results.loc[floored, "pvalue"].notna().all()
+
+    def test_flag_matches_the_dispersion_column(self):
+        """``dispersion_floored`` is exactly ``dispersion <= ALPHA_FLOOR``."""
+        from ema.switch_test.strategies.nb_pairwise import ALPHA_FLOOR
+
+        results = self._run()
+        expected = results["dispersion"] <= ALPHA_FLOOR
+        assert (results["dispersion_floored"].astype(bool) == expected).all()

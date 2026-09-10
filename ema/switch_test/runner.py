@@ -634,7 +634,8 @@ def _run_grouped_diff(
     reported under that group too), tagged with ``diff_group_id``,
     concatenated across groups, and ``qvalue`` (if present) is RECOMPUTED
     via BH-FDR over the POOLED p-values -- a per-group BH correction over a
-    handful of rows would be meaningless.
+    handful of rows would be meaningless.  Rows flagged ``dispersion_floored``
+    (nb_pairwise, issue #94) keep their withheld ``qvalue`` of NaN.
     """
     collected: list[pd.DataFrame] = []
     for group in groups:
@@ -672,6 +673,10 @@ def _run_grouped_diff(
     if "pvalue" in out.columns and len(out) > 0:
         from scipy.stats import false_discovery_control
         out["qvalue"] = false_discovery_control(out["pvalue"].values, method="bh")
+        # nb_pairwise withholds the q-value of dispersion-floored tests
+        # (issue #94); the pooled recomputation must not resurrect them.
+        if "dispersion_floored" in out.columns:
+            out.loc[out["dispersion_floored"].astype(bool), "qvalue"] = np.nan
     return out
 
 

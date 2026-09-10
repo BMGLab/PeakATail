@@ -7,6 +7,42 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — `nb_pairwise` dispersion floor (issue #94)
+
+### Fixed
+
+- **`nb_pairwise` no longer reports a q-value for a test whose dispersion hit
+  the numerical floor.** The per-PAS NB dispersion alpha is clipped to
+  `[1e-4, 10]`; when the estimate collapses onto the **lower** bound the GLM is
+  effectively a Poisson fit, its Wald standard error is a lower bound, and the
+  p-value is anti-conservative. The estimate is also taken under the *full*
+  model, so sampling noise that mimics a group difference is absorbed by the
+  fitted coefficient and pushes alpha down — precisely the tests that then look
+  most significant. Under the 20-run label-permutation null of issue #94, 8.5 %
+  of null tests hit the floor and those tests produced **67 % of all false
+  q < 0.05 calls**. Such rows now get `qvalue = NaN`, so no `qvalue < fdr`
+  filter can ever call them significant.
+
+### Added
+
+- **`dispersion_floored` column in the `nb_pairwise` per-pair output** (`True`
+  when `dispersion <= 1e-4`). The row itself and its raw `pvalue` are still
+  reported so the evidence stays inspectable; only the q-value is withheld.
+  `NbPairwiseStrategy.test` logs a warning naming how many PAS were affected.
+  The floored rows stay in the BH input so the family size *m* is unchanged —
+  dropping them would have made every *other* q-value less conservative — and
+  `switch diff`'s pooled BH recomputation for `within_utr`/`between_utr`
+  preserves the withheld NaN.
+
+### Changed
+
+- **Documented that `nb_pairwise` q-values are not permutation-calibrated.**
+  Withholding the floored rows removes the dominant source of anti-conservatism
+  but does not by itself make the remaining q-values calibrated; that needs a
+  permutation-calibrated q (or dispersion shrinkage toward a trend), which is
+  still open on issue #94. `docs/strategies/diff.md` and
+  `docs/cli/switch-diff.md` now say so.
+
 ## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
 
 ### Fixed
