@@ -7,6 +7,28 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — `switch diff` per-pair TSV column documentation (issue #94)
+
+### Fixed
+
+- `docs/cli/switch-diff.md` documented a `statistic` column that the per-pair
+  TSV has not carried for some time, and listed only 3 of the 14 statistical
+  columns `--strategy fisher` actually writes. The table now matches the
+  columns produced by `ema/switch_test/strategies/fisher.py` exactly and in
+  output order, and names the differing column sets of `nb_pairwise` and
+  `nb_multi`.
+- The docs never stated that `delta_proportion` and `log2fc` carry
+  **opposite sign** conventions — `delta_proportion = prop(cluster1) - prop(cluster2)`
+  (positive ⇒ used more in `cluster1`) while
+  `log2fc = log2(prop(cluster2) / prop(cluster1))` (positive ⇒ used more in
+  `cluster2`). Both formulas and their directions are now spelled out in the
+  column table and in a callout.
+- `tests/test_docs_consistency.py` gained a guard that derives the real column
+  list by running the fisher strategy and compares it to the documented table,
+  so this schema cannot drift again.
+
+`docs/concepts/output-files.md` was checked and is not stale: it describes the
+lead columns generically and defers to the CLI page for the full schema.
 ## Unreleased — `--marker-top-n` no longer narrows the UTR background (issue #94)
 
 ### Fixed
