@@ -153,6 +153,51 @@ lead columns generically and defers to the CLI page for the full schema.
   depth — `_build_diff_isoform_groups` takes the map as an argument, and a
   duplicate reaching `fisher` aborts the run with
   `TypeError: cannot convert the series to <class 'int'>`.
+- `--marker-top-n`'s help text and its runtime warning now name
+  `--prefilter-min-cells` as the safe way to get the speed.
+## Unreleased — the NB library-size offset, and three ways a withheld q-value lied
+
+### Fixed
+
+- **BREAKING (bug fix): `nb_pairwise` / `nb_multi` p-values no longer depend on
+  which PAS were pre-selected.** Both strategies accepted `full_count_matrix`
+  via `**_ignored` and built the GLM's per-cell library-size offset from
+  whatever matrix they were handed, so `--marker-top-n` / `--prefilter-min-cells`
+  silently moved every cell's offset and with it every coefficient, dispersion
+  and p-value — up to two orders of magnitude on a fixture. The offset now
+  always comes from the unrestricted matrix: a cell's sequencing depth cannot
+  depend on the hypotheses you chose to test. This also makes the documented
+  "a pre-selection never changes a test" invariant true for the NB strategies,
+  which it previously was not. **Only runs that set one of those knobs change**
+  — with both off nothing was ever forwarded and nothing moves. The per-group
+  scoping of `--isoform-agg within_utr` / `between_utr` is deliberately
+  unchanged: there the group *is* the analysis unit.
+- **A withheld `qvalue` no longer reads as maximal confidence.** `nb_pairwise`
+  withholds the q-value of a dispersion-floored test because that test is not
+  trustworthy; two consumers treated the resulting `NaN` as the opposite.
+  `structural_direction_by_gene` guarded "flat" with `q is not None and
+  q >= fdr`, so a withheld q skipped the guard and became a directional
+  `lengthen`/`shorten` call in `switch_diff_long` — suppressing the q-value
+  made the row look *more* confident than a plainly non-significant one. It is
+  now `undetermined`. In `rank_top_genes`, `q.where(q > 0, 1e-300)` also caught
+  `NaN` (`NaN > 0` is False) so the following `.fillna(1.0)` never fired and a
+  withheld q scored `-log10(1e-300) = 300`, ranking it above every genuine hit
+  in the auto gene panels and `switch geneview --top-genes`.
+- **`scripts/changelog_section.py` refuses a partially-collapsed CHANGELOG.**
+  The guard only fired when *nothing* had been collapsed, but this file carries
+  one `## Unreleased` section per merged branch (23 at 0.3.0), so the realistic
+  mistake is collapsing the first and missing the rest — which would publish to
+  PyPI, create the Release and mint a permanent Zenodo DOI whose notes describe
+  a few percent of the release, every step green. It now names the leftover
+  line numbers and refuses; `--allow-remaining-unreleased` opts out when a
+  section is deliberately held for the next cycle.
+- **`docs/cli/switch-diff.md` documented the wrong `nb_pairwise` schema.** The
+  strategy-specific sentence omitted `dispersion_floored`, which is column 5 of
+  7, so every column after it was misnamed for anyone reading positionally. The
+  per-pair TSV *table* was already pinned by a test, but that test derives
+  ground truth from `fisher` alone; the prose was checked by nothing and is now
+  covered for `nb_pairwise` and `nb_multi`.
+
 ## Unreleased — the release that mints a DOI
 
 ### Fixed

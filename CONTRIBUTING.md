@@ -30,7 +30,7 @@ Releases are **tag-triggered**. The single source of truth for the version is
 4. The tag push runs `.github/workflows/release.yml`, which does three things
    in order and stops at the first failure:
 
-   1. **Verifies the tag against `pyproject.toml`.** A `v0.3.0` tag on a tree
+   1. **Verifies the tag against `pyproject.toml`.** A `vX.Y.Z` tag on a tree
       whose version says something else fails here, before anything is
       published — PyPI never lets a version number be reused, so a wrong upload
       is permanent.
@@ -44,7 +44,7 @@ Releases are **tag-triggered**. The single source of truth for the version is
       is the step Zenodo watches (see below). Its notes come from
       `scripts/changelog_section.py`, which **fails the job** if `CHANGELOG.md`
       has no `## <version>` heading — so collapsing `## Unreleased` into
-      `## 0.3.0` in step 2 is not optional.
+      `## X.Y.Z` in step 2 is not optional.
 
 ### bioconda (after the PyPI release exists)
 
@@ -71,7 +71,9 @@ GitHub integration mints a DOI automatically for each GitHub Release.
 
 1. The `github_release` job in `release.yml` publishes the GitHub Release for
    you, and the Zenodo webhook fires on that publish. Nothing manual here.
-2. Zenodo archives the tarball and issues the version DOI. Grab the badge from
+2. Zenodo archives the repository's auto-generated **source zipball** for
+   that tag (not the sdist/wheel attached to the Release) and issues the
+   version DOI. Grab the badge from
    the Zenodo record and (optionally) add it to `README.md`.
 3. Add the DOI to `CITATION.cff` (`doi:` and/or an `identifiers:` entry) and to
    the manuscript's *Data/Code Availability* statement. Cite the **concept DOI**

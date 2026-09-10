@@ -150,7 +150,17 @@ def structural_direction_by_gene(rows, fdr: float = 0.05, eps: float = 1e-9) -> 
         q = _finite(distal.get("qvalue"))
         if d is None:
             out[gid] = "undetermined"
-        elif q is not None and q >= fdr:
+        elif q is None:
+            # No usable q-value: either the strategy wrote none, or nb_pairwise
+            # WITHHELD it because the dispersion hit its floor (issue #94).
+            # A withheld q means the test is not trustworthy, so it must not be
+            # promoted into a confident directional call. Without this branch a
+            # withheld row skipped the significance guard entirely and fell
+            # through to lengthen/shorten -- so suppressing the q-value made the
+            # row look MORE biologically confident than an ordinary
+            # non-significant one, inverting the intent of the withholding.
+            out[gid] = "undetermined"
+        elif q >= fdr:
             out[gid] = "flat"
         elif abs(d) <= eps:
             out[gid] = "flat"

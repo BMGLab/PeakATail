@@ -182,7 +182,19 @@ unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
 marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
 unrestricted matrix for the denominator, so `--marker-top-n N` changes only
 *which* PAS are tested and reported, and each reported p-value is bit-identical
-to the one the unrestricted run produces. The same holds under
+to the one the unrestricted run produces.
+
+> **This holds for every strategy, but it did not always.** `fisher` takes the
+> unrestricted matrix for its within-gene denominator. `nb_pairwise` and
+> `nb_multi` additionally derive a per-cell library-size offset
+> (`offset = log(total counts in that cell)`); before 0.3.0 they computed it
+> from whatever matrix they were handed, so a pre-selection silently changed
+> every cell's offset and therefore every fitted coefficient, dispersion and
+> p-value — by up to two orders of magnitude on a small fixture. The offset is
+> now always taken from the full matrix, because a cell's sequencing depth
+> cannot depend on which hypotheses you chose to test.
+
+The same holds under
 `--isoform-agg within_utr` / `between_utr`: each group's background is built
 from **all** of its PAS, and the selection only decides which rows are
 reported. The numbers in the table below were
@@ -244,6 +256,10 @@ Two further properties hold exactly, not approximately, and are pinned by
   reports for that PAS — the pre-filter removes hypotheses, it never changes a
   test. The q-values are then plain Benjamini–Hochberg over that smaller,
   label-blind set of hypotheses.
+
+  For `nb_pairwise` / `nb_multi` this holds only because their library-size
+  offset is taken from the full matrix (see the note under `--marker-top-n`
+  above); before 0.3.0 it did not hold for them.
 
 **Choosing N.** The criterion counts *cells*, not reads, because the per-cell
 contingency table (`--count-mode cells`) is built from exactly that number: a
@@ -344,7 +360,8 @@ One TSV per cluster pair. Columns (in order) for the default `--strategy fisher`
     — and note the volcano plot's x-axis is `log2fc`, i.e. cluster2-positive.
 
 The statistical columns are strategy-specific. `--strategy nb_pairwise` writes
-`pvalue`, `qvalue`, `log2fc`, `dispersion`, `n_cells`, `test_stat`; the
+`pvalue`, `qvalue`, `log2fc`, `dispersion`, `dispersion_floored`,
+`n_cells`, `test_stat`; the
 `nb_multi` omnibus (written to `<strategy>_omnibus.tsv`, not to a per-pair
 file) writes `pvalue`, `qvalue`, `test_stat`, `df`, `dispersion`, `n_cells`.
 

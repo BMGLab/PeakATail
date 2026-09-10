@@ -351,3 +351,115 @@ def test_select_expressed_pas_counts_cells_not_reads():
     assert select_expressed_pas(m, min_cells=4) == ["everywhere"]
     assert select_expressed_pas(m, min_cells=0) == list(m.columns)
     assert select_expressed_pas(m, min_cells=99) == []
+
+
+# ---------------------------------------------------------------------------
+# The invariance promise is fisher-only.
+#
+# The docs, the CHANGELOG and two runtime warnings all used to state, without
+# qualification, that a pre-selection "never changes a test" and that every
+# surviving p-value is bit-identical to the unrestricted run's. That holds for
+# fisher, which is handed ``full_count_matrix`` for its denominator. It is
+# false for the NB strategies: they accept ``full_count_matrix`` via
+# ``**_ignored`` and derive the GLM's per-cell library-size offset from the
+# matrix they were actually given (``nb_pairwise.py``: ``lib_sizes =
+# mat_sub.values.sum(axis=1)``), so restricting the columns moves every
+# offset, every coefficient and every p-value.
+#
+# These two tests pin BOTH halves of the real behaviour. If the offset is ever
+# fixed to use the full matrix (issue #124), the second test fails loudly --
+# which is the point: whoever makes NB invariant must also come back and
+# un-qualify the documentation this file's docstring now qualifies.
+# ---------------------------------------------------------------------------
+
+def _restriction_fixture():
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(7)
+    cells = [f"c{i}" for i in range(80)]
+    pas = [f"P{i}" for i in range(8)]
+    mat = rng.poisson(6, size=(80, 8))
+    mat[:40, 0] = rng.poisson(3, 40)
+    mat[40:, 0] = rng.poisson(12, 40)
+    counts = pd.DataFrame(mat, index=cells, columns=pas)
+    labels = pd.Series(["A"] * 40 + ["B"] * 40, index=cells)
+    kept = pas[:4]
+    gene_map = {p: "G1" for p in pas}
+    return counts, labels, kept, gene_map
+
+
+def test_fisher_pvalues_survive_a_restriction_unchanged():
+    """The documented invariance, for the one strategy that has it."""
+    from ema.switch_test.strategies import get_diff_strategy
+
+    counts, labels, kept, gene_map = _restriction_fixture()
+    strat = get_diff_strategy("fisher")
+    kw = dict(cluster_labels=labels, cluster1="A", cluster2="B",
+              min_cells_per_group=1, pas_gene_map=gene_map)
+    full = strat.test(count_matrix=counts, **kw)
+    restricted = strat.test(count_matrix=counts[kept],
+                            full_count_matrix=counts, **kw)
+    shared = [p for p in kept if p in full.index and p in restricted.index]
+    assert shared, "fixture produced no comparable rows"
+    for pas_id in shared:
+        assert full.loc[pas_id, "pvalue"] == restricted.loc[pas_id, "pvalue"], (
+            f"fisher p-value for {pas_id} changed under a restriction; the "
+            "full-matrix denominator fix (issue #94) has regressed"
+        )
+
+
+def test_nb_pairwise_pvalues_survive_a_restriction_unchanged():
+    """The NB offset fix: invariance now holds for nb_pairwise too.
+
+    Until 0.3.0 nb_pairwise took ``full_count_matrix`` via ``**_ignored`` and
+    built its GLM offset from ``mat_sub.values.sum(axis=1)`` -- the library
+    size of whatever matrix it was handed. A pre-selection therefore moved
+    every cell's offset and every p-value with it (up to two orders of
+    magnitude). The offset is now read from the unrestricted matrix, because a
+    cell's sequencing depth cannot depend on which hypotheses were selected.
+    """
+    from ema.switch_test.strategies import get_diff_strategy
+
+    counts, labels, kept, gene_map = _restriction_fixture()
+    strat = get_diff_strategy("nb_pairwise")
+    kw = dict(cluster_labels=labels, cluster1="A", cluster2="B",
+              min_cells_per_group=1, pas_gene_map=gene_map)
+    full = strat.test(count_matrix=counts, **kw)
+    restricted = strat.test(count_matrix=counts[kept],
+                            full_count_matrix=counts, **kw)
+    shared = [p for p in kept if p in full.index and p in restricted.index]
+    assert shared, "fixture produced no comparable rows"
+    for pas_id in shared:
+        assert full.loc[pas_id, "pvalue"] == restricted.loc[pas_id, "pvalue"], (
+            f"nb_pairwise p-value for {pas_id} changed under a restriction: "
+            f"{full.loc[pas_id, 'pvalue']!r} -> "
+            f"{restricted.loc[pas_id, 'pvalue']!r}. The library-size offset "
+            "must come from full_count_matrix, not the restricted matrix."
+        )
+
+
+def test_nb_pairwise_without_the_full_matrix_still_shifts():
+    """Guard the mechanism, not just the outcome.
+
+    If someone removes the ``full_count_matrix`` plumbing in ``runner.py`` the
+    strategy still *accepts* the argument, so the test above would keep passing
+    while real runs silently regressed. This pins that the offset genuinely
+    comes from the argument: withhold it and the old behaviour returns.
+    """
+    from ema.switch_test.strategies import get_diff_strategy
+
+    counts, labels, kept, gene_map = _restriction_fixture()
+    strat = get_diff_strategy("nb_pairwise")
+    kw = dict(cluster_labels=labels, cluster1="A", cluster2="B",
+              min_cells_per_group=1, pas_gene_map=gene_map)
+    full = strat.test(count_matrix=counts, **kw)
+    no_full = strat.test(count_matrix=counts[kept], **kw)
+    shared = [p for p in kept if p in full.index and p in no_full.index]
+    changed = [p for p in shared
+               if full.loc[p, "pvalue"] != no_full.loc[p, "pvalue"]]
+    assert changed, (
+        "restricting the matrix WITHOUT passing full_count_matrix no longer "
+        "changes the p-values -- the offset is evidently not being taken from "
+        "the count matrix at all, so this test no longer guards the plumbing."
+    )

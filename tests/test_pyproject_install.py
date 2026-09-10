@@ -6,27 +6,65 @@ import subprocess
 import pytest
 
 
-def _distribution():
-    """The installed `peakatail` distribution, or skip.
+def _project_version() -> str:
+    """The version this source tree declares.
 
-    These tests assert on installed *metadata*, so they only mean anything in
-    an environment where the package was actually installed -- which is what
-    CI does (`pip install -e '.[test]'`, see .github/workflows/ci.yml). Run
-    from a bare source checkout there is no distribution to inspect and
-    `md.distribution()` raises PackageNotFoundError, which used to surface as
-    three hard failures that said nothing about the code. Skip instead, the
-    same way test_entry_point_runs() already does for a missing console
-    script. This never weakens CI: there the distribution is present, so every
-    assertion below still runs.
+    Read with a regex rather than tomllib so this file still works on the
+    interpreter a contributor happens to have (tomllib is 3.11+, and the point
+    of the guard below is to behave sanely in an environment that is NOT the
+    supported one). Same single-line shape scripts/bump_version.py matches.
+    """
+    import re
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    match = re.search(r'(?m)^version = "([^"]+)"',
+                      pyproject.read_text(encoding="utf-8"))
+    assert match, "pyproject.toml has no top-level `version = \"...\"` line"
+    return match.group(1)
+
+
+def _distribution():
+    """The installed `peakatail` distribution, or skip -- but never mask a rename.
+
+    These tests assert on installed *metadata*, so they only mean anything
+    where the package was installed, which is what CI does (`pip install -e
+    '.[test]'`). From a bare source checkout there is no distribution and
+    `md.distribution()` raises, which used to surface as three hard failures
+    that said nothing about the code.
+
+    Skipping on *any* PackageNotFoundError would be too blunt: "published
+    under the wrong name" also raises it, and that is precisely the regression
+    test_distribution_name exists to catch -- the skip would swallow it. So
+    before skipping, ask which distribution actually provides the `ema` module.
+    If one does and it carries THIS tree's version, the package is installed
+    under the wrong name and that is a failure, not a skip. A stale install
+    from an older version is neither, and is skipped.
     """
     try:
         return md.distribution("peakatail")
     except md.PackageNotFoundError:
-        pytest.skip(
-            "the 'peakatail' distribution is not installed in this "
-            "interpreter; run `pip install -e '.[test]'` to exercise the "
-            "packaging metadata tests"
-        )
+        pass
+
+    providers = md.packages_distributions().get("ema", [])
+    for name in providers:
+        try:
+            installed = md.version(name)
+        except md.PackageNotFoundError:  # pragma: no cover -- racy uninstall
+            continue
+        if installed == _project_version():
+            pytest.fail(
+                f"the `ema` package is installed as distribution {name!r} "
+                f"at this tree's version ({installed}), not as 'peakatail'. "
+                "The distribution name is what users `pip install` and what "
+                "the PyPI project is called; renaming it silently breaks "
+                "every install instruction and the bioconda recipe."
+            )
+    pytest.skip(
+        "the 'peakatail' distribution is not installed in this interpreter "
+        f"(providers of `ema`: {providers or 'none'}); run "
+        "`pip install -e '.[test]'` to exercise the packaging metadata tests"
+    )
 
 
 def _console_scripts() -> dict:

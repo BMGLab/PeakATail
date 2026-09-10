@@ -231,6 +231,7 @@ class NbMultiStrategy(DiffAPAStrategy):
         n_jobs: int = -1,
         sample_split: bool = False,
         split_seed: int = 0,
+        full_count_matrix: pd.DataFrame | None = None,
         **_ignored,  # pas_gene_map is fisher-only
     ) -> pd.DataFrame:
         """Run NB omnibus test across all cluster levels.
@@ -330,8 +331,17 @@ class NbMultiStrategy(DiffAPAStrategy):
         df_lrt = K - 1
         n_cells = len(mat)
 
-        # Library sizes
-        lib_sizes = mat.values.sum(axis=1).astype(np.float64)
+        # Library size must be the cell's SEQUENCING DEPTH, not the depth of
+        # whichever PAS survived a pre-selection: an offset that depends on
+        # which hypotheses you chose to test is not a depth proxy, and it made
+        # p-values shift by up to two orders of magnitude between an
+        # unrestricted run and a --marker-top-n / --prefilter-min-cells run
+        # (issue #94). ``full_count_matrix`` carries the unrestricted matrix
+        # when the caller narrowed the columns; the grouped UTR paths do NOT
+        # pass it, because there the per-group scoping IS the analysis unit.
+        _depth_src = mat if full_count_matrix is None else \
+            full_count_matrix.reindex(index=mat.index).fillna(0.0)
+        lib_sizes = _depth_src.values.sum(axis=1).astype(np.float64)
         lib_sizes = np.where(lib_sizes < 1, 1.0, lib_sizes)
         log_lib_size = np.log(lib_sizes)
 

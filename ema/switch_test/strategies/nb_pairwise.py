@@ -257,6 +257,7 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         cluster2: str | None = None,
         min_cells_per_group: int = 10,
         n_jobs: int = -1,
+        full_count_matrix: pd.DataFrame | None = None,
         **_ignored,  # pas_gene_map is fisher-only — accept & drop
     ) -> pd.DataFrame:
         """Run NB pairwise test.
@@ -265,6 +266,13 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         ----------
         count_matrix:
             Shape ``(n_cells, n_pas)``; integer UMI counts.
+        full_count_matrix:
+            Unrestricted count matrix, when the caller narrowed
+            ``count_matrix`` with a pre-selection knob (``--marker-top-n`` /
+            ``--prefilter-min-cells``). The per-cell library-size offset is
+            taken from THIS matrix, so it stays the cell's sequencing depth
+            instead of "depth across the PAS that survived selection" (issue
+            #94). ``None`` means ``count_matrix`` is already unrestricted.
         cluster_labels:
             Per-cell cluster labels aligned to ``count_matrix`` rows.
         cluster1, cluster2:
@@ -308,8 +316,17 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         # group_indicator: 0 = cluster1, 1 = cluster2
         group_indicator = np.where(labels_sub == cluster2, 1, 0)  # shape (n_cells_sub,)
 
-        # library size = total counts per cell across all PAS
-        lib_sizes = mat_sub.values.sum(axis=1).astype(np.float64)
+        # Library size must be the cell's SEQUENCING DEPTH, not the depth of
+        # whichever PAS survived a pre-selection: an offset that depends on
+        # which hypotheses you chose to test is not a depth proxy, and it made
+        # p-values shift by up to two orders of magnitude between an
+        # unrestricted run and a --marker-top-n / --prefilter-min-cells run
+        # (issue #94). ``full_count_matrix`` carries the unrestricted matrix
+        # when the caller narrowed the columns; the grouped UTR paths do NOT
+        # pass it, because there the per-group scoping IS the analysis unit.
+        _depth_src = mat_sub if full_count_matrix is None else \
+            full_count_matrix.reindex(index=mat_sub.index).fillna(0.0)
+        lib_sizes = _depth_src.values.sum(axis=1).astype(np.float64)
         lib_sizes = np.where(lib_sizes < 1, 1.0, lib_sizes)  # avoid log(0)
         log_lib_size = np.log(lib_sizes)
 

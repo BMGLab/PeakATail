@@ -21,6 +21,8 @@ actual behaviour of the code:
 from __future__ import annotations
 
 import re
+
+import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -247,3 +249,73 @@ def test_changelog_unreleased_covers_issue_94_doc_fix():
             f"CHANGELOG.md's Unreleased section is missing {phrase!r} "
             "(CONTRIBUTING.md requires a changelog entry per change)"
         )
+
+
+def _strategy_stat_columns(strategy: str) -> list[str]:
+    """Ground truth: the stat columns `strategy` actually returns.
+
+    Generalises _fisher_stat_columns() to the NB strategies. Three clusters so
+    the nb_multi omnibus has something to be an omnibus over.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from ema.switch_test.strategies import get_diff_strategy
+
+    rng = np.random.default_rng(0)
+    cells = [f"c{i}" for i in range(60)]
+    pas = ["P1", "P2", "P3", "P4"]
+    count_matrix = pd.DataFrame(
+        rng.integers(0, 20, size=(len(cells), len(pas))), index=cells, columns=pas
+    )
+    labels = pd.Series(["A"] * 20 + ["B"] * 20 + ["C"] * 20, index=cells)
+    gene_map = {"P1": "G1", "P2": "G1", "P3": "G2", "P4": "G2"}
+    strat = get_diff_strategy(strategy)
+    kwargs = dict(
+        count_matrix=count_matrix, cluster_labels=labels,
+        min_cells_per_group=1, pas_gene_map=gene_map,
+    )
+    if not strat.supports_multi_condition:
+        kwargs.update(cluster1="A", cluster2="B")
+    result = strat.test(**kwargs)
+    assert not result.empty, f"{strategy} returned no rows for the fixture"
+    return list(result.columns)
+
+
+def _prose_stat_columns(strategy: str) -> list[str]:
+    """The columns docs/cli/switch-diff.md's PROSE claims `strategy` writes.
+
+    The per-pair TSV *table* is already pinned by
+    test_switch_diff_md_documents_the_real_tsv_columns, but it is derived from
+    fisher alone. The strategy-specific sentence below it was checked by
+    nothing -- which is how it came to omit nb_pairwise's `dispersion_floored`
+    (added by the dispersion-floor fix, issue #94) while a separate docs change
+    rewrote the same sentence. Neither branch was wrong on its own; the merged
+    result was.
+    """
+    text = SWITCH_DIFF_MD.read_text()
+    anchor = text.index("The statistical columns are strategy-specific.")
+    para = text[anchor:text.index("\n\n", anchor)]
+    # The doc names the strategy as `--strategy nb_pairwise` or `nb_multi`,
+    # so match the bare name rather than a fixed backticked form.
+    start = para.index(strategy) + len(strategy)
+    end = para.index(";", start) if ";" in para[start:] else len(para)
+    return re.findall(r"`([A-Za-z0-9_]+)`", para[start:end])
+
+
+@pytest.mark.parametrize("strategy", ["nb_pairwise", "nb_multi"])
+def test_switch_diff_md_prose_lists_the_real_strategy_columns(strategy):
+    """The strategy-specific sentence must match what the strategy returns.
+
+    Order matters: a reader indexing columns positionally is misled by a list
+    that is merely set-equal.
+    """
+    actual = _strategy_stat_columns(strategy)
+    documented = _prose_stat_columns(strategy)
+    assert documented == actual, (
+        f"docs/cli/switch-diff.md's prose for --strategy {strategy} is out of "
+        f"sync with ema/switch_test/strategies/.\n"
+        f"  documented: {documented}\n  actual:     {actual}\n"
+        f"  missing:    {sorted(set(actual) - set(documented))}\n"
+        f"  invented:   {sorted(set(documented) - set(actual))}"
+    )

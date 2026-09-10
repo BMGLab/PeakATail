@@ -334,3 +334,36 @@ def test_format_count_non_finite_and_none():
 
 def test_format_count_negative():
     assert format_count(-12345) == "-12.3k"
+
+
+# ---------------------------------------------------------------------------
+# Gene ranking must not treat a withheld q-value as maximal significance.
+# ---------------------------------------------------------------------------
+
+def test_withheld_qvalue_does_not_rank_first(monkeypatch) -> None:
+    """A q withheld for a dispersion-floored test (issue #94) scored 300.
+
+    `q.where(q > 0, 1e-300)` swallowed NaN too (NaN > 0 is False), so the
+    subsequent `.fillna(1.0)` never fired and -log10(1e-300) = 300 put the
+    untrustworthy gene above every genuine hit in the auto gene panels and
+    `switch geneview --top-genes`.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from ema.viz._gene_track_helpers import rank_top_genes
+
+    df = pd.DataFrame({
+        "gene_id": ["G_withheld", "G_big_fc", "G_ok"],
+        "qvalue": [np.nan, 0.9, 0.5],
+        "log2fc": [1.0, 5.0, 2.0],
+    })
+    ranked = rank_top_genes({("A", "B"): df}, n=3)
+    assert ranked, "fixture produced no ranking"
+    assert ranked[0] != "G_withheld", (
+        f"a gene whose q-value was WITHHELD ranked first ({ranked!r}); a "
+        "missing q must contribute no evidence, not infinite evidence."
+    )
+    assert ranked[-1] == "G_withheld", (
+        f"expected the withheld gene to score lowest, got {ranked!r}"
+    )

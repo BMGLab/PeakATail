@@ -1045,8 +1045,9 @@ def run_diff(
                     "at top-n 0; the SELECTION ALONE accounts for 17.4%%. The "
                     "second half of #94 -- a within-gene Fisher denominator "
                     "computed over only the selected PAS -- is fixed (the "
-                    "denominator now comes from the full matrix, so p-values "
-                    "match the unrestricted run), but the selection bias "
+                    "denominator now comes from the full matrix, and so does the "
+                    "NB library-size offset, so p-values match the unrestricted "
+                    "run), but the selection bias "
                     "remains: these q-values are NOT FDR-calibrated -- ranking "
                     "screen only. Use marker_top_n=0 (the default) for "
                     "calibrated inference, and prefilter_min_cells=N if you "
@@ -1201,6 +1202,11 @@ def run_diff(
                     cluster_labels=cluster_labels,
                     n_jobs=n_jobs,
                     min_cells_per_group=min_cells_per_group,
+                    # issue #94: keep the library-size offset on the full
+                    # matrix when a pre-selection narrowed diff_df. This path
+                    # forwarded nothing, so the omnibus narrowed under both
+                    # knobs while the pairwise path did not.
+                    full_count_matrix=diff_df_denom,
                 )
             else:
                 df = _run_grouped_diff(

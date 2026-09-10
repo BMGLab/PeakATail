@@ -48,6 +48,23 @@ def extract_section(text: str, version: str) -> str:
     return body.strip("\n")
 
 
+def remaining_unreleased(text: str) -> list[int]:
+    """Line numbers of every ``## Unreleased`` heading still in ``text``.
+
+    Collapsing the release notes is a manual step and this CHANGELOG carries
+    one ``## Unreleased`` section per merged branch -- 23 of them at 0.3.0. A
+    check that only fires when *nothing* was collapsed is therefore the wrong
+    check: the realistic mistake is collapsing the first heading and missing
+    the other 22, which would publish to PyPI and mint a permanent Zenodo DOI
+    whose notes describe a few percent of the release, with every workflow step
+    green.
+    """
+    return [
+        i for i, line in enumerate(text.splitlines(), start=1)
+        if re.match(r"^##[ \t]+Unreleased\b", line)
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("version", help="version number, with or without a leading 'v'")
@@ -56,6 +73,23 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=REPO_ROOT / "CHANGELOG.md",
         help="path to CHANGELOG.md (default: the repo's own)",
+    )
+    ap.add_argument(
+        "--max-chars",
+        type=int,
+        default=0,
+        help="truncate the notes to this many characters, appending a pointer "
+             "to CHANGELOG.md. GitHub rejects a release body over 125,000 "
+             "characters with 'Body is too long' -- and by then the PyPI "
+             "upload has already happened. 0 disables truncation.",
+    )
+    ap.add_argument(
+        "--allow-remaining-unreleased",
+        action="store_true",
+        help="proceed even if `## Unreleased` headings remain. Only for the "
+             "rare case where a section was deliberately kept for the NEXT "
+             "cycle; the default refusal is what stops a partially-collapsed "
+             "CHANGELOG from becoming a permanent DOI record.",
     )
     args = ap.parse_args(argv)
 
@@ -71,6 +105,36 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    leftovers = remaining_unreleased(args.changelog.read_text(encoding="utf-8"))
+    if leftovers and not args.allow_remaining_unreleased:
+        print(
+            f"error: {args.changelog} still has {len(leftovers)} "
+            f"'## Unreleased' heading(s) at line(s) "
+            f"{', '.join(str(n) for n in leftovers[:10])}"
+            f"{' ...' if len(leftovers) > 10 else ''}.\n"
+            f"       The '## {version}' section was found, but those sections "
+            f"would be left OUT of the release notes -- and those notes become "
+            f"the permanent Zenodo DOI record. Collapse them into "
+            f"'## {version}' too, or pass --allow-remaining-unreleased if a "
+            f"section is deliberately held for the next cycle.",
+            file=sys.stderr,
+        )
+        return 1
+    if args.max_chars and len(body) > args.max_chars:
+        notice = (
+            "\n\n---\n\n*These notes were truncated to fit GitHub's release-body "
+            "limit. The complete changelog for this version is in "
+            "[`CHANGELOG.md`](CHANGELOG.md).*"
+        )
+        keep = args.max_chars - len(notice)
+        cut = body.rfind("\n", 0, keep)          # never split mid-line
+        body = body[: cut if cut > 0 else keep] + notice
+        print(
+            f"note: notes truncated to {len(body)} chars "
+            f"(limit {args.max_chars}); full text remains in CHANGELOG.md",
+            file=sys.stderr,
+        )
+
     print(body)
     return 0
 

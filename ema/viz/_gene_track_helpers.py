@@ -355,8 +355,14 @@ def rank_top_genes(
             [np.inf, -np.inf], np.nan
         )
         q = pd.to_numeric(df[qvalue_col], errors="coerce")
-        q = q.where(q > 0, 1e-300)
-        score = (-np.log10(q.fillna(1.0))) * lf.abs().fillna(0.0)
+        # A missing q must mean "no evidence", never "infinite evidence".
+        # `q.where(q > 0, 1e-300)` also swallowed NaN (NaN > 0 is False), so a
+        # q-value WITHHELD for a dispersion-floored test (issue #94) became
+        # 1e-300 and scored -log10(1e-300) = 300 -- ranking it above every
+        # genuine hit in the auto gene panels and `--top-genes`. Clamp true
+        # zeros first, then send NaN to 1.0 (score contribution 0).
+        q = q.mask(q <= 0, 1e-300).fillna(1.0)
+        score = (-np.log10(q)) * lf.abs().fillna(0.0)
         for gene, s in zip(df[gene_id_col].astype(str), score):
             if not gene or gene == "nan":
                 continue
