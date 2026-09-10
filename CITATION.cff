@@ -1,5 +1,6 @@
-# NOTE: placeholder author list. The final, ordered author list (and any
-# ORCIDs) will be set to match the PeakATail manuscript when it is submitted.
+# Author list matches the PeakATail manuscript (Amiri Tabat & Kaymaz).
+# Further authors will be added as the manuscript's author list grows; keep
+# the order here identical to the paper's.
 cff-version: 1.2.0
 message: "If you use PeakATail in your research, please cite it using the metadata below."
 type: software
@@ -7,9 +8,14 @@ title: "PeakATail"
 version: "0.3.0"
 abstract: "Single-cell poly(A) site detection and alternative polyadenylation (APA) analysis from scRNA-seq BAM files."
 authors:
-  - name: "PeakATail developers (BMGLab)"
   - family-names: "Amiri Tabat"
     given-names: "Amir"
+    orcid: "https://orcid.org/0009-0009-8740-7770"
+    affiliation: "Department of Computer Engineering, Faculty of Computer and Informatics Sciences, Ege University, İzmir, Türkiye"
+  - family-names: "Kaymaz"
+    given-names: "Yasin"
+    orcid: "https://orcid.org/0000-0002-9725-7536"
+    affiliation: "Department of Bioengineering, Faculty of Engineering, Ege University, İzmir, Türkiye"
 repository-code: "https://github.com/BMGLab/PeakATail"
 url: "https://bmglab.github.io/PeakATail/"
 license: MIT
