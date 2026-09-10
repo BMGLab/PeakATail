@@ -216,7 +216,7 @@ Output is written to `<out_dir>/differential/` (created automatically).
 
 **`differential/<strategy>_<c1>_vs_<c2>.tsv`**
 
-One TSV per cluster pair. Columns (in order):
+One TSV per cluster pair. Columns (in order) for the default `--strategy fisher`:
 
 | Column | Type | Description |
 |---|---|---|
@@ -228,11 +228,33 @@ One TSV per cluster pair. Columns (in order):
 | `strand` | str | `+` or `-`. **Omitted under `--isoform-agg between_utr`.** |
 | `cluster1` | str | First cluster label of this pair. |
 | `cluster2` | str | Second cluster label of this pair. |
+| `pvalue` | float | Raw two-sided Fisher exact p-value for this PAS. |
+| `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR) across all PAS tested in this pair. |
+| `n_cells` | int | Cells in the pair (`n_cells_cluster1 + n_cells_cluster2`). |
+| `n_cells_cluster1` | int | Cells carrying the `cluster1` label. |
+| `n_cells_cluster2` | int | Cells carrying the `cluster2` label. |
+| `n_cells_expr_cluster1` | int | Cells of cluster 1 with ≥1 read at this PAS. |
+| `n_cells_expr_cluster2` | int | Cells of cluster 2 with ≥1 read at this PAS. |
+| `n_reads_pas_cluster1` | int | Reads at this PAS in cluster 1. |
+| `n_reads_pas_cluster2` | int | Reads at this PAS in cluster 2. |
 | `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). Summed over **all** PAS of the gene, including any excluded by `--marker-top-n`. |
 | `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2, on the same basis. |
-| `statistic` | float | Test statistic (odds ratio for Fisher). |
-| `pvalue` | float | Raw p-value. |
-| `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR). |
+| `odds_ratio` | float | Odds ratio of the 2×2 table (this PAS vs the gene's other PAS, cluster 1 vs cluster 2), in the unit chosen by `--count-mode` — cells by default, reads under `--count-mode reads`. |
+| `delta_proportion` | float | `prop(cluster1) - prop(cluster2)` of the within-gene usage proportion. **Positive ⇒ the PAS is used more in `cluster1`.** |
+| `log2fc` | float | `log2(prop(cluster2) / prop(cluster1))` of those same proportions (plus a small `eps` so an empty cluster stays finite). **Positive ⇒ the PAS is used more in `cluster2`.** |
+
+!!! warning "`delta_proportion` and `log2fc` use opposite sign conventions"
+    `delta_proportion` is `prop(cluster1) - prop(cluster2)` while `log2fc` is
+    `log2(prop(cluster2) / prop(cluster1))`, so on the same row the two
+    normally carry **opposite signs**: `delta_proportion > 0` means the PAS is
+    used more in `cluster1`, whereas `log2fc > 0` means it is used more in
+    `cluster2`. Filter on one of them, never on both with the same inequality
+    — and note the volcano plot's x-axis is `log2fc`, i.e. cluster2-positive.
+
+The statistical columns are strategy-specific. `--strategy nb_pairwise` writes
+`pvalue`, `qvalue`, `log2fc`, `dispersion`, `n_cells`, `test_stat`; the
+`nb_multi` omnibus (written to `<strategy>_omnibus.tsv`, not to a per-pair
+file) writes `pvalue`, `qvalue`, `test_stat`, `df`, `dispersion`, `n_cells`.
 
 The augmented column order (pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, then statistical columns) is produced by the `_augment_diff_df` helper in `ema/switch_test/runner.py`.
 
