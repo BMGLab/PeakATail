@@ -190,3 +190,100 @@ def test_within_utr_runs_and_uses_the_deduplicated_background(_spliced_utr_env):
     row10 = df[df["pas_id"] == "10"].iloc[0]
     assert int(row10["n_reads_pas_cluster1"]) == 16
     assert int(row10["n_reads_pas_cluster2"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# between_utr: a spliced UTR was silently double-counted (needs TWO isoforms,
+# because `between_utr` compares the UTRs of one gene against each other).
+# ---------------------------------------------------------------------------
+
+TWO_ISOFORM_UTRS = {
+    "GENE_T": {
+        # Spliced: two three_prime_utr records, both covering PAS 20.
+        "TRANSCRIPT_T1": [
+            ("chr9", 1000, 1200, "+", 0),
+            ("chr9", 1100, 1400, "+", 1),
+        ],
+        # Unspliced control: one record, covering PAS 21 only.
+        "TRANSCRIPT_T2": [
+            ("chr9", 2000, 2400, "+", 0),
+        ],
+    },
+}
+
+TWO_ISOFORM_PASBED = [
+    ("chr9", 1150, 1152, 20, 0, "+"),   # inside BOTH records of T1
+    ("chr9", 2100, 2102, 21, 0, "+"),   # inside T2 only
+]
+
+TWO_ISOFORM_COUNTS = {
+    "20": [8, 8, 1, 1],   # cluster totals: A=16, B=2
+    "21": [2, 2, 7, 7],   # cluster totals: A=4,  B=14
+}
+
+
+@pytest.fixture
+def _two_isoform_env(tmp_path, monkeypatch):
+    (tmp_path / "pasbed.bed").write_text(
+        "".join(f"{c}\t{s}\t{e}\t{p}\t{sc}\t{st}\n"
+                for c, s, e, p, sc, st in TWO_ISOFORM_PASBED)
+    )
+    pas_ids = list(TWO_ISOFORM_COUNTS.keys())
+    var = pd.DataFrame({"gene_id": ["GENE_T"] * len(pas_ids)}, index=pas_ids)
+    obs = pd.DataFrame({"leiden": CLUSTERS}, index=CELLS)
+    X = np.array([[TWO_ISOFORM_COUNTS[p][ci] for p in pas_ids]
+                  for ci in range(len(CELLS))], dtype=float)
+    adata = ad.AnnData(X=X, obs=obs, var=var)
+
+    gtf_path = tmp_path / "genome.gtf"
+    gtf_path.write_text("")
+    monkeypatch.setattr(runner_mod.ad, "read_h5ad", lambda _p: adata)
+    import ema.annotate.gtf2isoform_utr as gtf2isoform_mod
+    monkeypatch.setattr(gtf2isoform_mod, "parse_isoform_utrs",
+                        lambda *a, **kw: TWO_ISOFORM_UTRS)
+    return tmp_path, gtf_path
+
+
+def test_between_utr_does_not_double_count_a_spliced_utr(_two_isoform_env):
+    """`between_utr` never raised on a spliced UTR -- it silently DOUBLE-COUNTED.
+
+    The row *is* the UTR isoform, so a PAS falling inside two
+    ``three_prime_utr`` records of one transcript was added to that UTR twice
+    and its reads counted twice.  Nothing failed; the totals were just
+    inflated, which is the worst kind of bug to ship untested.  PAS 20
+    (A=16, B=2) is the duplicated one; TRANSCRIPT_T1's honest totals are
+    therefore A=16 / B=2, and before the de-duplication they were A=32 / B=4.
+    """
+    tmp_path, gtf_path = _two_isoform_env
+
+    pair_results = runner_mod.run_diff(
+        h5ad_paths=[str(tmp_path / "clustered.h5ad")],
+        pasbed=None,
+        gtf=str(gtf_path),
+        output_dir=str(tmp_path / "out_between"),
+        cluster_pairs=None,
+        cluster_key="leiden",
+        marker_top_n=0,
+        marker_method="wilcoxon",
+        strategy="fisher",
+        fdr=0.05,
+        threads=1,
+        per_worker_mb=300,
+        min_cells_per_group=1,
+        isoform_agg="between_utr",
+        utr_unmatched="drop",
+    )
+
+    df = pair_results[("A", "B")]
+    rows = df[df["pas_id"] == "GENE_T::TRANSCRIPT_T1"]
+    assert len(rows) == 1, f"expected one row for the spliced UTR, got {len(rows)}"
+    row = rows.iloc[0]
+
+    assert int(row["n_reads_pas_cluster1"]) == 16, (
+        f"spliced UTR reads in cluster A = {int(row['n_reads_pas_cluster1'])}, "
+        "expected 16; 32 means PAS 20 was counted once per three_prime_utr record"
+    )
+    assert int(row["n_reads_pas_cluster2"]) == 2, (
+        f"spliced UTR reads in cluster B = {int(row['n_reads_pas_cluster2'])}, "
+        "expected 2; 4 means PAS 20 was counted twice"
+    )
