@@ -101,25 +101,38 @@ def test_readme_lists_all_cli_commands():
 # --------------------------------------------------------------------- #
 
 def _unreleased_section() -> str:
-    """Every ``## Unreleased`` section of CHANGELOG.md, concatenated.
+    """The changelog text for the change set not yet in a published release.
 
-    The changelog convention in this repo is one themed section per change
+    The convention here is one themed section per change
     (``## Unreleased -- <topic>``), so several sit stacked at the top at any
-    time.  Reading only the FIRST one made this helper order-dependent: the
-    next merge to prepend a section silently hid every earlier entry from the
-    coverage tests below.  Collect them all instead.
+    time. Reading only the FIRST made this helper order-dependent: the next
+    merge to prepend a section silently hid every earlier entry from the
+    coverage tests below. Collect them all instead.
+
+    **At release time there are none**: cutting a release renames those
+    headings to ``## <version>``. The entries still exist and the coverage
+    tests below are still meaningful, so fall back to the newest version
+    section rather than failing the release -- otherwise every release breaks
+    these tests, and the natural "fix" is to delete them.
     """
     text = CHANGELOG.read_text()
-    parts, idx = [], text.find("## Unreleased")
-    while idx != -1:
-        rest = text[idx + len("## Unreleased"):]
-        nxt = rest.find("\n## ")
-        parts.append(rest if nxt == -1 else rest[:nxt])
-        nxt_abs = text.find("\n## ", idx + 1)
-        if nxt_abs == -1:
-            break
-        idx = text.find("## Unreleased", nxt_abs)
-    return "\n".join(parts)
+    # Anchored to line start: a bare find() also matches PROSE mentions of
+    # ``## Unreleased`` (this changelog now contains several, describing the
+    # collapse tooling), which silently returned the wrong slice of the file.
+    parts = []
+    for match in re.finditer(r"(?m)^##[ \t]+Unreleased[^\n]*$", text):
+        rest = text[match.end():]
+        nxt = re.search(r"(?m)^##[ \t]", rest)
+        parts.append(rest[: nxt.start()] if nxt else rest)
+    if parts:
+        return "\n".join(parts)
+
+    match = re.search(r"(?m)^##[ \t]+v?\d+\.\d+\.\d+.*$", text)
+    if match is None:
+        return ""
+    rest = text[match.end():]
+    nxt = re.search(r"(?m)^##[ \t]", rest)
+    return rest[: nxt.start()] if nxt else rest
 
 
 def test_reannotate_md_documents_the_duplicate_out_refusal():
