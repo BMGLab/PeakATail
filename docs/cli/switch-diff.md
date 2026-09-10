@@ -167,7 +167,10 @@ unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
 marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
 unrestricted matrix for the denominator, so `--marker-top-n N` changes only
 *which* PAS are tested and reported, and each reported p-value is bit-identical
-to the one the unrestricted run produces. The numbers in the table below were
+to the one the unrestricted run produces. The same holds under
+`--isoform-agg within_utr` / `between_utr`: each group's background is built
+from **all** of its PAS, and the selection only decides which rows are
+reported. The numbers in the table below were
 measured before that fix; the label double-dip they are driven by is unchanged.
 
 Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
