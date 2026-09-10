@@ -6,15 +6,38 @@ import subprocess
 import pytest
 
 
+def _distribution():
+    """The installed `peakatail` distribution, or skip.
+
+    These tests assert on installed *metadata*, so they only mean anything in
+    an environment where the package was actually installed -- which is what
+    CI does (`pip install -e '.[test]'`, see .github/workflows/ci.yml). Run
+    from a bare source checkout there is no distribution to inspect and
+    `md.distribution()` raises PackageNotFoundError, which used to surface as
+    three hard failures that said nothing about the code. Skip instead, the
+    same way test_entry_point_runs() already does for a missing console
+    script. This never weakens CI: there the distribution is present, so every
+    assertion below still runs.
+    """
+    try:
+        return md.distribution("peakatail")
+    except md.PackageNotFoundError:
+        pytest.skip(
+            "the 'peakatail' distribution is not installed in this "
+            "interpreter; run `pip install -e '.[test]'` to exercise the "
+            "packaging metadata tests"
+        )
+
+
 def _console_scripts() -> dict:
     """Entry points the INSTALLED distribution declares."""
-    eps = md.distribution("peakatail").entry_points
+    eps = _distribution().entry_points
     return {e.name: e.value for e in eps if e.group == "console_scripts"}
 
 
 def test_distribution_name():
     """Package is published as 'peakatail' even though import path is 'ema'."""
-    dist = md.distribution("peakatail")
+    dist = _distribution()
     assert dist.metadata["Name"] == "peakatail"
 
 
