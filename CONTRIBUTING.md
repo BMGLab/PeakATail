@@ -27,12 +27,24 @@ Releases are **tag-triggered**. The single source of truth for the version is
    git push origin v0.3.0
    ```
 
-4. The tag push runs `.github/workflows/release.yml`, which builds the sdist +
-   wheel (`python -m build`) and publishes them to
-   [PyPI](https://pypi.org/project/peakatail/) via **trusted publishing
-   (OIDC)** — no API token is stored in the repo. This must be configured once
-   on PyPI (project → Settings → Publishing → add a GitHub publisher for
-   `owner=BMGLab repo=PeakATail workflow=release.yml environment=pypi`).
+4. The tag push runs `.github/workflows/release.yml`, which does three things
+   in order and stops at the first failure:
+
+   1. **Verifies the tag against `pyproject.toml`.** A `v0.3.0` tag on a tree
+      whose version says something else fails here, before anything is
+      published — PyPI never lets a version number be reused, so a wrong upload
+      is permanent.
+   2. **Builds and publishes to [PyPI](https://pypi.org/project/peakatail/)**
+      (`python -m build`, then `twine check`) via **trusted publishing
+      (OIDC)** — no API token is stored in the repo. This must be configured
+      once on PyPI (project → Settings → Publishing → add a GitHub publisher
+      for `owner=BMGLab repo=PeakATail workflow=release.yml environment=pypi`).
+   3. **Creates the GitHub Release** from the tag, with the matching
+      `CHANGELOG.md` section as the body and the sdist + wheel attached. This
+      is the step Zenodo watches (see below). Its notes come from
+      `scripts/changelog_section.py`, which **fails the job** if `CHANGELOG.md`
+      has no `## <version>` heading — so collapsing `## Unreleased` into
+      `## 0.3.0` in step 2 is not optional.
 
 ### bioconda (after the PyPI release exists)
 
@@ -57,9 +69,8 @@ GitHub integration mints a DOI automatically for each GitHub Release.
 
 **Each release:**
 
-1. After the tag/PyPI step above, create a **GitHub Release** from that tag
-   (Releases → *Draft a new release* → pick the tag → publish). The Zenodo
-   webhook fires on *publish*.
+1. The `github_release` job in `release.yml` publishes the GitHub Release for
+   you, and the Zenodo webhook fires on that publish. Nothing manual here.
 2. Zenodo archives the tarball and issues the version DOI. Grab the badge from
    the Zenodo record and (optionally) add it to `README.md`.
 3. Add the DOI to `CITATION.cff` (`doi:` and/or an `identifiers:` entry) and to
@@ -67,5 +78,11 @@ GitHub integration mints a DOI automatically for each GitHub Release.
    for "PeakATail" in general and the **version DOI** for the exact release used
    in the paper.
 
-> The GitHub Release, not just the git tag, is what triggers Zenodo — remember
-> to publish it.
+> The GitHub **Release**, not the git tag, is what triggers Zenodo. Pushing a
+> tag while `release.yml` is broken or disabled therefore mints no DOI, however
+> healthy the tag looks. If a DOI is missing after a release, check that the
+> `github_release` job ran and that the Release exists on the Releases page.
+
+> Zenodo reads `CITATION.cff` for the archived record's authors and title.
+> Whatever is in that file at tag time becomes the public citation metadata for
+> that DOI, so settle the author list **before** tagging.
