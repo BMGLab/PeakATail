@@ -182,7 +182,10 @@ unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
 marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
 unrestricted matrix for the denominator, so `--marker-top-n N` changes only
 *which* PAS are tested and reported, and each reported p-value is bit-identical
-to the one the unrestricted run produces. The numbers in the table below were
+to the one the unrestricted run produces. The same holds under
+`--isoform-agg within_utr` / `between_utr`: each group's background is built
+from **all** of its PAS, and the selection only decides which rows are
+reported. The numbers in the table below were
 measured before that fix; the label double-dip they are driven by is unchanged.
 
 Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
@@ -253,6 +256,30 @@ run is fast enough, and note that (as with any independent filter) testing
 fewer hypotheses makes the BH threshold less stringent — that is the intended
 multiplicity saving, not selection bias.
 
+## `nb_pairwise` and the dispersion floor
+
+`nb_pairwise` clips its per-PAS Negative-Binomial dispersion to `[1e-4, 10]`.
+A PAS that lands on the **lower** clip is fitted as a Poisson GLM, whose Wald
+standard error is a lower bound — so its p-value is anti-conservative. In the
+same label-permutation null as above, 8.5 % of null tests hit that floor and
+those tests produced **67 % of `nb_pairwise`'s false `q < 0.05` hits**.
+
+Such rows are now marked `dispersion_floored = True` in the per-pair TSV and
+their `qvalue` column is left **empty (`NaN`)**, so a `qvalue < fdr` filter can
+never call them significant. The row and its raw `pvalue` are still written —
+read that p-value as a *lower bound*, not as an error rate.
+
+!!! warning "nb_pairwise q-values need permutation calibration"
+
+    Withholding the floored rows removes the dominant source of
+    anti-conservatism, but it does **not** make the remaining `nb_pairwise`
+    q-values calibrated (`nb_pairwise --marker-top-n 0` still put 5.1 % of null
+    p-values below 0.05 and produced a hit in 20/20 permutation runs, the
+    dispersion-floor tail being the bulk of it). If a `nb_pairwise` q-value has
+    to carry an error-rate claim, calibrate it against a label-permutation null
+    of your own data. `fisher --count-mode cells --marker-top-n 0` is the
+    configuration measured to control the FDR out of the box.
+
 ## Within-gene Fisher framing
 
 As of commit `f5ed80d`, the `fisher` strategy uses a **within-gene** framing
@@ -281,7 +308,7 @@ Output is written to `<out_dir>/differential/` (created automatically).
 
 **`differential/<strategy>_<c1>_vs_<c2>.tsv`**
 
-One TSV per cluster pair. Columns (in order):
+One TSV per cluster pair. Columns (in order) for the default `--strategy fisher`:
 
 | Column | Type | Description |
 |---|---|---|
@@ -293,11 +320,33 @@ One TSV per cluster pair. Columns (in order):
 | `strand` | str | `+` or `-`. **Omitted under `--isoform-agg between_utr`.** |
 | `cluster1` | str | First cluster label of this pair. |
 | `cluster2` | str | Second cluster label of this pair. |
+| `pvalue` | float | Raw two-sided Fisher exact p-value for this PAS. |
+| `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR) across all PAS tested in this pair. |
+| `n_cells` | int | Cells in the pair (`n_cells_cluster1 + n_cells_cluster2`). |
+| `n_cells_cluster1` | int | Cells carrying the `cluster1` label. |
+| `n_cells_cluster2` | int | Cells carrying the `cluster2` label. |
+| `n_cells_expr_cluster1` | int | Cells of cluster 1 with ≥1 read at this PAS. |
+| `n_cells_expr_cluster2` | int | Cells of cluster 2 with ≥1 read at this PAS. |
+| `n_reads_pas_cluster1` | int | Reads at this PAS in cluster 1. |
+| `n_reads_pas_cluster2` | int | Reads at this PAS in cluster 2. |
 | `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). Summed over **all** PAS of the gene, including any excluded by `--marker-top-n`. |
 | `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2, on the same basis. |
-| `statistic` | float | Test statistic (odds ratio for Fisher). |
-| `pvalue` | float | Raw p-value. |
-| `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR). |
+| `odds_ratio` | float | Odds ratio of the 2×2 table (this PAS vs the gene's other PAS, cluster 1 vs cluster 2), in the unit chosen by `--count-mode` — cells by default, reads under `--count-mode reads`. |
+| `delta_proportion` | float | `prop(cluster1) - prop(cluster2)` of the within-gene usage proportion. **Positive ⇒ the PAS is used more in `cluster1`.** |
+| `log2fc` | float | `log2(prop(cluster2) / prop(cluster1))` of those same proportions (plus a small `eps` so an empty cluster stays finite). **Positive ⇒ the PAS is used more in `cluster2`.** |
+
+!!! warning "`delta_proportion` and `log2fc` use opposite sign conventions"
+    `delta_proportion` is `prop(cluster1) - prop(cluster2)` while `log2fc` is
+    `log2(prop(cluster2) / prop(cluster1))`, so on the same row the two
+    normally carry **opposite signs**: `delta_proportion > 0` means the PAS is
+    used more in `cluster1`, whereas `log2fc > 0` means it is used more in
+    `cluster2`. Filter on one of them, never on both with the same inequality
+    — and note the volcano plot's x-axis is `log2fc`, i.e. cluster2-positive.
+
+The statistical columns are strategy-specific. `--strategy nb_pairwise` writes
+`pvalue`, `qvalue`, `log2fc`, `dispersion`, `n_cells`, `test_stat`; the
+`nb_multi` omnibus (written to `<strategy>_omnibus.tsv`, not to a per-pair
+file) writes `pvalue`, `qvalue`, `test_stat`, `df`, `dispersion`, `n_cells`.
 
 The augmented column order (pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, then statistical columns) is produced by the `_augment_diff_df` helper in `ema/switch_test/runner.py`.
 

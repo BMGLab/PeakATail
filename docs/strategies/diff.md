@@ -132,7 +132,9 @@ few reads and the odds ratio is unreliable. Use `n_reads_pas_cluster1` and
     alpha_hat = (sample_variance - mean) / mean^2
     ```
 
-   Dispersion is clipped to `[1e-4, 10.0]` for numerical stability.
+   Dispersion is clipped to `[1e-4, 10.0]` for numerical stability. PAS that
+   land on the **lower** clip are flagged `dispersion_floored` and get no
+   q-value — see [The dispersion floor](#dispersion-floor).
 
 4. Fit a NB GLM with fixed dispersion:
 
@@ -144,7 +146,9 @@ few reads and the odds ratio is unreliable. Use `n_reads_pas_cluster1` and
 5. Extract the Wald z-statistic and p-value for the cluster coefficient.
    `log2fc = coefficient / log(2)`.
 
-6. Apply BH FDR across all tested PAS.
+6. Apply BH FDR across all tested PAS. Dispersion-floored PAS stay in the BH
+   input (so the family size *m* is unchanged) but their reported `qvalue` is
+   set to `NaN`.
 
 Per-PAS GLM fits are embarrassingly parallel. Dense numpy slices (cells x 1
 per PAS) are pre-extracted once before dispatch so workers never pickle large
@@ -165,9 +169,10 @@ sparse matrices. Parallelism is capped by `ResourceManager` with
 | Column | Type | Description |
 |---|---|---|
 | `pvalue` | float | Wald test p-value |
-| `qvalue` | float | BH FDR-corrected q-value |
+| `qvalue` | float | BH FDR-corrected q-value — **`NaN` when `dispersion_floored`** |
 | `log2fc` | float | log2 fold change (cluster2 / cluster1) |
 | `dispersion` | float | Estimated NB dispersion alpha |
+| `dispersion_floored` | bool | `True` when alpha hit the `1e-4` lower clip |
 | `n_cells` | int | Total cells in both clusters |
 | `test_stat` | float | Wald z-statistic |
 
@@ -185,14 +190,41 @@ Results are sorted by `qvalue` ascending.
 `nb_pairwise` operates at the cell level and correctly accounts for library
 size differences between clusters via the `offset(log(library_size))` term.
 A positive `log2fc` means the PAS is more abundant in cluster 2. The
-`dispersion` column shows the per-PAS overdispersion; values near 0.0001
-(the clip floor) may indicate model instability and should be treated
-cautiously.
+`dispersion` column shows the per-PAS overdispersion.
 
 The `fallback_used` flag (dropped from the output DataFrame but visible in
 logs) is set when the MLE solver failed and the method-of-moments path was
 used. Filter by `dispersion < 9` to exclude rows where the dispersion hit
 the upper clip and the GLM may be unreliable.
+
+### The dispersion floor {#dispersion-floor}
+
+When the per-PAS dispersion estimate collapses onto the **lower** clip
+(`alpha = 1e-4`) the NB GLM is effectively a **Poisson** fit: the Wald standard
+error is then a lower bound and the p-value is anti-conservative. Worse, alpha
+is estimated under the *full* model (`count ~ cluster_indicator + offset`), so
+sampling noise that happens to mimic a group difference is absorbed by the
+fitted coefficient and pushes alpha *down* — exactly the tests that then look
+most significant. Under the 20-run label-permutation null of
+[issue #94](https://github.com/BMGLab/PeakATail/issues/94), 8.5 % of null tests
+hit the floor and those tests accounted for **67 % of all false `q < 0.05`
+calls**.
+
+Those rows are therefore reported with `dispersion_floored = True` and
+`qvalue = NaN`, so no `qvalue < fdr` filter can call them significant. The row
+and its raw `pvalue` are kept so you can still inspect the evidence — treat
+that p-value as a *lower bound* on the true one, never as a calibrated error
+rate. `NbPairwiseStrategy.test` logs a warning naming how many PAS were
+affected.
+
+!!! warning "nb_pairwise q-values are not permutation-calibrated"
+
+    Withholding the floored rows removes the dominant source of
+    anti-conservatism, but it does not make the remaining q-values calibrated.
+    If a `nb_pairwise` q-value has to carry an error-rate claim (e.g. in a
+    manuscript), calibrate it against a label-permutation null of your own
+    data. A permutation-calibrated q — or dispersion shrinkage toward a
+    common trend, as edgeR/DESeq2 do — is still open on issue #94.
 
 ### Limitations
 
