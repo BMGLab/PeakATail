@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,3 +62,81 @@ jobs:
         # (Stage 0d) are xfailed, and an XPASS is the signal to delete the
         # marker.  Do not silence this.
         run: pytest -q -rxX
+
+  lowest-direct:
+    # Install the versions pyproject actually PROMISES, not the latest ones.
+    # CI otherwise only ever proves "works with today's releases", so a wrong
+    # lower bound is invisible until a user with an older resolver hits it.
+    # This job caught two real ones: pybedtools 0.10/0.11 have no wheels for
+    # the supported interpreters and fail to build, and pyfaidx 0.7.0 imports
+    # `pkg_resources` and so fails to import at all -- which made the
+    # internal-priming filter silently skip rather than error.
+    name: Tests at the declared dependency floors
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install bedtools (exercises the bedtools-guarded tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bedtools
+
+      - name: Install at the lowest declared versions
+        run: |
+          uv venv --python 3.10 .venv-lowest
+          uv pip install --python .venv-lowest/bin/python \
+            --resolution lowest-direct -e '.[test]'
+
+      - name: Show what was resolved
+        run: |
+          .venv-lowest/bin/python - <<'PY'
+          import importlib.metadata as md
+          for pkg in ("scanpy", "anndata", "numpy", "pandas", "scipy",
+                      "matplotlib", "pysam", "pybedtools", "pyfaidx"):
+              try:
+                  print(f"{pkg:12} {md.version(pkg)}")
+              except md.PackageNotFoundError:
+                  print(f"{pkg:12} ABSENT")
+          PY
+
+      - name: Run the suite against those versions
+        run: PATH="$PWD/.venv-lowest/bin:$PATH" .venv-lowest/bin/python -m pytest -q -rxX
+
+  wheels-only:
+    # Refuse ANY source build. CI runners ship cmake and a full toolchain, so a
+    # dependency without a wheel compiles here and fails on a user machine --
+    # which is exactly how `louvain` (no wheel for CPython >= 3.12, needs cmake
+    # to build igraph's C core) shipped in the first public release and made
+    # `pip install peakatail` impossible on 3.12 and 3.13 while CI stayed green.
+    name: Installs from wheels only (no compiler needed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build the distributions
+        run: uv build
+
+      - name: Install the wheel with source builds forbidden
+        run: |
+          uv venv --python ${{ matrix.python-version }} .venv-wheels
+          uv pip install --python .venv-wheels/bin/python \
+            --only-binary=:all: dist/*.whl
+
+      - name: Import the package
+        run: .venv-wheels/bin/python -c "import ema; print('import ok')"
+
+      - name: The CLI answers --help
+        run: .venv-wheels/bin/peakatail --help > /dev/null && echo "cli ok"
+

@@ -271,3 +271,114 @@ def test_release_workflow_installs_the_same_system_deps_as_ci() -> None:
         f"ci.yml installs {sorted(missing)} but release.yml does not, so the "
         "test suite runs in a different environment during a release"
     )
+
+
+# ---------------------------------------------------------------------------
+# `requires-python` is a PROMISE. CI is what verifies it.
+#
+# The floor said >=3.11 while CI tested 3.11 and 3.12, so 3.10 was neither
+# supported nor proven broken -- just untested. It in fact worked: the package
+# has one `match` statement (3.10+) and no 3.11-only syntax, so the floor had
+# overshot by one release. An unverified floor can be wrong in both directions:
+# too high locks users out for no reason, too low promises a broken version.
+# ---------------------------------------------------------------------------
+
+def _declared_python_floor() -> tuple[int, int]:
+    text = (RELEASE_WF.parents[2] / "pyproject.toml").read_text()
+    match = re.search(r'requires-python\s*=\s*">=(\d+)\.(\d+)"', text)
+    assert match, "pyproject.toml has no `requires-python = \">=X.Y\"`"
+    return int(match.group(1)), int(match.group(2))
+
+
+def _ci_matrix_versions() -> list[tuple[int, int]]:
+    ci = yaml.safe_load((RELEASE_WF.parent / "ci.yml").read_text())
+    versions = ci["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+    out = []
+    for v in versions:
+        parts = str(v).split(".")
+        out.append((int(parts[0]), int(parts[1])))
+    return out
+
+
+def test_ci_tests_the_python_version_the_package_claims_to_support():
+    """The declared floor must actually be exercised by CI."""
+    floor = _declared_python_floor()
+    matrix = _ci_matrix_versions()
+    assert floor in matrix, (
+        f"pyproject declares requires-python >={floor[0]}.{floor[1]} but the CI "
+        f"matrix is {['.'.join(map(str, m)) for m in matrix]}. The lowest "
+        "supported version must be tested, or the floor is an unverified claim."
+    )
+
+
+def test_ci_does_not_test_below_the_declared_floor():
+    """The mirror image: CI must not imply support the package disclaims."""
+    floor = _declared_python_floor()
+    below = [m for m in _ci_matrix_versions() if m < floor]
+    assert not below, (
+        f"CI tests {['.'.join(map(str, m)) for m in below]}, below the declared "
+        f"floor >={floor[0]}.{floor[1]}. Either lower requires-python or drop "
+        "those jobs -- passing tests on an unsupported version is a promise "
+        "pip will refuse to honour."
+    )
+
+
+def test_dependency_floors_are_verified_by_a_ci_job():
+    """A lower bound nothing installs is a guess.
+
+    CI installing only latest versions proves "works with today's releases".
+    It said `pybedtools>=0.10` (no wheels, unbuildable) and `pyfaidx>=0.7`
+    (fails to import -- `pkg_resources`), and both were invisible until a job
+    resolved the declared minimums.
+    """
+    ci = yaml.safe_load((RELEASE_WF.parent / "ci.yml").read_text())
+    jobs = ci["jobs"]
+    lowest = [j for j in jobs.values()
+              if any("lowest-direct" in str(s.get("run", "")) for s in j.get("steps", []))]
+    assert lowest, (
+        "no CI job installs with `--resolution lowest-direct`, so the declared "
+        "dependency lower bounds are never exercised"
+    )
+    steps = " ".join(str(s.get("run", "")) for s in lowest[0]["steps"])
+    assert "pytest" in steps, (
+        "the lowest-direct job resolves the floors but never runs the tests "
+        "against them, so it only proves they install"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal planning material must not reach the published branch.
+# ---------------------------------------------------------------------------
+
+def _internal_paths_from_docs() -> set[str]:
+    """The canonical list, read from the table in docs/INTERNAL_ONLY_PATHS.md."""
+    doc = RELEASE_WF.parents[2] / "docs" / "INTERNAL_ONLY_PATHS.md"
+    text = doc.read_text()
+    paths = set()
+    for row in re.finditer(r"^\|\s*`([^`]+)`\s*\|", text, re.MULTILINE):
+        paths.add(row.group(1).rstrip("/"))
+    assert paths, "could not parse the internal-paths table"
+    return paths
+
+
+def test_release_refuses_to_publish_internal_only_paths():
+    """Every path the doc calls internal must be checked before the upload.
+
+    main is what the Zenodo archive contains, so this is checked on the tagged
+    tree -- and, like every other release guard, before the irreversible step.
+    """
+    build = yaml.safe_load(RELEASE_WF.read_text())["jobs"]["build"]
+    steps = build["steps"]
+    names = [s.get("name", "") for s in steps]
+    guard = [i for i, n in enumerate(names) if "internal-only" in n.lower()]
+    assert guard, f"no internal-only path guard in the build job: {names}"
+
+    body = steps[guard[0]].get("run", "")
+    missing = {p for p in _internal_paths_from_docs() if p not in body}
+    assert not missing, (
+        f"docs/INTERNAL_ONLY_PATHS.md lists {sorted(missing)} but the release "
+        "guard does not check them, so they could be published"
+    )
+
+    build_idx = next(i for i, n in enumerate(names) if "Build distributions" in n)
+    assert guard[0] < build_idx, "the guard runs after the build"

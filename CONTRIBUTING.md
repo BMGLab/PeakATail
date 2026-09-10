@@ -23,8 +23,8 @@ Releases are **tag-triggered**. The single source of truth for the version is
 3. Merge to `main`, then tag and push:
 
    ```bash
-   git tag -a v0.3.0 -m "PeakATail v0.3.0"
-   git push origin v0.3.0
+   git tag -a v0.3.1 -m "PeakATail v0.3.1"
+   git push origin v0.3.1
    ```
 
 4. The tag push runs `.github/workflows/release.yml`, which does three things

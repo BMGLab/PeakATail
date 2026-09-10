@@ -434,26 +434,38 @@ def resolve_cleavage_offset(
         return int(explicit_offset), None
 
     if not genome_fasta or not os.path.exists(str(genome_fasta)):
-        log.warning(
-            "auto cleavage-offset requested but genome FASTA is missing (%r); "
-            "falling back to the default constant %d bp.",
-            genome_fasta, fallback,
+        # `auto` is opt-in (--auto-cleavage-offset, default False), so reaching
+        # here means the user explicitly asked to estimate the offset from the
+        # data and the input needed to do that is absent. That is a
+        # misconfiguration, not a data condition; substituting a constant
+        # shifts every reported PAS 3' end while the run exits 0.
+        raise FileNotFoundError(
+            "--auto-cleavage-offset was requested but the genome FASTA is "
+            f"missing or unreadable ({genome_fasta!r}), so the offset cannot "
+            "be estimated from the data. Refusing to substitute the constant "
+            f"{fallback} bp silently: it would shift every reported PAS 3' "
+            f"end. Pass a readable --genome-fasta, or use --cleavage-offset "
+            f"{fallback} to accept the constant deliberately."
         )
-        return int(fallback), {"method": "fallback", "reason": "no_fasta",
-                               "fallback": int(fallback), "n_peaks_used": 0}
 
     try:
         a_fraction, aataaa, n_used = build_downstream_profiles(
             list(bed_paths or []), genome_fasta,
             max_offset=max_offset, max_sample=max_sample,
         )
-    except ImportError:
-        log.warning(
-            "auto cleavage-offset requested but pyfaidx is not installed; "
-            "falling back to the default constant %d bp.", fallback,
-        )
-        return int(fallback), {"method": "fallback", "reason": "no_pyfaidx",
-                               "fallback": int(fallback), "n_peaks_used": 0}
+    except ImportError as exc:
+        # The user asked for a DATA-DRIVEN offset. Quietly substituting a
+        # constant shifts every reported PAS 3' end while the run still exits
+        # 0 -- a silently different analysis, not a degraded one. A missing
+        # dependency is not a data condition; it is a broken install.
+        raise RuntimeError(
+            "--auto-cleavage-offset was requested but pyfaidx is not "
+            f"importable, so the offset cannot be estimated from the data. "
+            f"Refusing to substitute the constant {fallback} bp silently: it "
+            "would shift every reported PAS 3' end. Install a working pyfaidx "
+            f"(>=0.7.2.2), or pass --cleavage-offset {fallback} to accept the "
+            "constant deliberately."
+        ) from exc
 
     if n_used == 0:
         log.warning(

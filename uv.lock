@@ -1149,7 +1149,7 @@ wheels = [
 
 [[package]]
 name = "peakatail"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "anndata" },
