@@ -508,8 +508,18 @@ def _build_diff_isoform_groups(
     for pas_id, entries in pas_isoform_map_raw.items():
         if pas_id not in diff_cols:
             continue
+        # A spliced 3'UTR contributes one `three_prime_utr` record per exon,
+        # so `entries` can name the same (gene, transcript) more than once for
+        # a single PAS.  Appending pas_id again would put DUPLICATE columns in
+        # that group's bg_cols, and fisher's `int(agg1[p])` then receives a
+        # Series instead of a scalar (TypeError).  De-duplicate per PAS,
+        # keeping first-seen order.
+        seen_utrs: set[str] = set()
         for gene_id, transcript_id, *_rest in entries:
             utr_id = f"{gene_id}::{transcript_id}"
+            if utr_id in seen_utrs:
+                continue
+            seen_utrs.add(utr_id)
             utr_pas_members.setdefault(utr_id, []).append(pas_id)
             gene_of_utr[utr_id] = gene_id
 
