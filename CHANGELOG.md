@@ -34,6 +34,24 @@
   positionally or by name must be updated; `ema.switch_test.long_output`
   (`findings_long`) already reads them defensively and is unaffected (it emits
   an empty `pas_uid` for such rows, exactly as it did for the blank columns).
+## Unreleased — spliced 3'UTRs in `switch diff --isoform-agg`
+
+### Fixed
+
+- **`--isoform-agg within_utr` aborted on every run over a spliced 3'UTR, and
+  `between_utr` silently double-counted one.** A spliced 3'UTR contributes one
+  `three_prime_utr` record per exon, so a PAS falling inside more than one of
+  them named the same `(gene, transcript)` repeatedly and was appended to that
+  UTR group more than once. In `within_utr` the duplicate columns made
+  `fisher`'s `int(agg1[p])` receive a Series and raise
+  `TypeError: cannot convert the series to <class 'int'>`. In `between_utr`
+  nothing raised — the UTR's reads were simply counted once per record, so the
+  denominator was inflated (on the regression fixture: 32 reads reported where
+  the honest total is 16). Members are now de-duplicated per PAS, keeping
+  first-seen order.
+
+  Reported in #109. The `NameError` that PR also describes was already fixed on
+  `develop` in `7b50a5f`; this lands the remaining half.
 ## Unreleased — the command is now `peakatail` (`ema` deprecated)
 
 ### Breaking changes
