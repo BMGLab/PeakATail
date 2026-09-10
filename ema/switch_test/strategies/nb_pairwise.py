@@ -7,7 +7,9 @@ For each PAS, fits a NB GLM::
 using :mod:`statsmodels`.  Dispersion (alpha) is estimated per-PAS via MLE;
 if the solver fails to converge, a method-of-moments estimate is used as
 fallback.  p-values come from the Wald z-test on the cluster coefficient.
-BH FDR correction is applied across all tested PAS.
+BH FDR correction is applied across all tested PAS, except that PAS whose
+dispersion collapsed to the numerical floor get no q-value (see
+``ALPHA_FLOOR`` and issue #94).
 
 Parallelisation
 ---------------
@@ -19,6 +21,7 @@ pickling large sparse objects.
 
 from __future__ import annotations
 
+import logging
 import math
 import warnings
 from typing import Any
@@ -31,6 +34,16 @@ from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
 from ema.switch_test.strategies import register_diff_strategy
 from ema.switch_test.strategies.base import DiffAPAStrategy
+
+log = logging.getLogger(__name__)
+
+# Numerical clip on the per-PAS NB dispersion alpha.  Hitting the LOWER bound
+# collapses the GLM to Poisson and the Wald standard error with it, which makes
+# such a test anti-conservative (issue #94: 8.5% of null tests hit the floor but
+# produced 67% of the false q<0.05 calls).  Rows that hit it are flagged and
+# their q-value is withheld -- see ``NbPairwiseStrategy.test``.
+ALPHA_FLOOR = 1e-4
+ALPHA_CEIL = 10.0
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -51,7 +64,7 @@ def _mom_dispersion(counts: np.ndarray) -> float:
         return 1.0
     var = counts.var(ddof=1)
     alpha = (var - mu) / (mu ** 2)
-    return float(np.clip(alpha, 1e-4, 10.0))
+    return float(np.clip(alpha, ALPHA_FLOOR, ALPHA_CEIL))
 
 
 def _fit_single_pas(
@@ -95,7 +108,7 @@ def _fit_single_pas(
             )
             alpha = float(nb_res.params[-1])  # last param is ln(alpha) or alpha
             # statsmodels NegativeBinomial reports alpha directly
-            alpha = max(1e-4, min(alpha, 10.0))
+            alpha = max(ALPHA_FLOOR, min(alpha, ALPHA_CEIL))
     except Exception:
         alpha = None
 
@@ -156,6 +169,7 @@ def _fit_single_pas(
                 "dispersion": alpha,
                 "n_cells": n_c1 + n_c2,
                 "test_stat": 0.0,
+                "dispersion_floored": bool(alpha <= ALPHA_FLOOR),
                 "fallback_used": True,
             }
 
@@ -169,6 +183,7 @@ def _fit_single_pas(
         "dispersion": alpha,
         "n_cells": n_c1 + n_c2,
         "test_stat": test_stat,
+        "dispersion_floored": bool(alpha <= ALPHA_FLOOR),
         "fallback_used": fallback_used,
     }
 
@@ -219,6 +234,12 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         fdr (default 0.05): Benjamini-Hochberg FDR threshold applied after
             testing.  CLI: ``--fdr`` / YAML: ``fdr``.
 
+    Rows whose dispersion collapsed to the lower clip (``ALPHA_FLOOR``) are
+    marked ``dispersion_floored=True`` and get ``qvalue=NaN``: a floored
+    dispersion makes the fit Poisson and the Wald p-value anti-conservative,
+    so such a test is never reported as significant.  Even for the remaining
+    rows the q-values are not permutation-calibrated (issue #94).
+
     Deliberately left hardcoded (internal numerics, not researcher-facing):
         alpha dispersion clip: [1e-4, 10.0] — keeps GLM numerically stable.
         maxiter (MLE): 200 iterations; fallback to 100 for the MoM path.
@@ -257,7 +278,9 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         -------
         pd.DataFrame
             Indexed by ``pas_id`` with columns
-            ``[pvalue, qvalue, log2fc, dispersion, n_cells, test_stat]``.
+            ``[pvalue, qvalue, log2fc, dispersion, dispersion_floored,
+            n_cells, test_stat]``.  ``qvalue`` is NaN wherever
+            ``dispersion_floored`` is True (issue #94).
         """
         if cluster1 is None or cluster2 is None:
             raise ValueError(
@@ -278,7 +301,7 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         if n_c1 < min_cells_per_group or n_c2 < min_cells_per_group:
             return pd.DataFrame(
                 columns=["pvalue", "qvalue", "log2fc", "dispersion",
-                         "n_cells", "test_stat"]
+                         "dispersion_floored", "n_cells", "test_stat"]
             )
 
         # --- pre-compute shared arrays (avoid re-pickling inside workers) ---
@@ -330,17 +353,45 @@ class NbPairwiseStrategy(DiffAPAStrategy):
         if not flat:
             return pd.DataFrame(
                 columns=["pvalue", "qvalue", "log2fc", "dispersion",
-                         "n_cells", "test_stat"]
+                         "dispersion_floored", "n_cells", "test_stat"]
             )
 
         df = pd.DataFrame(flat).set_index("pas_id")
 
-        # BH FDR correction across all tested PAS
+        # BH FDR correction across all tested PAS.  Dispersion-floored rows
+        # stay in the BH input so the family size m is unchanged (dropping them
+        # would shrink m and make every OTHER q-value less conservative); only
+        # their reported q is withheld below.
         qvalues = false_discovery_control(df["pvalue"].values, method="bh")
         df["qvalue"] = qvalues
+
+        # --- withhold q for dispersion-floored tests (issue #94) ---
+        # When the per-PAS dispersion collapses to ALPHA_FLOOR the GLM is a
+        # Poisson fit and its Wald SE is a lower bound, so the p-value is
+        # anti-conservative.  The dispersion is also estimated under the FULL
+        # model, so noise that mimics a group difference is absorbed into the
+        # fit and pushes alpha down -- exactly the tests that then look most
+        # significant.  Under a label-permutation null those rows produced 67%
+        # of the false q<0.05 calls, so their q is reported as NaN (never
+        # significant) while the raw p-value is kept for inspection.
+        floored = df["dispersion_floored"].astype(bool)
+        n_floored = int(floored.sum())
+        if n_floored:
+            df.loc[floored, "qvalue"] = np.nan
+            log.warning(
+                "NbPairwiseStrategy: %d/%d tested PAS (%.1f%%) hit the "
+                "dispersion floor (alpha=%g); their q-values are withheld "
+                "(NaN) because a floored dispersion collapses the GLM to "
+                "Poisson and makes the Wald p-value anti-conservative.  The "
+                "raw p-values are still reported in the 'pvalue' column and "
+                "the rows are marked in 'dispersion_floored'.  nb_pairwise "
+                "q-values are NOT permutation-calibrated -- see issue #94.",
+                n_floored, len(df), 100.0 * n_floored / len(df), ALPHA_FLOOR,
+            )
 
         # Drop internal bookkeeping column
         df = df.drop(columns=["fallback_used"], errors="ignore")
 
         return df[["pvalue", "qvalue", "log2fc", "dispersion",
-                   "n_cells", "test_stat"]].sort_values("qvalue")
+                   "dispersion_floored", "n_cells", "test_stat"]].sort_values(
+            "qvalue")
