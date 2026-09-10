@@ -9,7 +9,7 @@ why this is a real script with tests rather than an inline shell one-liner.
 
 Usage::
 
-    python scripts/changelog_section.py 0.3.0 [--changelog PATH]
+    python scripts/changelog_section.py X.Y.Z [--changelog PATH]
 
 Exit status is 1 (with the reason on stderr) when no ``## <version>`` heading
 exists, so a release whose CHANGELOG was never collapsed from ``Unreleased``
@@ -52,7 +52,8 @@ def remaining_unreleased(text: str) -> list[int]:
     """Line numbers of every ``## Unreleased`` heading still in ``text``.
 
     Collapsing the release notes is a manual step and this CHANGELOG carries
-    one ``## Unreleased`` section per merged branch -- 23 of them at 0.3.0. A
+    one ``## Unreleased`` section per merged branch -- two dozen of them in
+    the 0.3 cycle. A
     check that only fires when *nothing* was collapsed is therefore the wrong
     check: the realistic mistake is collapsing the first heading and missing
     the other 22, which would publish to PyPI and mint a permanent Zenodo DOI
