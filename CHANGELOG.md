@@ -7,6 +7,40 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — spliced 3'UTRs no longer double-count a PAS (all consumers)
+
+### Fixed
+
+- **`map_pas_to_isoforms` de-duplicates a PAS that intersects several
+  `three_prime_utr` records of the SAME transcript.** A spliced 3'UTR is
+  annotated by one record per exon, so `bedtools intersect` reports a PAS
+  sitting in more than one of them once per record. The map then emitted the
+  same `(pas_id, gene_id, transcript_id)` entry repeatedly, gave that one PAS
+  two different `rank` values and inflated `total_pas_in_transcript` — and
+  every consumer double-counted the site. PR #112 fixed this at ONE consumer
+  (`switch diff`); the rest were silently wrong. On a two-PAS fixture whose
+  honest totals are 2 distinct PAS / 100 reads:
+
+  - `ShannonPDUIStrategy` reported `pas_ids='1;1;3'`, `n_pas=3`,
+    `total_reads_transcript=110` and **entropy 0.866 bits instead of 0.469**;
+  - `ProportionPDUIStrategy` emitted the duplicated PAS twice, each row with
+    **proportion 0.0909 instead of 0.1**;
+  - `ClassicPDUIStrategy`'s `_build_pas_info_from_map` carried the duplicate
+    row, so the transcript looked like a 3-PAS UTR. (The classic *PDUI value*
+    itself was already shielded by the duplicate collapse added for issue #98;
+    the map fields it surfaces were not.)
+
+  Duplicates are now dropped in `map_pas_to_isoforms` itself, before ranking,
+  so `rank` and `total_pas_in_transcript` are computed from the DISTINCT PAS
+  set and every consumer is fixed at once. First-seen (bedtools) order is
+  preserved: dumping the map plus all three strategies' output for an
+  unspliced fixture (single-exon, multi-exon-non-overlapping, two-isoform and
+  minus-strand transcripts) is **byte-identical** to `develop`.
+
+  `switch diff`'s consumer-side guard from #112 is **kept** as defence in
+  depth — `_build_diff_isoform_groups` takes the map as an argument, and a
+  duplicate reaching `fisher` aborts the run with
+  `TypeError: cannot convert the series to <class 'int'>`.
 ## Unreleased — the release that mints a DOI
 
 ### Fixed
