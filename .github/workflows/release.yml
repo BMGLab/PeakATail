@@ -29,6 +29,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Verify the tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          proj=$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          echo "tag=$tag pyproject=$proj"
+          if [ "$tag" != "$proj" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' does not match pyproject.toml version '$proj'." >&2
+            echo "::error::PyPI never lets a version number be reused, so publishing the wrong one is permanent. Fix the tag or the version and retry." >&2
+            exit 1
+          fi
+
       - name: Build distributions
         run: |
           python -m pip install --upgrade pip build
