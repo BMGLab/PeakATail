@@ -24,6 +24,7 @@ from joblib import parallel_backend
 
 from ema.switch_test.strategies import get_diff_strategy, list_diff_strategies
 from ema.switch_test.pair_runner import run_one_pair
+from ema.switch_test.prefilter import select_expressed_pas
 from ema.quantification.strategies import get_pdui_strategy, list_pdui_strategies
 from ema.quantification.marker_selector import (
     select_marker_pas,
@@ -872,6 +873,7 @@ def run_diff(
     utr_unmatched: str = "gene",
     counts_layer: str | None = None,
     allow_non_count_matrix: bool = False,
+    prefilter_min_cells: int = 0,
     progress_manager=None,
     warn_marker_top_n: bool = True,
 ) -> dict[tuple[str, str], pd.DataFrame]:
@@ -948,6 +950,18 @@ def run_diff(
             to a warning.  The differential strategies cast to int
             (``fisher.py``'s contingency table), so running them on TF-IDF
             weights makes the effective n a sum of IDF-weighted logs.
+        prefilter_min_cells: Label-INDEPENDENT speed pre-filter (issue #94):
+            test only the PAS detected (count > 0) in at least this many cells,
+            counted over ALL cells pooled.  ``0`` (default) disables it, so the
+            default behaviour is unchanged.  This is the safe alternative to
+            ``marker_top_n``: the criterion is computed by
+            :func:`ema.switch_test.prefilter.select_expressed_pas`, which is
+            handed the count matrix and an integer and has NO parameter for
+            ``cluster_key`` or a label vector, so the selection is invariant
+            under any permutation of the group labels and cannot inflate the
+            null.  As with ``marker_top_n`` the restriction gates only WHICH
+            PAS are tested -- the within-gene Fisher denominator still comes
+            from the full matrix.
         progress_manager: Optional :class:`~ema.progress.ProgressManager`.  When
             supplied, a ``"Cluster-pair testing"`` stage is registered and
             advanced once per pair completed (both serial and parallel paths).
@@ -1035,7 +1049,9 @@ def run_diff(
                     "match the unrestricted run), but the selection bias "
                     "remains: these q-values are NOT FDR-calibrated -- ranking "
                     "screen only. Use marker_top_n=0 (the default) for "
-                    "calibrated inference.",
+                    "calibrated inference, and prefilter_min_cells=N if you "
+                    "need the speed: that pre-filter never looks at "
+                    "cluster_key.",
                     marker_top_n,
                 )
             log.info("run_diff: selecting top %d markers per cluster (%s)", marker_top_n, marker_method)
@@ -1074,6 +1090,36 @@ def run_diff(
         else:
             diff_df = diff_df_full
             diff_df_denom = None
+
+        # Issue #94: the LABEL-INDEPENDENT speed pre-filter -- the safe
+        # alternative to marker_top_n.  select_expressed_pas() is handed the
+        # pooled count matrix and an integer; it has no parameter for
+        # cluster_key, for adata, or for a label vector, so the PAS it keeps
+        # are the same set under every permutation of the labels and the
+        # selection cannot leak group information into the test.  Note that
+        # `cluster_labels` is only read AFTER this block, so nothing in scope
+        # here could feed the labels in even by accident.  As with the marker
+        # path the restriction gates only WHICH PAS are tested: diff_df_denom
+        # keeps the full matrix so the within-gene Fisher denominator is
+        # unchanged.
+        if prefilter_min_cells > 0:
+            kept = select_expressed_pas(diff_df, min_cells=prefilter_min_cells)
+            log.info(
+                "run_diff: label-independent pre-filter "
+                "(prefilter_min_cells=%d): %d of %d PAS detected in >= %d "
+                "cells (pooled over all %d cells; cluster labels not used)",
+                prefilter_min_cells, len(kept), diff_df.shape[1],
+                prefilter_min_cells, diff_df.shape[0],
+            )
+            if not kept:
+                log.warning(
+                    "run_diff: prefilter_min_cells=%d removed EVERY PAS "
+                    "(no PAS is detected in >= %d cells); nothing will be "
+                    "tested -- lower it or pass 0 to disable the pre-filter.",
+                    prefilter_min_cells, prefilter_min_cells,
+                )
+            diff_df = restrict_count_matrix(diff_df, kept, axis="cols")
+            diff_df_denom = diff_df_full
 
         cluster_labels = pd.Series(adata.obs[cluster_key].values, index=adata.obs_names)
         unique_clusters = sorted(cluster_labels.unique().astype(str).tolist())
@@ -1128,12 +1174,23 @@ def run_diff(
                 )
 
         if _isoform_agg != "per_gene" and diff_df_denom is not None:
+            # Both restriction paths (--marker-top-n and the label-independent
+            # --prefilter-min-cells) set diff_df_denom, and the groups above are
+            # built from diff_df_full with the restricted set passed as
+            # report_pas. So under the UTR scopes the background is the FULL
+            # one and the restriction gates only which rows come back -- state
+            # that, and name whichever knob is actually active, rather than
+            # warning about a narrowing that no longer happens (issue #94).
+            _restrictions = []
+            if markers is not None:
+                _restrictions.append(f"--marker-top-n {marker_top_n}")
+            if prefilter_min_cells > 0:
+                _restrictions.append(f"--prefilter-min-cells {prefilter_min_cells}")
             log.info(
-                "run_diff: --marker-top-n %d with --isoform-agg=%s: the "
-                "within-group background is computed over ALL PAS of each "
-                "group; the selection gates only which rows are reported "
-                "(issue #94).",
-                marker_top_n, _isoform_agg,
+                "run_diff: %s with --isoform-agg=%s: the within-group "
+                "background is computed over ALL PAS of each group; the "
+                "selection gates only which rows are reported (issue #94).",
+                " + ".join(_restrictions), _isoform_agg,
             )
 
         if diff_strat.supports_multi_condition:
