@@ -10,7 +10,7 @@ or any aligner that emits the standard 10x-style tag schema. UMI (`UB`) tags are
 **not** required or used: PeakATail counts raw read 3′ ends, not UMI-deduplicated
 molecules. It clusters cells by their
 3' UTR usage patterns and tests for differential alternative polyadenylation (APA) between
-cell types or conditions. The tool is packaged as the `ema` CLI, installable via `pip` or
+cell types or conditions. The tool is packaged as the `peakatail` CLI, installable via `pip` or
 `uv`.
 
 !!! tip "Input requirements"
@@ -146,7 +146,7 @@ Results land in `switch_diff_<timestamp>/` inside the same run directory.
 
     ---
 
-    Every `ema` subcommand, flag, and option documented with types,
+    Every `peakatail` subcommand, flag, and option documented with types,
     defaults, and examples.
 
     [:octicons-arrow-right-24: CLI reference](cli/)

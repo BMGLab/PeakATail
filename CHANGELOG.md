@@ -21,6 +21,10 @@
   behaves identically and prints a one-line notice to *stderr* — never stdout,
   so a caller parsing output is unaffected. Existing scripts, Snakemake and
   Nextflow rules keep running unchanged. It will be removed in a future release.
+  Note that Click derives the program name from `argv[0]`, so `ema --version`
+  and the `Usage:` line of any `--help` still say `ema` — that output is
+  unchanged from before the rename, and the deprecation notice never touches
+  stdout.
 
 ### Changed
 

@@ -357,7 +357,7 @@ clustering of reads and slow the peak-calling step. Use these to tune
 with shaded fill). Right y-axis: CPU % (orange dashed line). Vertical grey
 dotted lines mark pipeline stage transitions with rotated labels.
 
-**When to interpret it:** After any `ema` run to understand memory and CPU
+**When to interpret it:** After any `peakatail` run to understand memory and CPU
 usage over time. A flat RSS line followed by a sudden spike indicates a step
 that materializes a large array (e.g., the count matrix densification during
 clustering). CPU dropping to near 0% between stage transitions indicates I/O-

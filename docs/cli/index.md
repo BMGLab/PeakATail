@@ -1,6 +1,6 @@
 # CLI Reference
 
-PeakATail is invoked through the `ema` command. All subcommands share a common
+PeakATail is invoked through the `peakatail` command. All subcommands share a common
 set of logging, threading, and plotting flags documented on the individual pages.
 Run any subcommand with `--help` to see its full flag list.
 

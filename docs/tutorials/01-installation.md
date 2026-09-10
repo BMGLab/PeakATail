@@ -81,13 +81,13 @@ uv run peakatail --version
 Expected output (version number matches `pyproject.toml`):
 
 ```
-ema, version 0.3.0
+peakatail, version 0.3.0
 ```
 
 Running `peakatail --help` lists every subcommand:
 
 ```
-Usage: ema [OPTIONS] COMMAND [ARGS]...
+Usage: peakatail [OPTIONS] COMMAND [ARGS]...
 
   PeakATail — single-cell poly(A) site detection and APA analysis.
 

@@ -1,8 +1,8 @@
-# `peakatail wizard` (and bare `ema`)
+# `peakatail wizard` (and bare `peakatail`)
 
 An interactive `questionary`-based wizard that walks you through assembling a config for any of PeakATail's main commands, saves it to `.peakatail/last_run.yaml`, and dispatches into the same code path as the explicit CLI invocations.
 
-`ema` with **no subcommand** also drops you into this wizard — handy for first-time users who haven't memorised the flag set yet.
+`peakatail` with **no subcommand** also drops you into this wizard — handy for first-time users who haven't memorised the flag set yet.
 
 !!! note "When to use it"
     - First exposure to PeakATail — you don't know the flag names yet.
@@ -15,8 +15,8 @@ An interactive `questionary`-based wizard that walks you through assembling a co
 ## Quick example
 
 ```bash
-# Bare ema also routes here
-uv run ema
+# Bare peakatail also routes here
+uv run peakatail
 
 # Or explicitly
 uv run peakatail wizard

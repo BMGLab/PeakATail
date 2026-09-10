@@ -154,7 +154,7 @@ peakatail_runs/emaout_20240501_143022/
 
 ## Available CLI commands
 
-All commands are accessed through the `ema` entry point installed by `pip install -e .`.
+All commands are accessed through the `peakatail` entry point installed by `pip install -e .`. The old `ema` command still works as a deprecated alias.
 
 | Command | Description | Docs |
 |---|---|---|
