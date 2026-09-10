@@ -441,6 +441,7 @@ def _build_diff_isoform_groups(
     isoform_agg: str,
     utr_unmatched: str,
     n_jobs: int,
+    report_pas: set | None = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Build the UTR-scoped test matrix + group list for ``run_diff``'s
     ``within_utr`` / ``between_utr`` aggregation scopes.
@@ -471,6 +472,15 @@ def _build_diff_isoform_groups(
         Groups are keyed by GENE; a gene's ``bg_cols``/``report_cols`` are
         its UTR columns.  Only genes with >= 2 UTR columns produce a group
         (a single UTR has nothing to contrast against).
+
+    ``diff_df`` must be the UNRESTRICTED count matrix: every group's
+    ``bg_cols`` (and, under ``between_utr``, every summed UTR column) is the
+    background the strategy then divides by.  ``report_pas`` is how a marker
+    pre-selection (``--marker-top-n``) enters -- it filters ``report_cols``
+    only (issue #94: the restriction decides WHICH rows are reported, never
+    what "the rest of the UTR / gene" means).  A group whose ``report_cols``
+    are emptied by that filter is dropped; under ``between_utr`` a UTR is
+    reported when at least one of its member PAS was selected.
 
     Returns:
         ``(test_matrix, groups)``.  ``groups`` is a list of dicts with keys
@@ -579,6 +589,10 @@ def _build_diff_isoform_groups(
             else:
                 bg_cols = members
                 report_cols = members
+            if report_pas is not None:
+                report_cols = [p for p in report_cols if p in report_pas]
+                if not report_cols:
+                    continue
             groups.append({
                 "group_id": utr_id, "gene_id": gene_id,
                 "bg_cols": bg_cols, "report_cols": report_cols,
@@ -599,11 +613,20 @@ def _build_diff_isoform_groups(
     genes_to_utrs: dict[str, list[str]] = {}
     for utr_id in utr_ids:
         genes_to_utrs.setdefault(gene_of_utr[utr_id], []).append(utr_id)
+    # A marker pre-selection is a PAS-level restriction, but the unit here is
+    # the UTR: a UTR is REPORTED when any of its member PAS was selected, and
+    # its column still sums ALL of them (issue #94).
+    reported_utrs = {
+        utr_id for utr_id, members in utr_pas_members.items()
+        if report_pas is None or any(p in report_pas for p in members)
+    }
     groups = [
-        {"group_id": gene_id, "gene_id": gene_id, "bg_cols": utrs, "report_cols": utrs}
+        {"group_id": gene_id, "gene_id": gene_id, "bg_cols": utrs,
+         "report_cols": [u for u in utrs if u in reported_utrs]}
         for gene_id, utrs in genes_to_utrs.items()
         if len(utrs) >= 2
     ]
+    groups = [g for g in groups if g["report_cols"]]
     return utr_matrix, groups
 
 
@@ -1068,38 +1091,37 @@ def run_diff(
                 )
                 _isoform_agg = "per_gene"
             else:
+                # Issue #94: the groups (and, for between_utr, the summed UTR
+                # columns) are built from the UNRESTRICTED matrix so a
+                # marker pre-selection cannot narrow the within-UTR/within-gene
+                # background; it is handed in as ``report_pas`` and gates only
+                # which rows come back.  This mirrors the per_gene fix, where
+                # fisher gets ``full_count_matrix`` for the same reason.
                 _isoform_test_matrix, _isoform_groups = _build_diff_isoform_groups(
                     adata=adata,
-                    diff_df=diff_df,
+                    diff_df=diff_df_full,
                     h5ad_path=h5ad_path,
                     gtf=_resolved_gtf,
                     pasbed_path=_resolved_pasbed,
                     isoform_agg=_isoform_agg,
                     utr_unmatched=utr_unmatched,
                     n_jobs=n_jobs,
+                    report_pas=(
+                        set(diff_df.columns) if diff_df_denom is not None else None
+                    ),
                 )
                 log.info(
                     "run_diff: isoform_agg=%s: %d group(s) built for differential testing",
                     _isoform_agg, len(_isoform_groups),
                 )
 
-        # Issue #94: the per_gene path repairs the denominator by handing
-        # fisher the unrestricted matrix, but under within_utr/between_utr the
-        # denominator IS the group's ``bg_cols``, built above from the (already
-        # marker-restricted) matrix -- and for between_utr the columns are
-        # UTRs, not PAS, so the marker set cannot be mapped back onto them.
-        # That combination therefore still narrows the background; say so
-        # instead of failing silently.  Checked AFTER the per_gene fallbacks
-        # above, so a run that fell back does not get a warning about a scope
-        # it is no longer using.
         if _isoform_agg != "per_gene" and diff_df_denom is not None:
-            log.warning(
-                "run_diff: --marker-top-n %d combined with --isoform-agg=%s "
-                "still narrows the within-group denominator to the "
-                "marker-selected columns (issue #94; only the default "
-                "--isoform-agg per_gene restores the full denominator). Use "
-                "--marker-top-n 0 with --isoform-agg=%s.",
-                marker_top_n, _isoform_agg, _isoform_agg,
+            log.info(
+                "run_diff: --marker-top-n %d with --isoform-agg=%s: the "
+                "within-group background is computed over ALL PAS of each "
+                "group; the selection gates only which rows are reported "
+                "(issue #94).",
+                marker_top_n, _isoform_agg,
             )
 
         if diff_strat.supports_multi_condition:

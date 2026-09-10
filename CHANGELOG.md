@@ -7,6 +7,29 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — `--marker-top-n` no longer narrows the UTR background (issue #94)
+
+### Fixed
+
+- **`ema switch diff --isoform-agg within_utr|between_utr` combined with
+  `--marker-top-n N` no longer shrinks the denominator.** The marker
+  pre-selection restricted the count matrix *before* the UTR groups were
+  built, so a UTR's background became "the marker-selected PAS of this UTR"
+  (`within_utr`) and each UTR column summed only its selected member PAS
+  (`between_utr`) — the same defect PR #105 fixed for `per_gene`, one scope
+  down, and it silently moved every reported p-value. `run_diff` now builds
+  the groups and the UTR-level matrix from the **unrestricted** matrix and
+  passes the selection to `_build_diff_isoform_groups` as the new
+  `report_pas` argument, which filters each group's `report_cols` only. A
+  `between_utr` UTR is reported when at least one of its member PAS was
+  selected, and its counts still sum all of them. `--marker-top-n N` now
+  decides only *which* rows come back: every denominator and p-value it
+  reports is identical to the `--marker-top-n 0` run's.
+- The warning that named this combination as unfixed is gone (it described a
+  defect that no longer exists); an `INFO` line states the background rule
+  instead. The label double-dip in the *selection* is unchanged and still
+  warns — that half of issue #94 is why `--marker-top-n` defaults to `0`.
+
 ## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
 
 ### Fixed
@@ -128,9 +151,8 @@
   are now tested too, since the gene itself still has a background.
   The remaining (unfixable-by-code) half of issue #94 is the label double-dip
   in the selection itself, which is why the default stays `0`.
-  Exception: under `--isoform-agg within_utr|between_utr` the denominator *is*
-  the group's own columns by design, so combining it with `--marker-top-n > 0`
-  still narrows the background — that combination now warns.
+  The UTR-scoped scopes (`--isoform-agg within_utr|between_utr`) got the same
+  treatment later; see the `--marker-top-n` UTR-background entry above.
 
 ### Changed
 
