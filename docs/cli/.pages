@@ -1,0 +1,11 @@
+nav:
+  - index.md
+  - run.md
+  - reannotate.md
+  - switch-diff.md
+  - switch-length.md
+  - switch-match.md
+  - switch-geneview.md
+  - merge.md
+  - parse-gtf.md
+  - wizard.md

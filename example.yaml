@@ -1,3 +1,38 @@
-- path/to/firstbam.bam
-- path/to/secondbam.bam
-- path/to/thirdbam.bam
+# PeakATail configuration
+# Each dataset is a logical sample group. BAMs within a dataset share cell barcodes
+# (same 10x library) and can be merged before or after peak calling.
+#
+# merge_strategy options:
+#   before - merge all BAMs into one, then peak call (more reads = better detection)
+#   after  - peak call each BAM separately, then merge PAS coordinates
+#   none   - single BAM, no merging needed
+
+datasets:
+  - id: sample1
+    merge_strategy: before
+    bams:
+      - /path/to/sample1_rep1.bam
+      - /path/to/sample1_rep2.bam
+  - id: sample2
+    merge_strategy: none
+    bams:
+      - /path/to/sample2.bam
+
+# GTF for gene annotation
+gtf: /path/to/annotation.gtf
+
+# Output directory (default: emaout/)
+output_dir: emaout
+
+# Read parameters
+seqlen: 150
+cb_len: 16
+barcode_tag: CB
+min_read: 1500
+min_cells: 3
+min_pas_per_cell: 1
+pas_gap: 100
+
+# Optional: snap PAS to reference atlas instead of merging called PAS coordinates
+# atlas: references/polyasite_2.0_GRCh38_sorted.bed
+# atlas_distance: 50

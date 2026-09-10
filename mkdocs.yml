@@ -1,0 +1,90 @@
+site_name: PeakATail
+site_url: https://bmglab.github.io/PeakATail/
+repo_url: https://github.com/BMGLab/PeakATail
+repo_name: BMGLab/PeakATail
+edit_uri: edit/develop/docs/
+site_description: Single-cell APA peak calling and poly(A) tail analysis.
+
+exclude_docs: |
+  superpowers/
+
+theme:
+  name: material
+  language: en
+  logo: assets/logos/header.png
+  favicon: assets/logos/header.png
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle: { icon: material/weather-sunny, name: Switch to dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle: { icon: material/weather-night, name: Switch to light mode }
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  # Custom-fence config promotes ```mermaid``` code blocks into Mermaid SVG
+  # diagrams (rendered client-side by Material's bundled mermaid.js).
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  # LaTeX math support: $...$ inline, $$...$$ block.
+  # `generic: true` keeps the source raw so MathJax (loaded below) typesets it.
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+  - search
+  - awesome-pages
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_signature_annotations: true
+            separate_signature: true
+            merge_init_into_class: true
+            docstring_style: google
