@@ -59,9 +59,13 @@ release.
    git tag -a vX.Y.Z -m "PeakATail vX.Y.Z"
    git push origin vX.Y.Z
    ```
-6. `.github/workflows/release.yml` fires: it **verifies the tag matches
-   `pyproject.toml`**, builds sdist + wheel, and publishes to PyPI via trusted
-   publishing (OIDC — no token stored).
+6. `.github/workflows/release.yml` fires. In order, stopping at the first
+   failure: it **verifies the tag matches `pyproject.toml`**, **verifies the
+   release notes can be generated** from `CHANGELOG.md`, builds sdist + wheel,
+   publishes to PyPI via trusted publishing (OIDC — no token stored), and then
+   **creates the GitHub Release** with both distributions attached. Everything
+   that can fail runs *before* the PyPI upload, because a version number can
+   never be reused.
 7. **bioconda** — after the sdist is on PyPI, replace the placeholder `sha256` in
    `recipes/peakatail/meta.yaml` with the real digest and submit.
 
@@ -81,5 +85,8 @@ but the number is gone. That is why `release.yml` refuses to build when the tag 
 ## Citing a release
 
 Results depend on the version, so the manuscript must cite an **exact tag and DOI**.
-Enable the GitHub–Zenodo integration (see `CONTRIBUTING.md`) so every tag mints a DOI
-automatically, and quote that tag in the Methods.
+The GitHub–Zenodo integration (see `CONTRIBUTING.md`) mints the DOI, and it
+fires on a published **GitHub Release** — *not* on the tag. A tag alone mints
+nothing; `release.yml`'s `github_release` job is what creates that Release, so
+if a DOI is missing after a release, check that job ran. Quote the exact tag
+and DOI in the Methods.

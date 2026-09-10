@@ -28,6 +28,12 @@ SITES: list[tuple[str, list[str]]] = [
     ("README.md", [r'(version = \{)([0-9][^}]*)(\})']),
     ("docs/tutorials/01-installation.md", [r'(peakatail, version )([0-9][0-9A-Za-z.+-]*)(\s)']),
     ("docs/concepts/output-files.md", [r'("peakatail_version": ")([^"]+)(")']),
+    # uv.lock records the project's OWN version alongside every dependency's,
+    # so the pattern is anchored to the peakatail package block -- a bare
+    # version regex would match the 32 unrelated packages that happen to share
+    # a number. It had already drifted a full minor release behind pyproject
+    # before this entry existed.
+    ("uv.lock", [r'(?ms)(^\[\[package\]\]\nname = "peakatail"\nversion = ")([^"]+)(")']),
     # Illustrative release commands -- stale numbers here mislead the next releaser.
     ("CONTRIBUTING.md", [
         r'(git tag -a v)([0-9][0-9A-Za-z.+-]*)()',
@@ -47,25 +53,32 @@ def current_version() -> str:
     return m.group(1)
 
 
-def scan() -> dict[str, list[str]]:
-    """{path: [versions found]} across every declared site."""
+def scan() -> tuple[dict[str, list[str]], list[str]]:
+    """``({path: [versions found]}, [declared-but-missing paths])``."""
     found: dict[str, list[str]] = {}
+    missing: list[str] = []
     for rel, patterns in SITES:
         p = ROOT / rel
         if not p.exists():
+            # A declared mirror that no longer exists means the guard silently
+            # stopped guarding it: --check happily reported "consistent across
+            # 8 site(s)" after recipes/peakatail/meta.yaml was moved away.
+            missing.append(rel)
             continue
         text = p.read_text()
         hits: list[str] = []
         for pat in patterns:
             hits.extend(m.group(2) for m in re.finditer(pat, text))
         found[rel] = hits
-    return found
+    return found, missing
 
 
 def check() -> int:
     want = current_version()
-    bad: list[str] = []
-    for rel, hits in scan().items():
+    found, missing = scan()
+    bad: list[str] = [f"  {rel}: declared in SITES but the file is missing"
+                      for rel in missing]
+    for rel, hits in found.items():
         if not hits:
             bad.append(f"  {rel}: no version found (pattern stopped matching?)")
         for h in hits:
@@ -76,8 +89,8 @@ def check() -> int:
         print("\n".join(bad), file=sys.stderr)
         print("\nrun: python scripts/bump_version.py " + want, file=sys.stderr)
         return 1
-    n = sum(len(v) for v in scan().values())
-    print(f"version {want} consistent across {n} site(s) in {len(scan())} file(s)")
+    n = sum(len(v) for v in found.values())
+    print(f"version {want} consistent across {n} site(s) in {len(found)} file(s)")
     return 0
 
 
@@ -89,8 +102,9 @@ def bump(new: str) -> int:
     for rel, patterns in SITES:
         p = ROOT / rel
         if not p.exists():
-            print(f"  skip (missing): {rel}")
-            continue
+            sys.exit(f"declared site is missing: {rel}. Remove it from SITES "
+                     "deliberately, or restore the file -- silently skipping "
+                     "leaves that mirror unguarded.")
         text = orig = p.read_text()
         for pat in patterns:
             text = re.sub(pat, lambda m: m.group(1) + new + m.group(3), text)
