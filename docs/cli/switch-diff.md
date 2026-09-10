@@ -96,6 +96,20 @@ Options:
                                   Fisher denominator (that is computed from the
                                   full matrix), but it still selects what is
                                   tested. Speed-only; not a statistical filter.
+                                  For speed WITHOUT the double-dip use
+                                  --prefilter-min-cells instead.  [default: 0]
+  --prefilter-min-cells INTEGER   LABEL-INDEPENDENT speed pre-filter (issue
+                                  #94): test only the PAS detected (count > 0)
+                                  in at least N cells, counted over ALL cells
+                                  POOLED. 0 (default) disables it, leaving
+                                  behaviour unchanged. This is the safe
+                                  alternative to --marker-top-n: the criterion
+                                  never looks at --cluster-key, so the PAS kept
+                                  are identical under any permutation of the
+                                  group labels and the null stays calibrated.
+                                  Like --marker-top-n it gates only WHICH PAS
+                                  are tested -- the within-gene Fisher
+                                  denominator still comes from the full matrix.
                                   [default: 0]
   --marker-method TEXT            [default: wilcoxon]
   -s, --strategy TEXT             Differential APA strategy (run --list-
@@ -127,6 +141,7 @@ Options:
 |---|---|---|---|
 | `--strategy` / `-s` | TEXT | `fisher` | Differential APA strategy. Run `peakatail switch diff --list-strategies` to see registered names. `fisher` applies a within-gene Fisher exact test (see Within-gene Fisher framing below). |
 | `--marker-top-n` | INT | `0` (disabled) | **Speed shortcut, not a statistical filter — leave it at 0.** Pre-filters the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Any non-zero value ranks those markers with the **same cluster labels** the differential test then contrasts (a label double-dip), so the reported q-values are **not FDR-calibrated** — see [Why `--marker-top-n` defaults to 0](#why---marker-top-n-defaults-to-0). When set, the markers TSV is saved to `markers.tsv` for inspection. |
+| `--prefilter-min-cells` | INT | `0` (disabled) | **Label-independent speed knob — the safe alternative to `--marker-top-n`.** Tests only the PAS detected (count > 0) in at least N cells, counted over **all cells pooled**. The criterion never looks at `--cluster-key`, so the PAS kept are identical under any permutation of the group labels and the null stays calibrated — see [Cutting the tested PAS set without a double-dip](#cutting-the-tested-pas-set-without-a-double-dip). Like `--marker-top-n` it gates only *which* PAS are tested; the within-gene Fisher denominator still comes from the full matrix. Source: `ema/switch_test/prefilter.py`. |
 | `--marker-method` | TEXT | `wilcoxon` | Marker ranking method passed to `scanpy.tl.rank_genes_groups`. Options include `wilcoxon`, `t-test`, `logreg`. |
 | `--min-cells-per-group` | INT | 10 | Minimum number of cells (with non-zero counts for NB strategies) in each cluster group for a PAS to be included in differential testing. PAS failing this filter in either cluster of a pair are dropped. Source: `ema/cli/config_schema.py`, `ema/switch_test/runner.py::run_diff`. |
 
@@ -167,7 +182,10 @@ unrestricted, and only 629 of 6,453 p-values agreed between a marker-on and a
 marker-off run. That half of issue #94 is **fixed**: `fisher` is now handed the
 unrestricted matrix for the denominator, so `--marker-top-n N` changes only
 *which* PAS are tested and reported, and each reported p-value is bit-identical
-to the one the unrestricted run produces. The numbers in the table below were
+to the one the unrestricted run produces. The same holds under
+`--isoform-agg within_utr` / `between_utr`: each group's background is built
+from **all** of its PAS, and the selection only decides which rows are
+reported. The numbers in the table below were
 measured before that fix; the label double-dip they are driven by is unchanged.
 
 Measured on a correctly-keyed matrix under a 20-run **label-permutation null**
@@ -185,8 +203,82 @@ Only `--marker-top-n 0` controls the FDR, so it is now the default: a flagless
 warning — use it as a **speed shortcut / ranking screen** on large datasets
 (NB strategies scale badly in the number of PAS), never as evidence of
 significance. If you need both speed and calibration, cut the search space
-with something independent of the labels instead (e.g. `--cluster-pairs`,
-`--min-cells-per-group`, or a PAS list from a separate dataset).
+with something independent of the labels instead — `--prefilter-min-cells N`
+(see [Cutting the tested PAS set without a double-dip](#cutting-the-tested-pas-set-without-a-double-dip)),
+`--cluster-pairs`, `--min-cells-per-group`, or a PAS list from a separate
+dataset.
+
+## Cutting the tested PAS set without a double-dip
+
+`--marker-top-n 0` is calibrated but tests everything, which is slow on a large
+matrix (the NB strategies scale badly in the number of PAS). `--prefilter-min-cells N`
+is the speed knob to reach for instead:
+
+```bash
+peakatail switch diff -i clusters.h5ad --cluster-key celltype --prefilter-min-cells 25
+```
+
+It keeps only the PAS detected (count > 0) in at least `N` cells, counted over
+**all cells pooled** — the labels are never grouped, split or read. That is
+structural, not a promise: the criterion is computed by
+`ema.switch_test.prefilter.select_expressed_pas(count_matrix, min_cells)`, whose
+signature has no `cluster_key`, no label vector and no AnnData parameter, so
+there is nothing for it to double-dip on. `run_diff` calls it before the label
+vector is even built.
+
+Consequences, measured on the same label-permutation null the marker flag was
+measured on (2000 PAS, 120 cells, `fisher --count-mode cells`, 5 permutations):
+
+| Configuration | PAS tested | Null p < 0.05 |
+|---|---|---|
+| unfiltered (`--marker-top-n 0`) | 2000 | 3.6 % |
+| `--prefilter-min-cells 80` | 469 | **3.5 %** |
+| `--marker-top-n 200` | 400 | 16.6 % |
+
+Two further properties hold exactly, not approximately, and are pinned by
+`tests/test_label_independent_prefilter_i94.py`:
+
+* the pre-filtered PAS set is **identical under every permutation of the
+  labels** (the marker set is different every time), and
+* every surviving p-value is **bit-identical** to the one the unfiltered run
+  reports for that PAS — the pre-filter removes hypotheses, it never changes a
+  test. The q-values are then plain Benjamini–Hochberg over that smaller,
+  label-blind set of hypotheses.
+
+**Choosing N.** The criterion counts *cells*, not reads, because the per-cell
+contingency table (`--count-mode cells`) is built from exactly that number: a
+PAS detected in fewer than `--min-cells-per-group` cells cannot populate a
+usable table in either group anyway. A read-total threshold would mostly rank
+sequencing depth, and a variance/abundance threshold starts to correlate with
+the between-group difference being tested even without reading the labels. A
+safe starting point is roughly `2 × --min-cells-per-group`; raise it until the
+run is fast enough, and note that (as with any independent filter) testing
+fewer hypotheses makes the BH threshold less stringent — that is the intended
+multiplicity saving, not selection bias.
+
+## `nb_pairwise` and the dispersion floor
+
+`nb_pairwise` clips its per-PAS Negative-Binomial dispersion to `[1e-4, 10]`.
+A PAS that lands on the **lower** clip is fitted as a Poisson GLM, whose Wald
+standard error is a lower bound — so its p-value is anti-conservative. In the
+same label-permutation null as above, 8.5 % of null tests hit that floor and
+those tests produced **67 % of `nb_pairwise`'s false `q < 0.05` hits**.
+
+Such rows are now marked `dispersion_floored = True` in the per-pair TSV and
+their `qvalue` column is left **empty (`NaN`)**, so a `qvalue < fdr` filter can
+never call them significant. The row and its raw `pvalue` are still written —
+read that p-value as a *lower bound*, not as an error rate.
+
+!!! warning "nb_pairwise q-values need permutation calibration"
+
+    Withholding the floored rows removes the dominant source of
+    anti-conservatism, but it does **not** make the remaining `nb_pairwise`
+    q-values calibrated (`nb_pairwise --marker-top-n 0` still put 5.1 % of null
+    p-values below 0.05 and produced a hit in 20/20 permutation runs, the
+    dispersion-floor tail being the bulk of it). If a `nb_pairwise` q-value has
+    to carry an error-rate claim, calibrate it against a label-permutation null
+    of your own data. `fisher --count-mode cells --marker-top-n 0` is the
+    configuration measured to control the FDR out of the box.
 
 ## Within-gene Fisher framing
 
@@ -216,7 +308,7 @@ Output is written to `<out_dir>/differential/` (created automatically).
 
 **`differential/<strategy>_<c1>_vs_<c2>.tsv`**
 
-One TSV per cluster pair. Columns (in order):
+One TSV per cluster pair. Columns (in order) for the default `--strategy fisher`:
 
 | Column | Type | Description |
 |---|---|---|
@@ -228,11 +320,33 @@ One TSV per cluster pair. Columns (in order):
 | `strand` | str | `+` or `-`. **Omitted under `--isoform-agg between_utr`.** |
 | `cluster1` | str | First cluster label of this pair. |
 | `cluster2` | str | Second cluster label of this pair. |
+| `pvalue` | float | Raw two-sided Fisher exact p-value for this PAS. |
+| `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR) across all PAS tested in this pair. |
+| `n_cells` | int | Cells in the pair (`n_cells_cluster1 + n_cells_cluster2`). |
+| `n_cells_cluster1` | int | Cells carrying the `cluster1` label. |
+| `n_cells_cluster2` | int | Cells carrying the `cluster2` label. |
+| `n_cells_expr_cluster1` | int | Cells of cluster 1 with ≥1 read at this PAS. |
+| `n_cells_expr_cluster2` | int | Cells of cluster 2 with ≥1 read at this PAS. |
+| `n_reads_pas_cluster1` | int | Reads at this PAS in cluster 1. |
+| `n_reads_pas_cluster2` | int | Reads at this PAS in cluster 2. |
 | `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). Summed over **all** PAS of the gene, including any excluded by `--marker-top-n`. |
 | `n_reads_gene_cluster2` | int | Total reads for this gene in cluster 2, on the same basis. |
-| `statistic` | float | Test statistic (odds ratio for Fisher). |
-| `pvalue` | float | Raw p-value. |
-| `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR). |
+| `odds_ratio` | float | Odds ratio of the 2×2 table (this PAS vs the gene's other PAS, cluster 1 vs cluster 2), in the unit chosen by `--count-mode` — cells by default, reads under `--count-mode reads`. |
+| `delta_proportion` | float | `prop(cluster1) - prop(cluster2)` of the within-gene usage proportion. **Positive ⇒ the PAS is used more in `cluster1`.** |
+| `log2fc` | float | `log2(prop(cluster2) / prop(cluster1))` of those same proportions (plus a small `eps` so an empty cluster stays finite). **Positive ⇒ the PAS is used more in `cluster2`.** |
+
+!!! warning "`delta_proportion` and `log2fc` use opposite sign conventions"
+    `delta_proportion` is `prop(cluster1) - prop(cluster2)` while `log2fc` is
+    `log2(prop(cluster2) / prop(cluster1))`, so on the same row the two
+    normally carry **opposite signs**: `delta_proportion > 0` means the PAS is
+    used more in `cluster1`, whereas `log2fc > 0` means it is used more in
+    `cluster2`. Filter on one of them, never on both with the same inequality
+    — and note the volcano plot's x-axis is `log2fc`, i.e. cluster2-positive.
+
+The statistical columns are strategy-specific. `--strategy nb_pairwise` writes
+`pvalue`, `qvalue`, `log2fc`, `dispersion`, `n_cells`, `test_stat`; the
+`nb_multi` omnibus (written to `<strategy>_omnibus.tsv`, not to a per-pair
+file) writes `pvalue`, `qvalue`, `test_stat`, `df`, `dispersion`, `n_cells`.
 
 The augmented column order (pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, then statistical columns) is produced by the `_augment_diff_df` helper in `ema/switch_test/runner.py`.
 

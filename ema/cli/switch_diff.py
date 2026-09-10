@@ -94,7 +94,21 @@ def _list_strategies_callback(ctx, param, value):
                    "strategy anti-conservative. The restriction no longer "
                    "changes the within-gene Fisher denominator (that is "
                    "computed from the full matrix), but it still selects "
-                   "what is tested. Speed-only; not a statistical filter.")
+                   "what is tested. Speed-only; not a statistical filter. "
+                   "For speed WITHOUT the double-dip use "
+                   "--prefilter-min-cells instead.")
+@click.option("--prefilter-min-cells", "prefilter_min_cells", type=int,
+              default=DEFAULTS["prefilter-min-cells"], show_default=True,
+              help="LABEL-INDEPENDENT speed pre-filter (issue #94): test only "
+                   "the PAS detected (count > 0) in at least N cells, counted "
+                   "over ALL cells POOLED. 0 (default) disables it, leaving "
+                   "behaviour unchanged. This is the safe alternative to "
+                   "--marker-top-n: the criterion never looks at "
+                   "--cluster-key, so the PAS kept are identical under any "
+                   "permutation of the group labels and the null stays "
+                   "calibrated. Like --marker-top-n it gates only WHICH PAS "
+                   "are tested -- the within-gene Fisher denominator still "
+                   "comes from the full matrix.")
 @click.option("--marker-method", "marker_method", type=str, default=DEFAULTS["marker-method"])
 @click.option("--strategy", "-s", "strategy", type=str, default="fisher",
               show_default=True,
@@ -194,7 +208,9 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 "full matrix, so p-values match the unrestricted run), but the "
                 "selection bias remains: these q-values are NOT FDR-calibrated "
                 "-- use as a speed shortcut / ranking screen only. Pass "
-                "--marker-top-n 0 (the default) for calibrated inference.",
+                "--marker-top-n 0 (the default) for calibrated inference, and "
+                "--prefilter-min-cells N if you need the speed: it cuts the "
+                "tested PAS set without ever looking at --cluster-key.",
                 kwargs["marker_top_n"],
             )
         from ema.switch_test.runner import run_diff
@@ -222,6 +238,7 @@ def diff(ctx: click.Context, **kwargs) -> None:
                 utr_unmatched=kwargs["utr_unmatched"],
                 counts_layer=kwargs["counts_layer"],
                 allow_non_count_matrix=kwargs["allow_non_count_matrix"],
+                prefilter_min_cells=kwargs["prefilter_min_cells"],
                 progress_manager=pm,
                 # The CLI has just warned in --marker-top-n vocabulary above;
                 # run_diff would otherwise repeat the same ten lines verbatim.

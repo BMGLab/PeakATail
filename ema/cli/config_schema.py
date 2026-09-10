@@ -213,14 +213,19 @@ V2_COMPAT_FLAGS: tuple[str, ...] = (
     "--dynamic-threshold-clamp", "off",
 )
 
-#: peakAtail-prime options that are BOOLEAN FLAGS: their v2 behaviour is
-#: "do not pass the flag", so they cannot appear in :data:`V2_COMPAT_FLAGS`
+#: peakAtail-prime options whose v2 behaviour is "do not pass the flag" --
+#: boolean flags, and options belonging to a subcommand other than
+#: ``peakatail run`` -- so they cannot appear in :data:`V2_COMPAT_FLAGS`
 #: (which is flag/value pairs).  Declared explicitly so the completeness check
 #: in ``tests/test_prime_compat_flags.py`` cannot be satisfied by forgetting
 #: one.
 V2_COMPAT_OMITTED_FLAGS: tuple[str, ...] = (
     "--no-ip-filter",      # forces the internal-priming veto off; v2 = absent,
                            # and --ip-filter-default off already restores v2.
+    "--prefilter-min-cells",  # `switch diff` only (issue #94), so it cannot
+                           # appear on an `peakatail run` compat command line at
+                           # all; its default 0 IS v2 behaviour (no pre-filter),
+                           # so v2 = do not pass the flag.
 )
 
 
@@ -1316,6 +1321,22 @@ class RunConfig:
             description="Top-N markers per cluster for differential APA "
                         "(0 = disabled, the FDR-controlled default; any "
                         "non-zero value double-dips on the cluster labels).",
+            applies_to=frozenset({"switch_diff"}),
+        ),
+    )
+    # Issue #94, the other half: dropping the marker default to 0 removed the
+    # only speed knob `switch diff` had.  This is its label-INDEPENDENT
+    # replacement -- keep only the PAS detected in >= N cells, counted over ALL
+    # cells pooled (see ema/switch_test/prefilter.py, which takes no labels at
+    # all).  Default 0 = OFF, so behaviour is unchanged unless asked for.
+    prefilter_min_cells: int = field(
+        default=0,
+        metadata=_spec(
+            cli_flag="--prefilter-min-cells", yaml_key="prefilter_min_cells",
+            skip_legacy_bridge=True,
+            description="Label-independent speed pre-filter for differential "
+                        "APA: test only PAS detected in >= N cells pooled "
+                        "across ALL cells (0 = disabled, the default).",
             applies_to=frozenset({"switch_diff"}),
         ),
     )

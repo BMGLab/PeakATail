@@ -31,6 +31,7 @@ READ_PY = REPO_ROOT / "ema" / "countmatrix" / "read.py"
 REANNOTATE_MD = REPO_ROOT / "docs" / "cli" / "reannotate.md"
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 REANNOTATE_PY = REPO_ROOT / "ema" / "reannotate.py"
+SWITCH_DIFF_MD = REPO_ROOT / "docs" / "cli" / "switch-diff.md"
 
 
 def test_read_parser_does_not_read_umi_tag():
@@ -148,6 +149,100 @@ def test_reannotate_md_documents_atomic_writes():
 def test_changelog_unreleased_covers_issue_65():
     section = _unreleased_section()
     for phrase in ("issue #65", "--out", "exits 1", "atomic"):
+        assert phrase in section, (
+            f"CHANGELOG.md's Unreleased section is missing {phrase!r} "
+            "(CONTRIBUTING.md requires a changelog entry per change)"
+        )
+
+
+# --------------------------------------------------------------------- #
+# Issue #94: the ``switch diff`` per-pair TSV schema on the CLI page drifted
+# from the code -- it documented a ``statistic`` column no strategy produces
+# and omitted most columns that are actually written.  The doc table must
+# match, exactly and in order, the columns ``ema switch diff`` writes for the
+# default ``fisher`` strategy.
+# --------------------------------------------------------------------- #
+
+# Lead columns prepended by ``_augment_diff_df`` in ema/switch_test/runner.py
+# (per_gene scope; ``between_utr`` drops the four coordinate columns).
+DIFF_LEAD_COLS = [
+    "pas_id", "gene_id", "chrom", "start", "end", "strand",
+    "cluster1", "cluster2",
+]
+
+
+def _fisher_stat_columns() -> list[str]:
+    """Ground truth: the stat columns the fisher strategy actually returns."""
+    import numpy as np
+    import pandas as pd
+
+    from ema.switch_test.strategies import get_diff_strategy
+
+    rng = np.random.default_rng(0)
+    cells = [f"c{i}" for i in range(40)]
+    pas = ["P1", "P2", "P3", "P4"]
+    count_matrix = pd.DataFrame(
+        rng.integers(0, 6, size=(len(cells), len(pas))), index=cells, columns=pas
+    )
+    labels = pd.Series(["A"] * 20 + ["B"] * 20, index=cells)
+    result = get_diff_strategy("fisher").test(
+        count_matrix=count_matrix,
+        cluster_labels=labels,
+        cluster1="A",
+        cluster2="B",
+        min_cells_per_group=1,
+        pas_gene_map={"P1": "G1", "P2": "G1", "P3": "G2", "P4": "G2"},
+    )
+    assert not result.empty, "fisher strategy returned no rows for the fixture"
+    return list(result.columns)
+
+
+def _documented_diff_columns() -> list[str]:
+    """Column names of the per-pair TSV table in docs/cli/switch-diff.md."""
+    text = SWITCH_DIFF_MD.read_text()
+    anchor = text.index("**`differential/<strategy>_<c1>_vs_<c2>.tsv`**")
+    header = text.index("| Column | Type | Description |", anchor)
+    cols = []
+    for line in text[header:].splitlines()[2:]:  # skip header + separator row
+        if not line.startswith("|"):
+            break
+        cell = line.split("|")[1].strip()
+        match = re.fullmatch(r"`([A-Za-z0-9_]+)`", cell)
+        assert match, f"unparsable column cell in switch-diff.md table: {cell!r}"
+        cols.append(match.group(1))
+    return cols
+
+
+def test_switch_diff_md_documents_the_real_tsv_columns():
+    """The documented per-pair schema must equal what the code writes."""
+    expected = DIFF_LEAD_COLS + _fisher_stat_columns()
+    documented = _documented_diff_columns()
+    assert documented == expected, (
+        "docs/cli/switch-diff.md's per-pair TSV table is out of sync with "
+        f"ema/switch_test/.\n  documented: {documented}\n  actual:     {expected}\n"
+        f"  invented:   {sorted(set(documented) - set(expected))}\n"
+        f"  missing:    {sorted(set(expected) - set(documented))}"
+    )
+
+
+def test_switch_diff_md_documents_the_opposite_sign_conventions():
+    """``delta_proportion`` and ``log2fc`` point opposite ways -- say so."""
+    text = SWITCH_DIFF_MD.read_text()
+    for phrase in (
+        "prop(cluster1) - prop(cluster2)",
+        "log2(prop(cluster2) / prop(cluster1))",
+        "opposite sign",
+    ):
+        assert phrase in text, (
+            f"switch-diff.md never states {phrase!r}; a reader cannot tell "
+            "that delta_proportion and log2fc use opposite sign conventions"
+        )
+
+
+def test_changelog_unreleased_covers_issue_94_doc_fix():
+    section = _unreleased_section()
+    for phrase in ("issue #94", "per-pair TSV", "`statistic` column",
+                   "opposite sign"):
         assert phrase in section, (
             f"CHANGELOG.md's Unreleased section is missing {phrase!r} "
             "(CONTRIBUTING.md requires a changelog entry per change)"

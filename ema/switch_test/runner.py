@@ -24,6 +24,7 @@ from joblib import parallel_backend
 
 from ema.switch_test.strategies import get_diff_strategy, list_diff_strategies
 from ema.switch_test.pair_runner import run_one_pair
+from ema.switch_test.prefilter import select_expressed_pas
 from ema.quantification.strategies import get_pdui_strategy, list_pdui_strategies
 from ema.quantification.marker_selector import (
     select_marker_pas,
@@ -441,6 +442,7 @@ def _build_diff_isoform_groups(
     isoform_agg: str,
     utr_unmatched: str,
     n_jobs: int,
+    report_pas: set | None = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Build the UTR-scoped test matrix + group list for ``run_diff``'s
     ``within_utr`` / ``between_utr`` aggregation scopes.
@@ -471,6 +473,15 @@ def _build_diff_isoform_groups(
         Groups are keyed by GENE; a gene's ``bg_cols``/``report_cols`` are
         its UTR columns.  Only genes with >= 2 UTR columns produce a group
         (a single UTR has nothing to contrast against).
+
+    ``diff_df`` must be the UNRESTRICTED count matrix: every group's
+    ``bg_cols`` (and, under ``between_utr``, every summed UTR column) is the
+    background the strategy then divides by.  ``report_pas`` is how a marker
+    pre-selection (``--marker-top-n``) enters -- it filters ``report_cols``
+    only (issue #94: the restriction decides WHICH rows are reported, never
+    what "the rest of the UTR / gene" means).  A group whose ``report_cols``
+    are emptied by that filter is dropped; under ``between_utr`` a UTR is
+    reported when at least one of its member PAS was selected.
 
     Returns:
         ``(test_matrix, groups)``.  ``groups`` is a list of dicts with keys
@@ -509,11 +520,18 @@ def _build_diff_isoform_groups(
         if pas_id not in diff_cols:
             continue
         # A spliced 3'UTR contributes one `three_prime_utr` record per exon,
-        # so `entries` can name the same (gene, transcript) more than once for
-        # a single PAS.  Appending pas_id again would put DUPLICATE columns in
-        # that group's bg_cols, and fisher's `int(agg1[p])` then receives a
+        # so `entries` could name the same (gene, transcript) more than once
+        # for a single PAS.  Appending pas_id again would put DUPLICATE columns
+        # in that group's bg_cols, and fisher's `int(agg1[p])` then receives a
         # Series instead of a scalar (TypeError).  De-duplicate per PAS,
         # keeping first-seen order.
+        #
+        # `map_pas_to_isoforms` now drops those duplicates at the source, so
+        # this is belt-and-braces for the map it is actually handed: it is kept
+        # because the failure mode here is a hard crash mid-run, the loop is
+        # two lines and O(1) per entry, and this function takes the map as an
+        # argument -- any caller (or a future map-producing path) that supplies
+        # a non-deduplicated mapping would otherwise abort the whole run.
         seen_utrs: set[str] = set()
         for gene_id, transcript_id, *_rest in entries:
             utr_id = f"{gene_id}::{transcript_id}"
@@ -579,6 +597,10 @@ def _build_diff_isoform_groups(
             else:
                 bg_cols = members
                 report_cols = members
+            if report_pas is not None:
+                report_cols = [p for p in report_cols if p in report_pas]
+                if not report_cols:
+                    continue
             groups.append({
                 "group_id": utr_id, "gene_id": gene_id,
                 "bg_cols": bg_cols, "report_cols": report_cols,
@@ -599,11 +621,20 @@ def _build_diff_isoform_groups(
     genes_to_utrs: dict[str, list[str]] = {}
     for utr_id in utr_ids:
         genes_to_utrs.setdefault(gene_of_utr[utr_id], []).append(utr_id)
+    # A marker pre-selection is a PAS-level restriction, but the unit here is
+    # the UTR: a UTR is REPORTED when any of its member PAS was selected, and
+    # its column still sums ALL of them (issue #94).
+    reported_utrs = {
+        utr_id for utr_id, members in utr_pas_members.items()
+        if report_pas is None or any(p in report_pas for p in members)
+    }
     groups = [
-        {"group_id": gene_id, "gene_id": gene_id, "bg_cols": utrs, "report_cols": utrs}
+        {"group_id": gene_id, "gene_id": gene_id, "bg_cols": utrs,
+         "report_cols": [u for u in utrs if u in reported_utrs]}
         for gene_id, utrs in genes_to_utrs.items()
         if len(utrs) >= 2
     ]
+    groups = [g for g in groups if g["report_cols"]]
     return utr_matrix, groups
 
 
@@ -634,7 +665,8 @@ def _run_grouped_diff(
     reported under that group too), tagged with ``diff_group_id``,
     concatenated across groups, and ``qvalue`` (if present) is RECOMPUTED
     via BH-FDR over the POOLED p-values -- a per-group BH correction over a
-    handful of rows would be meaningless.
+    handful of rows would be meaningless.  Rows flagged ``dispersion_floored``
+    (nb_pairwise, issue #94) keep their withheld ``qvalue`` of NaN.
     """
     collected: list[pd.DataFrame] = []
     for group in groups:
@@ -672,6 +704,10 @@ def _run_grouped_diff(
     if "pvalue" in out.columns and len(out) > 0:
         from scipy.stats import false_discovery_control
         out["qvalue"] = false_discovery_control(out["pvalue"].values, method="bh")
+        # nb_pairwise withholds the q-value of dispersion-floored tests
+        # (issue #94); the pooled recomputation must not resurrect them.
+        if "dispersion_floored" in out.columns:
+            out.loc[out["dispersion_floored"].astype(bool), "qvalue"] = np.nan
     return out
 
 
@@ -837,6 +873,7 @@ def run_diff(
     utr_unmatched: str = "gene",
     counts_layer: str | None = None,
     allow_non_count_matrix: bool = False,
+    prefilter_min_cells: int = 0,
     progress_manager=None,
     warn_marker_top_n: bool = True,
 ) -> dict[tuple[str, str], pd.DataFrame]:
@@ -913,6 +950,18 @@ def run_diff(
             to a warning.  The differential strategies cast to int
             (``fisher.py``'s contingency table), so running them on TF-IDF
             weights makes the effective n a sum of IDF-weighted logs.
+        prefilter_min_cells: Label-INDEPENDENT speed pre-filter (issue #94):
+            test only the PAS detected (count > 0) in at least this many cells,
+            counted over ALL cells pooled.  ``0`` (default) disables it, so the
+            default behaviour is unchanged.  This is the safe alternative to
+            ``marker_top_n``: the criterion is computed by
+            :func:`ema.switch_test.prefilter.select_expressed_pas`, which is
+            handed the count matrix and an integer and has NO parameter for
+            ``cluster_key`` or a label vector, so the selection is invariant
+            under any permutation of the group labels and cannot inflate the
+            null.  As with ``marker_top_n`` the restriction gates only WHICH
+            PAS are tested -- the within-gene Fisher denominator still comes
+            from the full matrix.
         progress_manager: Optional :class:`~ema.progress.ProgressManager`.  When
             supplied, a ``"Cluster-pair testing"`` stage is registered and
             advanced once per pair completed (both serial and parallel paths).
@@ -1000,7 +1049,9 @@ def run_diff(
                     "match the unrestricted run), but the selection bias "
                     "remains: these q-values are NOT FDR-calibrated -- ranking "
                     "screen only. Use marker_top_n=0 (the default) for "
-                    "calibrated inference.",
+                    "calibrated inference, and prefilter_min_cells=N if you "
+                    "need the speed: that pre-filter never looks at "
+                    "cluster_key.",
                     marker_top_n,
                 )
             log.info("run_diff: selecting top %d markers per cluster (%s)", marker_top_n, marker_method)
@@ -1040,6 +1091,36 @@ def run_diff(
             diff_df = diff_df_full
             diff_df_denom = None
 
+        # Issue #94: the LABEL-INDEPENDENT speed pre-filter -- the safe
+        # alternative to marker_top_n.  select_expressed_pas() is handed the
+        # pooled count matrix and an integer; it has no parameter for
+        # cluster_key, for adata, or for a label vector, so the PAS it keeps
+        # are the same set under every permutation of the labels and the
+        # selection cannot leak group information into the test.  Note that
+        # `cluster_labels` is only read AFTER this block, so nothing in scope
+        # here could feed the labels in even by accident.  As with the marker
+        # path the restriction gates only WHICH PAS are tested: diff_df_denom
+        # keeps the full matrix so the within-gene Fisher denominator is
+        # unchanged.
+        if prefilter_min_cells > 0:
+            kept = select_expressed_pas(diff_df, min_cells=prefilter_min_cells)
+            log.info(
+                "run_diff: label-independent pre-filter "
+                "(prefilter_min_cells=%d): %d of %d PAS detected in >= %d "
+                "cells (pooled over all %d cells; cluster labels not used)",
+                prefilter_min_cells, len(kept), diff_df.shape[1],
+                prefilter_min_cells, diff_df.shape[0],
+            )
+            if not kept:
+                log.warning(
+                    "run_diff: prefilter_min_cells=%d removed EVERY PAS "
+                    "(no PAS is detected in >= %d cells); nothing will be "
+                    "tested -- lower it or pass 0 to disable the pre-filter.",
+                    prefilter_min_cells, prefilter_min_cells,
+                )
+            diff_df = restrict_count_matrix(diff_df, kept, axis="cols")
+            diff_df_denom = diff_df_full
+
         cluster_labels = pd.Series(adata.obs[cluster_key].values, index=adata.obs_names)
         unique_clusters = sorted(cluster_labels.unique().astype(str).tolist())
 
@@ -1068,38 +1149,48 @@ def run_diff(
                 )
                 _isoform_agg = "per_gene"
             else:
+                # Issue #94: the groups (and, for between_utr, the summed UTR
+                # columns) are built from the UNRESTRICTED matrix so a
+                # marker pre-selection cannot narrow the within-UTR/within-gene
+                # background; it is handed in as ``report_pas`` and gates only
+                # which rows come back.  This mirrors the per_gene fix, where
+                # fisher gets ``full_count_matrix`` for the same reason.
                 _isoform_test_matrix, _isoform_groups = _build_diff_isoform_groups(
                     adata=adata,
-                    diff_df=diff_df,
+                    diff_df=diff_df_full,
                     h5ad_path=h5ad_path,
                     gtf=_resolved_gtf,
                     pasbed_path=_resolved_pasbed,
                     isoform_agg=_isoform_agg,
                     utr_unmatched=utr_unmatched,
                     n_jobs=n_jobs,
+                    report_pas=(
+                        set(diff_df.columns) if diff_df_denom is not None else None
+                    ),
                 )
                 log.info(
                     "run_diff: isoform_agg=%s: %d group(s) built for differential testing",
                     _isoform_agg, len(_isoform_groups),
                 )
 
-        # Issue #94: the per_gene path repairs the denominator by handing
-        # fisher the unrestricted matrix, but under within_utr/between_utr the
-        # denominator IS the group's ``bg_cols``, built above from the (already
-        # marker-restricted) matrix -- and for between_utr the columns are
-        # UTRs, not PAS, so the marker set cannot be mapped back onto them.
-        # That combination therefore still narrows the background; say so
-        # instead of failing silently.  Checked AFTER the per_gene fallbacks
-        # above, so a run that fell back does not get a warning about a scope
-        # it is no longer using.
         if _isoform_agg != "per_gene" and diff_df_denom is not None:
-            log.warning(
-                "run_diff: --marker-top-n %d combined with --isoform-agg=%s "
-                "still narrows the within-group denominator to the "
-                "marker-selected columns (issue #94; only the default "
-                "--isoform-agg per_gene restores the full denominator). Use "
-                "--marker-top-n 0 with --isoform-agg=%s.",
-                marker_top_n, _isoform_agg, _isoform_agg,
+            # Both restriction paths (--marker-top-n and the label-independent
+            # --prefilter-min-cells) set diff_df_denom, and the groups above are
+            # built from diff_df_full with the restricted set passed as
+            # report_pas. So under the UTR scopes the background is the FULL
+            # one and the restriction gates only which rows come back -- state
+            # that, and name whichever knob is actually active, rather than
+            # warning about a narrowing that no longer happens (issue #94).
+            _restrictions = []
+            if markers is not None:
+                _restrictions.append(f"--marker-top-n {marker_top_n}")
+            if prefilter_min_cells > 0:
+                _restrictions.append(f"--prefilter-min-cells {prefilter_min_cells}")
+            log.info(
+                "run_diff: %s with --isoform-agg=%s: the within-group "
+                "background is computed over ALL PAS of each group; the "
+                "selection gates only which rows are reported (issue #94).",
+                " + ".join(_restrictions), _isoform_agg,
             )
 
         if diff_strat.supports_multi_condition:

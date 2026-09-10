@@ -7,6 +7,180 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — label-independent `switch diff` pre-filter (issue #94)
+
+### Added
+
+- **`ema switch diff --prefilter-min-cells N`** — a **label-independent** speed
+  pre-filter, the replacement for the speed knob that disappeared when
+  `--marker-top-n` was defaulted to `0`. It tests only the PAS detected
+  (count > 0) in at least `N` cells, counted over **all cells pooled**.
+  Default `0` = OFF, so nothing changes unless you ask for it.
+  Where `--marker-top-n` ranks the tested PAS with the *same* `--cluster-key`
+  labels the test then contrasts (a double-dip that put 13.0–24.7 % of null
+  p-values below 0.05, issue #94), this criterion never sees the labels: it is
+  computed by `ema.switch_test.prefilter.select_expressed_pas`, whose signature
+  is `(count_matrix, min_cells)` — there is no `cluster_key`, label vector or
+  AnnData parameter for it to peek at, so the PAS kept are identical under
+  every permutation of the labels. Measured on the same permutation null the
+  marker flag is measured on: the null p<0.05 rate is 3.5 % with the
+  pre-filter on vs 3.6 % unfiltered and 16.6 % at `--marker-top-n 200`, while
+  only 469 of 2000 PAS are tested,
+  and each surviving p-value is bit-identical to the unfiltered run's — the
+  pre-filter removes hypotheses, it never changes a test (the within-gene
+  Fisher denominator still comes from the full matrix).
+  Guarded by `tests/test_label_independent_prefilter_i94.py`.
+  Chosen over a read-total or variance threshold because "cells in which the
+  PAS is detected" is what the per-cell contingency table is built from, a
+  read-total cut mostly ranks sequencing depth, and a variance cut starts to
+  correlate with the between-group difference being tested even without
+  reading the labels.
+
+### Changed
+
+- `--marker-top-n`'s help text and its runtime warning now name
+  `--prefilter-min-cells` as the safe way to get the speed.
+## Unreleased — `switch diff` per-pair TSV column documentation (issue #94)
+
+### Fixed
+
+- `docs/cli/switch-diff.md` documented a `statistic` column that the per-pair
+  TSV has not carried for some time, and listed only 3 of the 14 statistical
+  columns `--strategy fisher` actually writes. The table now matches the
+  columns produced by `ema/switch_test/strategies/fisher.py` exactly and in
+  output order, and names the differing column sets of `nb_pairwise` and
+  `nb_multi`.
+- The docs never stated that `delta_proportion` and `log2fc` carry
+  **opposite sign** conventions — `delta_proportion = prop(cluster1) - prop(cluster2)`
+  (positive ⇒ used more in `cluster1`) while
+  `log2fc = log2(prop(cluster2) / prop(cluster1))` (positive ⇒ used more in
+  `cluster2`). Both formulas and their directions are now spelled out in the
+  column table and in a callout.
+- `tests/test_docs_consistency.py` gained a guard that derives the real column
+  list by running the fisher strategy and compares it to the documented table,
+  so this schema cannot drift again.
+
+`docs/concepts/output-files.md` was checked and is not stale: it describes the
+lead columns generically and defers to the CLI page for the full schema.
+## Unreleased — `--marker-top-n` no longer narrows the UTR background (issue #94)
+
+### Fixed
+
+- **`ema switch diff --isoform-agg within_utr|between_utr` combined with
+  `--marker-top-n N` no longer shrinks the denominator.** The marker
+  pre-selection restricted the count matrix *before* the UTR groups were
+  built, so a UTR's background became "the marker-selected PAS of this UTR"
+  (`within_utr`) and each UTR column summed only its selected member PAS
+  (`between_utr`) — the same defect PR #105 fixed for `per_gene`, one scope
+  down, and it silently moved every reported p-value. `run_diff` now builds
+  the groups and the UTR-level matrix from the **unrestricted** matrix and
+  passes the selection to `_build_diff_isoform_groups` as the new
+  `report_pas` argument, which filters each group's `report_cols` only. A
+  `between_utr` UTR is reported when at least one of its member PAS was
+  selected, and its counts still sum all of them. `--marker-top-n N` now
+  decides only *which* rows come back: every denominator and p-value it
+  reports is identical to the `--marker-top-n 0` run's.
+- The warning that named this combination as unfixed is gone (it described a
+  defect that no longer exists); an `INFO` line states the background rule
+  instead. The label double-dip in the *selection* is unchanged and still
+  warns — that half of issue #94 is why `--marker-top-n` defaults to `0`.
+## Unreleased — `nb_pairwise` dispersion floor (issue #94)
+
+### Fixed
+
+- **`nb_pairwise` no longer reports a q-value for a test whose dispersion hit
+  the numerical floor.** The per-PAS NB dispersion alpha is clipped to
+  `[1e-4, 10]`; when the estimate collapses onto the **lower** bound the GLM is
+  effectively a Poisson fit, its Wald standard error is a lower bound, and the
+  p-value is anti-conservative. The estimate is also taken under the *full*
+  model, so sampling noise that mimics a group difference is absorbed by the
+  fitted coefficient and pushes alpha down — precisely the tests that then look
+  most significant. Under the 20-run label-permutation null of issue #94, 8.5 %
+  of null tests hit the floor and those tests produced **67 % of all false
+  q < 0.05 calls**. Such rows now get `qvalue = NaN`, so no `qvalue < fdr`
+  filter can ever call them significant.
+
+### Added
+
+- **`dispersion_floored` column in the `nb_pairwise` per-pair output** (`True`
+  when `dispersion <= 1e-4`). The row itself and its raw `pvalue` are still
+  reported so the evidence stays inspectable; only the q-value is withheld.
+  `NbPairwiseStrategy.test` logs a warning naming how many PAS were affected.
+  The floored rows stay in the BH input so the family size *m* is unchanged —
+  dropping them would have made every *other* q-value less conservative — and
+  `switch diff`'s pooled BH recomputation for `within_utr`/`between_utr`
+  preserves the withheld NaN.
+
+### Changed
+
+- **Documented that `nb_pairwise` q-values are not permutation-calibrated.**
+  Withholding the floored rows removes the dominant source of anti-conservatism
+  but does not by itself make the remaining q-values calibrated; that needs a
+  permutation-calibrated q (or dispersion shrinkage toward a trend), which is
+  still open on issue #94. `docs/strategies/diff.md` and
+  `docs/cli/switch-diff.md` now say so.
+## Unreleased — spliced 3'UTRs no longer double-count a PAS (all consumers)
+
+### Fixed
+
+- **`map_pas_to_isoforms` de-duplicates a PAS that intersects several
+  `three_prime_utr` records of the SAME transcript.** A spliced 3'UTR is
+  annotated by one record per exon, so `bedtools intersect` reports a PAS
+  sitting in more than one of them once per record. The map then emitted the
+  same `(pas_id, gene_id, transcript_id)` entry repeatedly, gave that one PAS
+  two different `rank` values and inflated `total_pas_in_transcript` — and
+  every consumer double-counted the site. PR #112 fixed this at ONE consumer
+  (`switch diff`); the rest were silently wrong. On a two-PAS fixture whose
+  honest totals are 2 distinct PAS / 100 reads:
+
+  - `ShannonPDUIStrategy` reported `pas_ids='1;1;3'`, `n_pas=3`,
+    `total_reads_transcript=110` and **entropy 0.866 bits instead of 0.469**;
+  - `ProportionPDUIStrategy` emitted the duplicated PAS twice, each row with
+    **proportion 0.0909 instead of 0.1**;
+  - `ClassicPDUIStrategy`'s `_build_pas_info_from_map` carried the duplicate
+    row, so the transcript looked like a 3-PAS UTR. (The classic *PDUI value*
+    itself was already shielded by the duplicate collapse added for issue #98;
+    the map fields it surfaces were not.)
+
+  Duplicates are now dropped in `map_pas_to_isoforms` itself, before ranking,
+  so `rank` and `total_pas_in_transcript` are computed from the DISTINCT PAS
+  set and every consumer is fixed at once. First-seen (bedtools) order is
+  preserved: dumping the map plus all three strategies' output for an
+  unspliced fixture (single-exon, multi-exon-non-overlapping, two-isoform and
+  minus-strand transcripts) is **byte-identical** to `develop`.
+
+  `switch diff`'s consumer-side guard from #112 is **kept** as defence in
+  depth — `_build_diff_isoform_groups` takes the map as an argument, and a
+  duplicate reaching `fisher` aborts the run with
+  `TypeError: cannot convert the series to <class 'int'>`.
+## Unreleased — the release that mints a DOI
+
+### Fixed
+
+- **A tag push now creates a GitHub Release, not just a PyPI upload.** Zenodo
+  mints a DOI when a GitHub *Release* is published; a bare git tag does not
+  trigger it. `release.yml` built and published to PyPI and then stopped, so
+  pushing `v0.3.0` as documented would have produced a package on PyPI and **no
+  DOI at all** — silently, with every step of the workflow green. A new
+  `github_release` job creates the Release from the tag with the sdist + wheel
+  attached, after the PyPI publish succeeds, so a release that never reached
+  PyPI is never archived either.
+
+### Added
+
+- **`scripts/changelog_section.py`** prints one version's `CHANGELOG.md`
+  section, and the release workflow uses it as the Release body — which is also
+  what Zenodo records against the DOI. It **exits non-zero** when there is no
+  `## <version>` heading, so a CHANGELOG still stuck on `Unreleased` fails the
+  release instead of publishing an empty archival record.
+
+### Changed
+
+- `CONTRIBUTING.md`'s release section now describes what the workflow does
+  (verify tag → publish to PyPI → create the Release) instead of telling the
+  maintainer to draft the Release by hand, and records that Zenodo takes the
+  archived record's authors and title from `CITATION.cff` as of tag time.
+
 ## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
 
 ### Fixed
@@ -128,9 +302,8 @@
   are now tested too, since the gene itself still has a background.
   The remaining (unfixable-by-code) half of issue #94 is the label double-dip
   in the selection itself, which is why the default stays `0`.
-  Exception: under `--isoform-agg within_utr|between_utr` the denominator *is*
-  the group's own columns by design, so combining it with `--marker-top-n > 0`
-  still narrows the background — that combination now warns.
+  The UTR-scoped scopes (`--isoform-agg within_utr|between_utr`) got the same
+  treatment later; see the `--marker-top-n` UTR-background entry above.
 
 ### Changed
 
