@@ -17,6 +17,11 @@ already on develop (commit 7b50a5f).  `tests/test_run_diff_isoform.py` covers
 the clean, unspliced `within_utr` / `between_utr` / `utr_unmatched` semantics --
 only the duplicate-member case is added here.
 
+`map_pas_to_isoforms` now de-duplicates at the source as well (see
+`tests/test_pas_to_isoform_spliced_dedup.py`), which fixes the strategies that
+read the map raw.  The consumer-side guard exercised here is kept as defence in
+depth, so these tests still pin the `switch diff` behaviour.
+
 Fixture
 -------
 GENE_S / TRANSCRIPT_S1 has a 3'UTR annotated by TWO `three_prime_utr` records
@@ -116,14 +121,32 @@ def _spliced_utr_env(tmp_path, monkeypatch):
     return tmp_path, adata, gtf_path
 
 
-def test_spliced_utr_entries_really_name_the_transcript_twice(_spliced_utr_env):
-    """Guard on the fixture itself: without it the regression below is vacuous."""
-    from ema.quantification.pas_to_isoform import map_pas_to_isoforms
+def test_spliced_utr_intersects_the_transcript_twice_but_the_map_dedups(
+    _spliced_utr_env,
+):
+    """Guard on the fixture itself: without it the regression below is vacuous.
+
+    The fixture must still make ``bedtools`` report PAS 10 once per
+    ``three_prime_utr`` record -- that is the condition the consumer-side guard
+    below protects against.  ``map_pas_to_isoforms`` now drops the duplicate at
+    the source (so every other consumer is fixed too), which is why the map
+    itself names the transcript once.
+    """
+    from ema.quantification.pas_to_isoform import (
+        _build_utr_bed,
+        _run_bedtools_intersect,
+        map_pas_to_isoforms,
+    )
 
     tmp_path, _adata, _gtf = _spliced_utr_env
-    raw = map_pas_to_isoforms(tmp_path / "pasbed.bed", ISOFORM_UTRS)
+    pasbed = tmp_path / "pasbed.bed"
+
+    hits = _run_bedtools_intersect(pasbed, _build_utr_bed(ISOFORM_UTRS))
+    assert len(hits[hits["pas_id"] == 10]) == 2, hits
+
+    raw = map_pas_to_isoforms(pasbed, ISOFORM_UTRS)
     named = [(g, t) for g, t, *_ in raw[10]]
-    assert named.count(("GENE_S", "TRANSCRIPT_S1")) == 2, named
+    assert named.count(("GENE_S", "TRANSCRIPT_S1")) == 1, named
 
 
 def test_spliced_utr_does_not_duplicate_a_pas_in_its_group(_spliced_utr_env):
