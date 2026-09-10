@@ -20,10 +20,10 @@ Prerequisites, Python version, install command, and install verification.
 End-to-end single-sample run in five steps: configure, run, inspect outputs, run differential, read the volcano.
 
 **[03 — Multi-dataset workflow](03-multi-dataset.md)**
-Two BAMs in one YAML, atlas snap mode, cross-dataset cluster matching with `ema switch match`.
+Two BAMs in one YAML, atlas snap mode, cross-dataset cluster matching with `peakatail switch match`.
 
 **[04 — Switch analysis](04-switch-analysis.md)**
-Full biological story: locate a significant differential row, decode every column, run `ema switch length`, interpret PDUI values per cluster, and conclude whether 3'UTR shortening or lengthening is happening.
+Full biological story: locate a significant differential row, decode every column, run `peakatail switch length`, interpret PDUI values per cluster, and conclude whether 3'UTR shortening or lengthening is happening.
 
 **[05 — Gene track deep dive](05-gene-track-deep-dive.md)**
-Use `ema switch geneview` to generate a per-gene figure showing PAS positions across the gene body and per-cluster read proportions. Understand what each panel in the figure means.
+Use `peakatail switch geneview` to generate a per-gene figure showing PAS positions across the gene body and per-cluster read proportions. Understand what each panel in the figure means.

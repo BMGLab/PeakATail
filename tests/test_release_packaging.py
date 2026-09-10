@@ -89,11 +89,21 @@ def test_recipe_parses_and_matches_pyproject() -> None:
     assert doc["package"]["name"] == proj["name"]
     assert str(doc["package"]["version"]) == str(proj["version"])
 
-    # entry point must match the pyproject console script (ema = ema.cli:main)
-    eps = doc["build"]["entry_points"]
-    assert "ema = ema.cli:main" in [e.replace(" ", " ").strip() for e in eps]
-    script_name, target = next(iter(proj["scripts"].items()))
-    assert any(e.split("=")[0].strip() == script_name for e in eps)
+    # the recipe must declare EVERY console script pyproject declares, with the
+    # same target -- including the deprecated `ema` alias, whose omission would
+    # silently stop shipping it to conda users.
+    eps = {e.split("=")[0].strip(): e.split("=", 1)[1].strip()
+           for e in doc["build"]["entry_points"]}
+    for script_name, target in proj["scripts"].items():
+        assert script_name in eps, (
+            f"pyproject declares the console script {script_name!r} but the conda "
+            f"recipe does not; conda users would not get it"
+        )
+        assert eps[script_name] == target, (
+            f"{script_name}: recipe points at {eps[script_name]!r}, "
+            f"pyproject at {target!r}"
+        )
+    assert "peakatail" in eps, "the primary command must be `peakatail`"
 
     # every runtime dep from pyproject appears in the recipe run section, under
     # its conda channel name where that differs from the PyPI name.

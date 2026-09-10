@@ -1,4 +1,4 @@
-"""`ema switch length --isoform-agg per_isoform` — degenerate proximal==distal
+"""`peakatail switch length --isoform-agg per_isoform` — degenerate proximal==distal
 pairs (issue #98).
 
 A per-isoform unit whose proximal and distal endpoints resolve to the SAME

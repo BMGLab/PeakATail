@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Trim-axis (A2/A3) CLEAN re-run — off B1_cohort_full's saved peak-calls via
-# `ema reannotate`, one invocation per experiments/laughney/trim_cluster_grid.tsv
+# `peakatail reannotate`, one invocation per experiments/laughney/trim_cluster_grid.tsv
 # row, matching main.nf's REANNOTATE_BRANCH script body exactly. Bypasses
 # nextflow deliberately: `--phase phase2` would ALSO re-launch GRID_RUN
 # (peakcall method sweep -- expensive re-peak-calling), which isn't wanted

@@ -1,19 +1,19 @@
-# `ema merge`
+# `peakatail merge`
 
 Merge multiple BAM files into a single sorted + indexed BAM. Thin convenience wrapper around `samtools merge` + `samtools sort` + `samtools index` with PeakATail's logging plumbing — useful as a pre-step when a sample is split across lanes / sequencing runs.
 
 !!! note "When to use it"
     - You have technical replicates of the same library that need to be merged before peak calling.
-    - You want one combined BAM for `ema run`'s `merge_strategy: before` flow but you'd rather do the merge separately so you can reuse the merged BAM across runs.
+    - You want one combined BAM for `peakatail run`'s `merge_strategy: before` flow but you'd rather do the merge separately so you can reuse the merged BAM across runs.
 
 !!! warning "When NOT to use it"
-    - **Different libraries / different cell-barcode spaces** — never merge BAMs whose CB-tag space differs (e.g. two distinct 10x runs); use multi-dataset mode in `ema run` instead.
-    - **You're already running `ema run` with `merge_strategy: before`** — that path does the merge internally; running `ema merge` first would be redundant.
+    - **Different libraries / different cell-barcode spaces** — never merge BAMs whose CB-tag space differs (e.g. two distinct 10x runs); use multi-dataset mode in `peakatail run` instead.
+    - **You're already running `peakatail run` with `merge_strategy: before`** — that path does the merge internally; running `peakatail merge` first would be redundant.
 
 ## Quick example
 
 ```bash
-uv run ema merge \
+uv run peakatail merge \
     -i sample1_lane1.bam \
     -i sample1_lane2.bam \
     -o sample1_merged.bam \
@@ -28,7 +28,7 @@ Produces:
 ## Full `--help` output
 
 ```text
-Usage: ema merge [OPTIONS]
+Usage: peakatail merge [OPTIONS]
 
   Merge multiple BAM files into one sorted+indexed BAM.
 
@@ -62,9 +62,9 @@ Plus the common logging flags from [`common_options`](run.md#common-flags) (`-v`
 
 ## How it relates to other commands
 
-`ema merge` is a one-shot helper; its output BAM can be fed straight into `ema run` as a `datasets[].bams[]` entry. See [`ema run`](run.md) for the main pipeline.
+`peakatail merge` is a one-shot helper; its output BAM can be fed straight into `peakatail run` as a `datasets[].bams[]` entry. See [`peakatail run`](run.md) for the main pipeline.
 
 ## See also
 
-- [`ema run`](run.md) — main pipeline entry point (uses `merge_strategy: before` internally when configured).
+- [`peakatail run`](run.md) — main pipeline entry point (uses `merge_strategy: before` internally when configured).
 - [Quickstart tutorial](../tutorials/02-quickstart.md)

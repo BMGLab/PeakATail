@@ -2,7 +2,7 @@
 
 Provides the library-level ``run_merge`` entry point consumed by
 ``ema/cli/merge.py``.  The old argparse ``cli()`` has been removed;
-use ``ema merge`` instead.
+use ``peakatail merge`` instead.
 """
 from __future__ import annotations
 

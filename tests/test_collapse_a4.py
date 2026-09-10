@@ -1,4 +1,4 @@
-"""A4: `ema collapse` — RG-suffix run-tag pooling.
+"""A4: `peakatail collapse` — RG-suffix run-tag pooling.
 
 samtools-merge renames colliding @RG ids with an 8-hex suffix, so one library's
 runs get per-run cb prefixes and stop pooling. collapse strips the suffix and

@@ -17,7 +17,7 @@ re-running peak calling:
 
 The pure functions :func:`canonical_cb` and :func:`collapse_columns` carry all
 the logic and are unit-testable without touching the filesystem;
-:func:`collapse_run` is the thin on-disk orchestration used by ``ema collapse``.
+:func:`collapse_run` is the thin on-disk orchestration used by ``peakatail collapse``.
 Promoted from ``scripts/collapse_run_suffixes.py``.
 """
 from __future__ import annotations

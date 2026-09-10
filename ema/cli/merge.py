@@ -1,4 +1,4 @@
-"""`ema merge` — merge BAM files (was `ema_merge`)."""
+"""`peakatail merge` — merge BAM files (was `ema_merge`)."""
 from __future__ import annotations
 
 import logging
@@ -39,7 +39,7 @@ def merge(**kwargs) -> None:
     )
 
     try:
-        log.info("ema merge: %d input BAMs -> %s", len(kwargs["bam_files"]), out_path)
+        log.info("peakatail merge: %d input BAMs -> %s", len(kwargs["bam_files"]), out_path)
         from ema.merge_bam.runner import run_merge
         run_merge(
             bam_files=list(kwargs["bam_files"]),

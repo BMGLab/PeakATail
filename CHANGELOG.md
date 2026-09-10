@@ -25,6 +25,37 @@
 
   Reported in #109. The `NameError` that PR also describes was already fixed on
   `develop` in `7b50a5f`; this lands the remaining half.
+## Unreleased — the command is now `peakatail` (`ema` deprecated)
+
+### Breaking changes
+
+- **The console script is `peakatail`.** The package has been named `peakatail`
+  since 0.2.0 while the command it installed was still `ema`, which was a
+  long-standing source of confusion in issues and in the docs.
+
+### Deprecations
+
+- **`ema` still works and is deprecated.** It is installed as an alias that
+  behaves identically and prints a one-line notice to *stderr* — never stdout,
+  so a caller parsing output is unaffected. Existing scripts, Snakemake and
+  Nextflow rules keep running unchanged. It will be removed in a future release.
+  Note that Click derives the program name from `argv[0]`, so `ema --version`
+  and the `Usage:` line of any `--help` still say `ema` — that output is
+  unchanged from before the rename, and the deprecation notice never touches
+  stdout.
+
+### Changed
+
+- Every CLI invocation in the README, the `docs/` tree, the wizard and the
+  in-code help now reads `peakatail`. 555 invocations across 106 files.
+- The Click group and the argparse pre-parser both report `peakatail` in usage
+  and help output.
+
+### Not changed
+
+- The importable package is still `ema` (`from ema.cli import main`), and every
+  `ema/...` source path is unchanged. Renaming the Python package is a separate,
+  larger change and is deliberately not bundled here.
 
 ## Unreleased — `switch diff` marker pre-selection double-dip (issue #94)
 

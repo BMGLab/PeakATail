@@ -8,10 +8,10 @@ artifacts and therefore call different orchestrator entry points:
 ================  =================================================
 CLI command       Entry point
 ================  =================================================
-``ema run``       :func:`render_run_outputs`
-``ema switch diff``     :func:`render_switch_diff_outputs`
-``ema switch length``   :func:`render_switch_length_outputs`
-``ema switch match``    :func:`render_switch_match_outputs`
+``peakatail run``       :func:`render_run_outputs`
+``peakatail switch diff``     :func:`render_switch_diff_outputs`
+``peakatail switch length``   :func:`render_switch_length_outputs`
+``peakatail switch match``    :func:`render_switch_match_outputs`
 ================  =================================================
 
 Each entry point reads its inputs (in-memory results passed in by the command,
@@ -242,7 +242,7 @@ def count_called_pas(peakcalling_dir: Path) -> int:
 
 
 # ===========================================================================
-# `ema run` — the main pipeline (single- or multi-sample)
+# `peakatail run` — the main pipeline (single- or multi-sample)
 # ===========================================================================
 
 def render_run_outputs(
@@ -258,7 +258,7 @@ def render_run_outputs(
     # Legacy alias kept for external callers that still pass per_dataset_dir.
     per_dataset_dir: Path | None = None,
 ) -> None:
-    """One-call viz for ``ema run``.  Runs after the pipeline body completes.
+    """One-call viz for ``peakatail run``.  Runs after the pipeline body completes.
 
     Reads only on-disk artifacts the pipeline produced:
 
@@ -502,7 +502,7 @@ def _render_tile_timing(
 
 
 # ===========================================================================
-# `ema switch diff` — volcano + diff_agreement
+# `peakatail switch diff` — volcano + diff_agreement
 # ===========================================================================
 
 def render_switch_diff_outputs(
@@ -517,7 +517,7 @@ def render_switch_diff_outputs(
     pasbed_path: str | None = None,
     progress_manager: Any = None,
 ) -> None:
-    """Render figures specific to ``ema switch diff``.
+    """Render figures specific to ``peakatail switch diff``.
 
     ``pair_results`` maps ``(c1, c2)`` (with ``c2`` possibly ``None`` for
     omnibus tests) to the per-pair stats DataFrame.  ``fdr`` and
@@ -577,7 +577,7 @@ def render_switch_diff_outputs(
                 engines=engines,
             )
             vol_count += len(w)
-        log.info("ema switch diff: volcano=%d file(s)", vol_count)
+        log.info("peakatail switch diff: volcano=%d file(s)", vol_count)
 
         # --- diff_agreement: needs >=2 pair sig-sets ---
         sig_sets: dict[str, set[str]] = {}
@@ -599,18 +599,18 @@ def render_switch_diff_outputs(
                 figs_dir / "diff_agreement", engines=engines,
             )
             log.info(
-                "ema switch diff: diff_agreement=%d file(s) (%d sig-sets)",
+                "peakatail switch diff: diff_agreement=%d file(s) (%d sig-sets)",
                 len(w), len(sig_sets),
             )
         elif len(sig_sets) > _MAX_DIFF_AGREEMENT_SETS:
             log.info(
-                "ema switch diff: diff_agreement skipped (got %d sig-sets, "
+                "peakatail switch diff: diff_agreement skipped (got %d sig-sets, "
                 "max %d for upsetplot — too many for a readable chart)",
                 len(sig_sets), _MAX_DIFF_AGREEMENT_SETS,
             )
         else:
             log.info(
-                "ema switch diff: diff_agreement skipped (need >=2 pairs, got %d)",
+                "peakatail switch diff: diff_agreement skipped (need >=2 pairs, got %d)",
                 len(sig_sets),
             )
 
@@ -627,16 +627,16 @@ def render_switch_diff_outputs(
             )
         except Exception as _gt_exc:
             log.warning(
-                "ema switch diff: gene_track auto top-N failed: %s", _gt_exc
+                "peakatail switch diff: gene_track auto top-N failed: %s", _gt_exc
             )
 
         # Walk the figures dir once and write a researcher-readable manifest.
         from ema.viz._meta import write_figures_index
-        idx = write_figures_index(figs_dir, command="ema switch diff")
+        idx = write_figures_index(figs_dir, command="peakatail switch diff")
         if idx is not None:
-            log.info("ema switch diff: figures index -> %s", idx)
+            log.info("peakatail switch diff: figures index -> %s", idx)
     except Exception as exc:
-        log.warning("ema switch diff: viz rendering failed: %s", exc)
+        log.warning("peakatail switch diff: viz rendering failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +667,7 @@ def _render_diff_gene_tracks(
     """
     if not h5ad_paths:
         log.warning(
-            "ema switch diff: gene_track auto top-%d skipped — no h5ad paths "
+            "peakatail switch diff: gene_track auto top-%d skipped — no h5ad paths "
             "provided (pass h5ad_paths= to render_switch_diff_outputs)",
             _AUTO_TOP_N_GENES,
         )
@@ -678,7 +678,7 @@ def _render_diff_gene_tracks(
     top_genes = rank_top_genes(pair_results, n=_AUTO_TOP_N_GENES)
     if not top_genes:
         log.info(
-            "ema switch diff: gene_track auto top-%d skipped — no gene_id "
+            "peakatail switch diff: gene_track auto top-%d skipped — no gene_id "
             "column found in pair_results",
             _AUTO_TOP_N_GENES,
         )
@@ -688,7 +688,7 @@ def _render_diff_gene_tracks(
     adata = _load_last_adata(h5ad_paths)
     if adata is None:
         log.warning(
-            "ema switch diff: gene_track auto top-%d skipped — could not load "
+            "peakatail switch diff: gene_track auto top-%d skipped — could not load "
             "any h5ad",
             _AUTO_TOP_N_GENES,
         )
@@ -702,7 +702,7 @@ def _render_diff_gene_tracks(
         resolved_pasbed = _find_pasbed_near(Path(h5ad_paths[-1]))
     if resolved_pasbed is None:
         log.warning(
-            "ema switch diff: gene_track auto top-%d skipped — pasbed.bed not "
+            "peakatail switch diff: gene_track auto top-%d skipped — pasbed.bed not "
             "found near %s",
             _AUTO_TOP_N_GENES, Path(h5ad_paths[-1]).parent,
         )
@@ -746,14 +746,14 @@ def _render_diff_gene_tracks(
             rendered_genes.append(gene_id)
         except Exception as _e:
             log.warning(
-                "ema switch diff: gene_track for %r failed: %s", gene_id, _e
+                "peakatail switch diff: gene_track for %r failed: %s", gene_id, _e
             )
         finally:
             if _gt_client is not None:
                 _gt_client.advance(1)
 
     log.info(
-        "ema switch diff: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",
+        "peakatail switch diff: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",
         _AUTO_TOP_N_GENES,
         total_files,
         len(rendered_genes),
@@ -787,7 +787,7 @@ def _render_length_gene_tracks(
     """
     if pdui_df is None or pdui_df.empty:
         log.info(
-            "ema switch length: gene_track auto top-%d skipped — pdui_df empty",
+            "peakatail switch length: gene_track auto top-%d skipped — pdui_df empty",
             _AUTO_TOP_N_GENES,
         )
         return
@@ -807,7 +807,7 @@ def _render_length_gene_tracks(
 
     if score_col is None or gene_col is None or "cell" not in pdui_df.columns:
         log.info(
-            "ema switch length: gene_track auto top-%d skipped — pdui_df "
+            "peakatail switch length: gene_track auto top-%d skipped — pdui_df "
             "missing gene_id, cell, or a score column",
             _AUTO_TOP_N_GENES,
         )
@@ -816,7 +816,7 @@ def _render_length_gene_tracks(
     # Map cell -> cluster from adata.
     if cluster_key not in adata.obs.columns:
         log.warning(
-            "ema switch length: gene_track auto top-%d skipped — cluster_key "
+            "peakatail switch length: gene_track auto top-%d skipped — cluster_key "
             "%r not in adata.obs",
             _AUTO_TOP_N_GENES, cluster_key,
         )
@@ -829,7 +829,7 @@ def _render_length_gene_tracks(
 
     if valid.empty:
         log.info(
-            "ema switch length: gene_track auto top-%d skipped — no non-NaN "
+            "peakatail switch length: gene_track auto top-%d skipped — no non-NaN "
             "score rows after cluster mapping",
             _AUTO_TOP_N_GENES,
         )
@@ -852,7 +852,7 @@ def _render_length_gene_tracks(
 
     if not top_genes:
         log.info(
-            "ema switch length: gene_track auto top-%d skipped — no genes with "
+            "peakatail switch length: gene_track auto top-%d skipped — no genes with "
             "sufficient cluster coverage",
             _AUTO_TOP_N_GENES,
         )
@@ -872,7 +872,7 @@ def _render_length_gene_tracks(
 
     if pasbed_path is None:
         log.warning(
-            "ema switch length: gene_track auto top-%d skipped — pasbed.bed "
+            "peakatail switch length: gene_track auto top-%d skipped — pasbed.bed "
             "not found",
             _AUTO_TOP_N_GENES,
         )
@@ -907,11 +907,11 @@ def _render_length_gene_tracks(
             rendered_genes.append(gene_id)
         except Exception as _e:
             log.warning(
-                "ema switch length: gene_track for %r failed: %s", gene_id, _e
+                "peakatail switch length: gene_track for %r failed: %s", gene_id, _e
             )
 
     log.info(
-        "ema switch length: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",
+        "peakatail switch length: gene_track auto top-%d = %d file(s) (%d gene(s): %s)",
         _AUTO_TOP_N_GENES,
         total_files,
         len(rendered_genes),
@@ -944,7 +944,7 @@ def _load_last_adata(h5ad_paths: list[str]) -> Any:
 
 
 # ===========================================================================
-# `ema switch length` — pdui_distribution + length_shifts
+# `peakatail switch length` — pdui_distribution + length_shifts
 # ===========================================================================
 
 def render_switch_length_outputs(
@@ -955,7 +955,7 @@ def render_switch_length_outputs(
     cluster_key: str,
     engines: list[str] | None,
 ) -> None:
-    """Render figures specific to ``ema switch length``."""
+    """Render figures specific to ``peakatail switch length``."""
     if not engines or last_adata is None:
         return
     try:
@@ -991,7 +991,7 @@ def render_switch_length_outputs(
             )
             n_cells_with_score = int(last_adata.obs[score_key].notna().sum())
             log.info(
-                "ema switch length: per-cell PDUI computed (%d/%d cells have a "
+                "peakatail switch length: per-cell PDUI computed (%d/%d cells have a "
                 "non-NaN mean PDUI; mean=%.3f, std=%.3f)",
                 n_cells_with_score, last_adata.n_obs,
                 float(last_adata.obs[score_key].mean(skipna=True)),
@@ -1001,7 +1001,7 @@ def render_switch_length_outputs(
                 "pdui_distribution", (last_adata, score_key),
                 figs_dir / "pdui_distribution", engines=engines,
             )
-            log.info("ema switch length: pdui_distribution=%d file(s)", len(w))
+            log.info("peakatail switch length: pdui_distribution=%d file(s)", len(w))
 
         elif "entropy" in cols and "cell" in cols:
             score_key = "mean_entropy"
@@ -1013,7 +1013,7 @@ def render_switch_length_outputs(
                 last_adata.obs_names.to_series().map(per_cell)
             )
             log.info(
-                "ema switch length: per-cell entropy computed (%d/%d cells have "
+                "peakatail switch length: per-cell entropy computed (%d/%d cells have "
                 "a non-NaN mean entropy)",
                 int(last_adata.obs[score_key].notna().sum()), last_adata.n_obs,
             )
@@ -1021,7 +1021,7 @@ def render_switch_length_outputs(
                 "entropy_distribution", (last_adata, score_key),
                 figs_dir / "entropy_distribution", engines=engines,
             )
-            log.info("ema switch length: entropy_distribution=%d file(s)", len(w))
+            log.info("peakatail switch length: entropy_distribution=%d file(s)", len(w))
 
         elif "proportion" in cols and "pas_id" in cols and "cell" in cols:
             w = render_all(
@@ -1034,13 +1034,13 @@ def render_switch_length_outputs(
                 },
                 figs_dir / "proportion_heatmap", engines=engines,
             )
-            log.info("ema switch length: proportion_heatmap=%d file(s)", len(w))
+            log.info("peakatail switch length: proportion_heatmap=%d file(s)", len(w))
 
         else:
             # No strategy column present — log loudly, do NOT silently emit a
             # pas_detection_rate figure that looks like a real result.
             log.warning(
-                "ema switch length: pdui_df missing a known score column "
+                "peakatail switch length: pdui_df missing a known score column "
                 "(pdui/entropy/proportion); skipping primary figure. cols=%s",
                 sorted(cols),
             )
@@ -1078,7 +1078,7 @@ def render_switch_length_outputs(
             # frame (8.7% in our regression run) — keeping the groupby cheap.
             valid = pdui_df[pdui_df[pdui_col].notna()].copy()
             if valid.empty:
-                log.info("ema switch length: length_shifts skipped (no non-NaN PDUI rows)")
+                log.info("peakatail switch length: length_shifts skipped (no non-NaN PDUI rows)")
             else:
                 valid["__cluster__"] = valid["cell"].map(cell_to_cluster)
                 valid = valid[valid["__cluster__"].notna()]
@@ -1103,7 +1103,7 @@ def render_switch_length_outputs(
                         figs_dir / "length_shifts", engines=engines,
                     )
                     log.info(
-                        "ema switch length: length_shifts=%d file(s) "
+                        "peakatail switch length: length_shifts=%d file(s) "
                         "(%d genes × %d cluster pairs)",
                         len(w), len(shifts_df), len(shifts_data),
                     )
@@ -1120,19 +1120,19 @@ def render_switch_length_outputs(
             )
         except Exception as _gt_exc:
             log.warning(
-                "ema switch length: gene_track auto top-N failed: %s", _gt_exc
+                "peakatail switch length: gene_track auto top-N failed: %s", _gt_exc
             )
 
         from ema.viz._meta import write_figures_index
-        idx = write_figures_index(figs_dir, command="ema switch length")
+        idx = write_figures_index(figs_dir, command="peakatail switch length")
         if idx is not None:
-            log.info("ema switch length: figures index -> %s", idx)
+            log.info("peakatail switch length: figures index -> %s", idx)
     except Exception as exc:
-        log.warning("ema switch length: viz rendering failed: %s", exc)
+        log.warning("peakatail switch length: viz rendering failed: %s", exc)
 
 
 # ===========================================================================
-# `ema switch match` — cluster_match_sankey + match_confidence
+# `peakatail switch match` — cluster_match_sankey + match_confidence
 # ===========================================================================
 
 def render_switch_match_outputs(
@@ -1141,7 +1141,7 @@ def render_switch_match_outputs(
     df: Any,
     engines: list[str] | None,
 ) -> None:
-    """Render figures specific to ``ema switch match``."""
+    """Render figures specific to ``peakatail switch match``."""
     if not engines or df is None or getattr(df, "empty", True):
         return
     try:
@@ -1156,13 +1156,13 @@ def render_switch_match_outputs(
             figs_dir / "match_confidence", engines=engines,
         )
         log.info(
-            "ema switch match: sankey=%d, match_confidence=%d file(s) at %s",
+            "peakatail switch match: sankey=%d, match_confidence=%d file(s) at %s",
             len(s), len(m), figs_dir,
         )
 
         from ema.viz._meta import write_figures_index
-        idx = write_figures_index(figs_dir, command="ema switch match")
+        idx = write_figures_index(figs_dir, command="peakatail switch match")
         if idx is not None:
-            log.info("ema switch match: figures index -> %s", idx)
+            log.info("peakatail switch match: figures index -> %s", idx)
     except Exception as exc:
-        log.warning("ema switch match: viz rendering failed: %s", exc)
+        log.warning("peakatail switch match: viz rendering failed: %s", exc)

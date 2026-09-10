@@ -1,9 +1,9 @@
 """Tests for issue #74: expose the D4 per-cell ("cells") count mode on the
-``ema switch diff`` CLI, and show it de-pseudoreplicates the fisher test.
+``peakatail switch diff`` CLI, and show it de-pseudoreplicates the fisher test.
 
 Two things are covered:
 
-1. **CLI reachability** — ``--count-mode`` is a real option on ``ema switch
+1. **CLI reachability** — ``--count-mode`` is a real option on ``peakatail switch
    diff``, accepts ``cells``/``reads``, and rejects anything else.  Before
    this fix the de-pseudoreplicated mode existed on ``FisherStrategy`` but was
    unreachable from the CLI (verified in the issue via ``--help``).

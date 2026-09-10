@@ -58,7 +58,7 @@ def split_cb(cb_str: str) -> tuple[str, str]:
     sample ``"pbmc"`` + barcode ``"10k_v3_AAACCCAAGAAACCCA"``, which
     :func:`~ema.countmatrix.cb_encode.encode_cb` maps to ``-1``.  Every cell
     of such a run then collapsed onto the single column ``("pbmc", -1)``.
-    ``ema merge`` stamps ``RG = dataset_id`` (``DatasetManager._tag_bam_with_rg``)
+    ``peakatail merge`` stamps ``RG = dataset_id`` (``DatasetManager._tag_bam_with_rg``)
     and ``samtools merge`` derives RG ids from file names, so underscore-bearing
     sample ids are the norm, not an edge case.
 

@@ -110,13 +110,13 @@ higher in cluster 2). Y-axis: `-log10(qvalue)`. Horizontal dashed line at
 `-log10(FDR)`. Vertical dashed lines at ±`log2fc_thresh`. Significant points
 colored red (up in cluster 2) or blue (down in cluster 2).
 
-**When to interpret it:** After `ema switch diff`. The upper-right quadrant
+**When to interpret it:** After `peakatail switch diff`. The upper-right quadrant
 contains PAS used more in cluster 2; upper-left contains PAS used more in
 cluster 1. Points near the horizontal line but inside the vertical lines have
 significant but small effect size; approach with caution.
 
 ![Volcano: cluster 0 vs 4](../assets/figures/volcano_0_vs_4.png)
-*Real output from `ema switch diff` on the `full_v8` run. Red dots = PAS used more
+*Real output from `peakatail switch diff` on the `full_v8` run. Red dots = PAS used more
 in cluster 4; blue dots = PAS used more in cluster 0. The top-N genes are
 auto-labeled.*
 
@@ -134,7 +134,7 @@ auto-labeled.*
 shows the distribution of PDUI values across all cells in that cluster.
 Medians are shown as horizontal lines.
 
-**When to interpret it:** After running `ema switch length` with
+**When to interpret it:** After running `peakatail switch length` with
 `--pdui-method classic`. Clusters with PDUI median near 1.0 tend toward
 longer 3' UTRs. Clusters with median near 0.0 tend toward shorter UTRs.
 Bimodal violins within a cluster indicate heterogeneous PAS usage and may
@@ -163,7 +163,7 @@ cross-cluster variance (most discriminating). Columns are clusters. Cell
 values are mean within-gene proportion across cells of that cluster.
 Color scale: viridis (dark = 0, bright = 1).
 
-**When to interpret it:** After `ema switch length --pdui-method proportion`.
+**When to interpret it:** After `peakatail switch length --pdui-method proportion`.
 A PAS with a bright cell in one cluster and dark in another is shifting its
 within-gene proportion across conditions. Use this as a visual triage before
 running `fisher` or `nb_pairwise`.
@@ -182,7 +182,7 @@ running `fisher` or `nb_pairwise`.
 `pdui_distribution` but for the entropy metric. Color scale uses viridis
 rather than tab10.
 
-**When to interpret it:** After `ema switch length --pdui-method shannon`.
+**When to interpret it:** After `peakatail switch length --pdui-method shannon`.
 Progenitor or cycling cell populations often show higher entropy (more uniform
 PAS usage) than terminally differentiated cells. Clusters where the violin is
 collapsed near 0 bits contain cells with highly focused PAS usage.
@@ -201,7 +201,7 @@ Jaccard similarity between the significant PAS sets of strategy i and strategy
 j. Diagonal = 1.0 (each strategy agrees with itself). Off-diagonal values
 show pairwise strategy agreement. Annotated with numeric values.
 
-**When to interpret it:** When running `ema switch diff` with multiple
+**When to interpret it:** When running `peakatail switch diff` with multiple
 `--diff-method` values simultaneously. High Jaccard (> 0.7) between `fisher`
 and `nb_pairwise` indicates the results are robust. Low Jaccard (< 0.3)
 indicates the two tests are sensitive to different PAS or that one is
@@ -267,7 +267,7 @@ sensitivity differs substantially between them.
 counts with percentage. Right: histogram of snap distances with the median
 marked by a red dashed line.
 
-**When to interpret it:** After atlas snapping in `ema run`. A high unsnapped
+**When to interpret it:** After atlas snapping in `peakatail run`. A high unsnapped
 fraction (> 30%) may indicate that the snap distance threshold is too tight or
 that the atlas does not cover the tissue type being analyzed. A median snap
 distance > 50 bp suggests the atlas PAS are not well-calibrated to this
@@ -289,7 +289,7 @@ represents one original cluster colored by its canonical cluster ID. Segment
 opacity encodes `match_confidence` (opaque = high confidence). A legend maps
 canonical cluster colors. Segment labels show `original → canonical` mapping.
 
-**When to interpret it:** After `ema switch match`. A canonical cluster that
+**When to interpret it:** After `peakatail switch match`. A canonical cluster that
 appears in all dataset columns with similar color means all datasets agree that
 cell population exists. A canonical cluster appearing in only one dataset
 column is a population unique to that sample.
@@ -334,7 +334,7 @@ and may warrant re-running with a different `n_top_markers` or switching from
 `wall_seconds`. Tiles more than 2 standard deviations above the mean are
 highlighted red (outliers).
 
-**When to interpret it:** After `ema run` to diagnose performance. Outlier
+**When to interpret it:** After `peakatail run` to diagnose performance. Outlier
 tiles (red bars) on specific chromosomes often indicate high coverage regions
 (e.g., mitochondrial chromosome, highly expressed ribosomal genes) that cause
 clustering of reads and slow the peak-calling step. Use these to tune
@@ -357,7 +357,7 @@ clustering of reads and slow the peak-calling step. Use these to tune
 with shaded fill). Right y-axis: CPU % (orange dashed line). Vertical grey
 dotted lines mark pipeline stage transitions with rotated labels.
 
-**When to interpret it:** After any `ema` run to understand memory and CPU
+**When to interpret it:** After any `peakatail` run to understand memory and CPU
 usage over time. A flat RSS line followed by a sudden spike indicates a step
 that materializes a large array (e.g., the count matrix densification during
 clustering). CPU dropping to near 0% between stage transitions indicates I/O-
@@ -401,7 +401,7 @@ total read count at the gene. The y-axis cap is the 95th percentile of
 reads/cell across all rendered clusters, preventing one outlier PAS from
 squashing the other bars.
 
-**When to interpret it:** After `ema switch geneview` for a specific gene.
+**When to interpret it:** After `peakatail switch geneview` for a specific gene.
 A gene with a dominant distal bar in one cluster and a dominant proximal bar
 in another cluster is an APA candidate. The proportion annotation makes it
 easy to see whether a visual shift in bar height is meaningful (e.g., 80% vs

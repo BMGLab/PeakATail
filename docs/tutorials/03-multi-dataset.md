@@ -4,7 +4,7 @@ PeakATail natively handles multiple BAM files or multiple sample groups in a sin
 
 1. Configuring two datasets in one YAML
 2. Optional: snapping called PAS to a reference atlas
-3. Aligning clusters across datasets with `ema switch match`
+3. Aligning clusters across datasets with `peakatail switch match`
 
 ---
 
@@ -49,7 +49,7 @@ your BAMs represent biologically:
     `merge_strategy: before` does NOT correct barcodes. If you merge BAMs from
     two distinct 10x runs, identical-looking barcodes from different cells
     will collide. Use multi-dataset mode (one `datasets:` entry per library)
-    + `ema switch match` for cross-library analysis instead.
+    + `peakatail switch match` for cross-library analysis instead.
 
 ---
 
@@ -77,7 +77,7 @@ Without the atlas, coordinates are merged by proximity (gap controlled by `pas_g
 ## Step 3 — Run the pipeline
 
 ```bash
-uv run ema run --config multi_run.yaml --threads 8
+uv run peakatail run --config multi_run.yaml --threads 8
 ```
 
 The multi-sample path runs each dataset through its own downstream pipeline (annotation, matrix filtering, preprocessing, clustering) in parallel worker processes. Progress is reported per dataset.
@@ -114,10 +114,10 @@ peakatail_runs/emaout_<timestamp>/
 
 ## Step 4 — Run cross-dataset cluster matching
 
-After clustering, cluster labels are independent integers within each dataset. Cluster 0 in `control` may correspond to cluster 3 in `treated`. `ema switch match` aligns them using marker PAS overlap:
+After clustering, cluster labels are independent integers within each dataset. Cluster 0 in `control` may correspond to cluster 3 in `treated`. `peakatail switch match` aligns them using marker PAS overlap:
 
 ```bash
-uv run ema switch match \
+uv run peakatail switch match \
   --h5ad peakatail_runs/emaout_<timestamp>/per_dataset/control/clusters.h5ad \
   --h5ad peakatail_runs/emaout_<timestamp>/per_dataset/treated/clusters.h5ad \
   --strategy marker_overlap \
@@ -134,7 +134,7 @@ Output: `cross_dataset/canonical_cluster_map.tsv` with columns `dataset_id`, `cl
 
 ```bash
 # Test control cluster 0 (= canonical cluster A) vs treated cluster 3 (= canonical cluster A)
-uv run ema switch diff \
+uv run peakatail switch diff \
   --h5ad .../per_dataset/control/clusters.h5ad \
   --h5ad .../per_dataset/treated/clusters.h5ad \
   --cluster-pairs "0,3" \

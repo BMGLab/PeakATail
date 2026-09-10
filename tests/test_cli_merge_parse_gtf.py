@@ -1,4 +1,4 @@
-"""Contract tests for `ema merge` and `ema parse-gtf`."""
+"""Contract tests for `peakatail merge` and `peakatail parse-gtf`."""
 from click.testing import CliRunner
 
 from ema.cli import main

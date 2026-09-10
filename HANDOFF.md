@@ -45,9 +45,9 @@ base worktree) and unrelated to this branch:
 - **D8** shorten/lengthen polarity lives in `length_long` (LengthRow), computed by `structural_length_direction()` — deterministic one-vs-rest Δdistal-usage sign per (gene, cluster). `classic` uses PDUI (distal fraction); `proportion` uses the max-rank (distal) PAS; `shannon` → `undetermined`. Never NA-silent; always a contract `Direction` enum. Carries `direction_basis="structural"`. `findings_long` intentionally stays differential-usage (flat/undetermined is fine).
 
 ### Net-new subcommands
-- **A4** `ema collapse` — samtools-merge RG-suffix pooling (pure `canonical_cb` + count-preserving sparse collapse).
-- **A3** `ema switch trend` — ordered-stage APA length trend (slope + Spearman + direction, overall & per-gene), generalized beyond hardcoded stage sets.
-- **A2** `ema switch combine` — stitch stage-labelled `clusters.h5ad` into per-group (optional split-by-celltype) h5ads for `--cluster-key stage`.
+- **A4** `peakatail collapse` — samtools-merge RG-suffix pooling (pure `canonical_cb` + count-preserving sparse collapse).
+- **A3** `peakatail switch trend` — ordered-stage APA length trend (slope + Spearman + direction, overall & per-gene), generalized beyond hardcoded stage sets.
+- **A2** `peakatail switch combine` — stitch stage-labelled `clusters.h5ad` into per-group (optional split-by-celltype) h5ads for `--cluster-key stage`.
 - **A1 (core)** `ema/celltype/scoring.py` — marker M1(cluster-argmax)/M2(cell-majority) assignment + agreement + ARI/AMI concordance.
 
 ---

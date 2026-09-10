@@ -113,7 +113,7 @@ def write_figures_index(figs_dir: Path, command: str | None = None) -> Path | No
             sidecars.  Returns ``None`` if the directory doesn't exist or is
             empty.
         command: Optional name of the producing CLI subcommand (e.g.
-            ``"ema switch diff"``) — included in the markdown header.
+            ``"peakatail switch diff"``) — included in the markdown header.
 
     Returns:
         Path to the markdown file, or ``None`` on failure / empty dir.

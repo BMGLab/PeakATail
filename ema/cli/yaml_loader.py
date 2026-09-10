@@ -1,4 +1,4 @@
-"""YAML config loading + schema validation for `ema run`.
+"""YAML config loading + schema validation for `peakatail run`.
 
 Schema is a strict superset of today's main.py YAML reader:
 - `datasets` (required, list of {id, merge_strategy, bams})
@@ -7,8 +7,8 @@ Schema is a strict superset of today's main.py YAML reader:
 - `atlas`, `atlas_distance`
 - `cluster_match_method`, `n_top_markers`
 
-Dead keys (no longer used by ema run) emit a one-shot warning telling
-the user where to find the equivalent: `ema switch length` / `ema switch diff`.
+Dead keys (no longer used by peakatail run) emit a one-shot warning telling
+the user where to find the equivalent: `peakatail switch length` / `peakatail switch diff`.
 Unknown keys also warn (don't fail).
 """
 from __future__ import annotations
@@ -43,12 +43,12 @@ def _build_live_keys() -> set[str]:
 # Single source of truth -- never hand-edit this set; modify the schema.
 _LIVE_KEYS = _build_live_keys()
 
-# Dead keys: were used by old `ema` but moved to `ema switch ...`
+# Dead keys: were used by old `ema` but moved to `peakatail switch ...`
 _DEAD_KEYS = {
-    "pdui_method": "ema switch length",
-    "pdui_isoform_agg": "ema switch length",
-    "pdui_isoform_collapse": "ema switch length",
-    "diff_method": "ema switch diff",
+    "pdui_method": "peakatail switch length",
+    "pdui_isoform_agg": "peakatail switch length",
+    "pdui_isoform_collapse": "peakatail switch length",
+    "diff_method": "peakatail switch diff",
 }
 
 
@@ -106,7 +106,7 @@ def load_run_yaml(path: str | Path) -> dict[str, Any]:
     for k in cfg:
         if k in _DEAD_KEYS:
             log.warning(
-                "YAML key %r is no longer used by `ema run` — moved to %r. Ignored.",
+                "YAML key %r is no longer used by `peakatail run` — moved to %r. Ignored.",
                 k, _DEAD_KEYS[k],
             )
         elif k not in _LIVE_KEYS:

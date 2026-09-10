@@ -44,14 +44,14 @@ def test_dead_key_warns_but_loads(tmp_path, caplog):
     p = _write(tmp_path, {
         "datasets": [{"id": "a", "merge_strategy": "none", "bams": ["a.bam"]}],
         "gtf": "g.gtf",
-        "pdui_method": "classic",   # DEAD in ema run
-        "diff_method": "fisher",    # DEAD in ema run
+        "pdui_method": "classic",   # DEAD in peakatail run
+        "diff_method": "fisher",    # DEAD in peakatail run
     })
     with caplog.at_level(logging.WARNING):
         cfg = load_run_yaml(p)
     text = caplog.text
-    assert "pdui_method" in text and "ema switch length" in text
-    assert "diff_method" in text and "ema switch diff" in text
+    assert "pdui_method" in text and "peakatail switch length" in text
+    assert "diff_method" in text and "peakatail switch diff" in text
     # the keys ARE preserved in the cfg, callers can ignore them
     assert "pdui_method" in cfg
 

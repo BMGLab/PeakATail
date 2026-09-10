@@ -94,7 +94,7 @@ def test_the_branch_default_is_single_valued():
     """One default, in one place — the bug this test exists for.
 
     An earlier revision left ``variable_config.read_geometry`` at v2's
-    ``"fixed"`` and put the branch default only in ``RunConfig``.  ``ema run``
+    ``"fixed"`` and put the branch default only in ``RunConfig``.  ``peakatail run``
     then used one geometry and a direct library call the other, and
     ``RunConfig.apply_to_legacy_globals()`` leaked the branch value into the
     process globals part-way through a pytest session, making 15 unrelated

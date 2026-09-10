@@ -460,7 +460,7 @@ def test_analyze_sweep_end_to_end(tmp_path):
 
 def _build_scenario_run(run_dir: Path, n_pas: int, atlas_match_rate: float | None = None,
                          peak_filters: dict | None = None) -> None:
-    """A minimal `ema run` output dir: annotatedpas.bed + optional filter stats."""
+    """A minimal `peakatail run` output dir: annotatedpas.bed + optional filter stats."""
     _write_bed(run_dir / "annotatedpas.bed", n_pas)
     if atlas_match_rate is not None:
         _write_json(run_dir / "atlas_stats.json", {

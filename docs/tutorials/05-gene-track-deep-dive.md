@@ -1,6 +1,6 @@
 # Gene track deep dive
 
-`ema switch geneview` generates a single-page summary for one or more genes, showing where PAS fall along the gene body and how each cluster uses them. Use it after `ema switch diff` to turn a list of significant PAS IDs into a visual you can put in a presentation or paper.
+`peakatail switch geneview` generates a single-page summary for one or more genes, showing where PAS fall along the gene body and how each cluster uses them. Use it after `peakatail switch diff` to turn a list of significant PAS IDs into a visual you can put in a presentation or paper.
 
 ---
 
@@ -12,21 +12,21 @@ Use geneview when you want to:
 - Compare PAS usage across all clusters simultaneously in one figure.
 - Show a reviewer that the signal is real and not an artifact of a single cluster.
 
-Do not use geneview as the first analysis step. Run `ema switch diff` first to identify which genes carry significant differential PAS, then call geneview on the top hits.
+Do not use geneview as the first analysis step. Run `peakatail switch diff` first to identify which genes carry significant differential PAS, then call geneview on the top hits.
 
 ---
 
 ## Minimal invocation
 
 ```bash
-uv run ema switch geneview \
+uv run peakatail switch geneview \
   --diff-tsv peakatail_runs/full_v8_2026-05-11_152746/switch_diff_2026-05-11_205015/differential/fisher_0_vs_4.tsv \
   --pasbed peakatail_runs/full_v8_2026-05-11_152746/per_dataset/only/pasbed.bed \
   --h5ad peakatail_runs/full_v8_2026-05-11_152746/per_dataset/only/clusters.h5ad \
   --top-genes 5
 ```
 
-`--diff-tsv` accepts the per-pair Fisher TSV from `ema switch diff`. `--top-genes 5` auto-selects the five genes with the strongest aggregate signal (ranked by sum of |log2fc| × −log₁₀(q) across all significant PAS for that gene). `--pasbed` provides the coordinate map from PAS ID integers to genomic positions. `--h5ad` is the clustered AnnData.
+`--diff-tsv` accepts the per-pair Fisher TSV from `peakatail switch diff`. `--top-genes 5` auto-selects the five genes with the strongest aggregate signal (ranked by sum of |log2fc| × −log₁₀(q) across all significant PAS for that gene). `--pasbed` provides the coordinate map from PAS ID integers to genomic positions. `--h5ad` is the clustered AnnData.
 
 Output lands in:
 
@@ -49,7 +49,7 @@ peakatail_runs/full_v8_2026-05-11_152746/switch_geneview_<timestamp>/
 Add `--gtf` to annotate known transcript boundaries in the gene body panel:
 
 ```bash
-uv run ema switch geneview \
+uv run peakatail switch geneview \
   --diff-tsv peakatail_runs/full_v8_2026-05-11_152746/switch_diff_2026-05-11_205015/differential/fisher_0_vs_4.tsv \
   --pasbed peakatail_runs/full_v8_2026-05-11_152746/per_dataset/only/pasbed.bed \
   --h5ad peakatail_runs/full_v8_2026-05-11_152746/per_dataset/only/clusters.h5ad \
@@ -66,7 +66,7 @@ Without `--gtf` the gene body panel shows only the gene locus extent (start to e
 Use `--gene-id` to override auto-selection or add specific genes:
 
 ```bash
-uv run ema switch geneview \
+uv run peakatail switch geneview \
   --diff-tsv .../fisher_0_vs_4.tsv \
   --pasbed .../pasbed.bed \
   --h5ad .../clusters.h5ad \
@@ -129,7 +129,7 @@ The auto-generated `figures_INDEX.md` lists every gene rendered in a geneview ru
 ```markdown
 # Figures index
 
-Produced by `ema switch geneview`.
+Produced by `peakatail switch geneview`.
 
 Directory: .../switch_geneview_2026-05-11_212341/figures
 

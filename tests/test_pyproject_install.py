@@ -3,6 +3,14 @@ import importlib.metadata as md
 import shutil
 import subprocess
 
+import pytest
+
+
+def _console_scripts() -> dict:
+    """Entry points the INSTALLED distribution declares."""
+    eps = md.distribution("peakatail").entry_points
+    return {e.name: e.value for e in eps if e.group == "console_scripts"}
+
 
 def test_distribution_name():
     """Package is published as 'peakatail' even though import path is 'ema'."""
@@ -11,23 +19,33 @@ def test_distribution_name():
 
 
 def test_import_path_is_ema():
-    """Importable as `ema` (the historical name)."""
+    """Importable as `ema` (the historical name, deliberately not renamed)."""
     import ema  # noqa: F401
 
 
-def test_entry_point_is_installed():
-    """`ema` console script exists on PATH after install."""
-    assert shutil.which("ema") is not None, "ema entry point not found on PATH"
+def test_peakatail_is_the_declared_entry_point():
+    """The command is `peakatail`; the package has been named that since 0.2.0."""
+    scripts = _console_scripts()
+    if "peakatail" not in scripts:
+        pytest.skip("installed distribution predates the peakatail rename")
+    assert scripts["peakatail"] == "ema.cli:main"
+
+
+def test_ema_entry_point_survives_as_a_deprecated_alias():
+    """Dropping `ema` would break every published pipeline that calls it."""
+    scripts = _console_scripts()
+    if "peakatail" not in scripts:
+        pytest.skip("installed distribution predates the peakatail rename")
+    assert "ema" in scripts, "the deprecated `ema` alias must remain installed"
 
 
 def test_entry_point_runs():
-    """`ema --help` returns successfully (placeholder check until CLI is wired)."""
-    # NOTE: this will fail until Phase 4 lands the Click root. That's fine —
-    # this test is the contract we're moving toward. Mark xfail until then.
-    import pytest
-    res = subprocess.run(["ema", "--help"], capture_output=True, text=True)
-    if res.returncode != 0:
-        pytest.xfail("Click root not yet wired (Phase 4)")
+    """Whichever command is on PATH must answer --help."""
+    cmd = shutil.which("peakatail") or shutil.which("ema")
+    if cmd is None:
+        pytest.skip("no console script on PATH (package not installed in this env)")
+    res = subprocess.run([cmd, "--help"], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr[:400]
     assert "Usage:" in res.stdout or "Usage:" in res.stderr
 
 

@@ -9,9 +9,9 @@ actual behaviour of the code:
    that a ``UB``/UMI tag is *required* or *used*.
 2. ``docs/cli/run.md`` must not carry the stale "Currently a no-op"
    ``--ip-filter`` / ``--genome-fasta`` rows -- those flags are wired into
-   ``ema run`` (D9, ``ema/main.py::_apply_pas_filters``).
+   ``peakatail run`` (D9, ``ema/main.py::_apply_pas_filters``).
 3. The README command table must list every ``ema`` subcommand.
-4. The two user-visible behaviour changes of issue #65 -- ``ema reannotate``
+4. The two user-visible behaviour changes of issue #65 -- ``peakatail reannotate``
    refusing a ``--out`` that another live run holds (hard error, exit code 1)
    and the atomic artifact write -- must be documented in
    ``docs/cli/reannotate.md`` and in ``CHANGELOG.md``'s ``Unreleased``
@@ -76,18 +76,18 @@ def test_run_md_has_no_stale_no_op_ip_filter_rows():
 def test_readme_lists_all_cli_commands():
     text = README.read_text()
     for cmd in (
-        "`ema run`",
-        "`ema reannotate`",
-        "`ema switch diff`",
-        "`ema switch length`",
-        "`ema switch trend`",
-        "`ema switch combine`",
-        "`ema switch match`",
-        "`ema switch geneview`",
-        "`ema collapse`",
-        "`ema merge`",
-        "`ema parse-gtf`",
-        "`ema wizard`",
+        "`peakatail run`",
+        "`peakatail reannotate`",
+        "`peakatail switch diff`",
+        "`peakatail switch length`",
+        "`peakatail switch trend`",
+        "`peakatail switch combine`",
+        "`peakatail switch match`",
+        "`peakatail switch geneview`",
+        "`peakatail collapse`",
+        "`peakatail merge`",
+        "`peakatail parse-gtf`",
+        "`peakatail wizard`",
     ):
         assert cmd in text, f"README command table is missing {cmd}"
 
