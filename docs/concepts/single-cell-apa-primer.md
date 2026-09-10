@@ -56,6 +56,6 @@ A **delta-PDUI** between two cell clusters is the difference in their mean PDUI:
 - Positive delta-PDUI: cells in the comparison group use longer 3'UTR isoforms (3'UTR lengthening).
 - Negative delta-PDUI: cells in the reference group use longer 3'UTR isoforms (3'UTR shortening in the comparison group).
 
-In activated immune cells, for example, 3'UTR shortening (shift toward proximal PAS) is frequently observed and is thought to increase protein output by removing microRNA-mediated suppression. PeakATail's `ema switch length --strategy classic` computes this PDUI value per cell per gene.
+In activated immune cells, for example, 3'UTR shortening (shift toward proximal PAS) is frequently observed and is thought to increase protein output by removing microRNA-mediated suppression. PeakATail's `peakatail switch length --strategy classic` computes this PDUI value per cell per gene.
 
 For genes with more than two PAS, the `proportion` strategy reports the fraction of reads at each individual PAS (not just the proximal/distal pair), and the `shannon` strategy reports the Shannon entropy of the per-PAS distribution — higher entropy = more uniform usage across multiple PAS.

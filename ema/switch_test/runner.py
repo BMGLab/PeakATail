@@ -2,7 +2,7 @@
 
 Provides library-level ``run_diff`` and ``run_length`` entry points consumed
 by ``ema/cli/switch_diff.py`` and ``ema/cli/switch_length.py``.  The old
-argparse ``cli()`` has been removed; use ``ema switch diff`` / ``ema switch
+argparse ``cli()`` has been removed; use ``peakatail switch diff`` / ``peakatail switch
 length`` instead.
 """
 
@@ -174,7 +174,7 @@ def build_count_dfs(
     that needs only one does not pay for a second full dense copy of the
     matrix (the switch tests densify the count matrix via ``.toarray()``; for
     the largest cell types that copy is tens of GB, and holding both frames
-    at once is what pushed parallel ``ema switch`` tasks into OOM):
+    at once is what pushed parallel ``peakatail switch`` tasks into OOM):
 
     - ``"both"`` (default): both frames, byte-identical to the original
       behaviour -- ``pdui_df`` (PAS x cells) and ``diff_df`` (cells x PAS),
@@ -861,7 +861,7 @@ def run_diff(
         marker_method: Marker ranking method (wilcoxon / t-test / logreg).
         warn_marker_top_n: Emit the issue #94 double-dip warning when
             ``marker_top_n > 0``.  Set to ``False`` by callers that have
-            already warned in their own vocabulary (``ema switch diff`` warns
+            already warned in their own vocabulary (``peakatail switch diff`` warns
             with the ``--marker-top-n`` spelling before calling in), so the
             user does not read the same ten lines twice.
         strategy: Registered differential APA strategy name.
@@ -1487,7 +1487,7 @@ def run_length(
     # Loud warning for the documented no-op flag rather than silent acceptance.
     if cluster_pairs is not None and cluster_pairs != "":
         log.warning(
-            "ema switch length: --cluster-pairs is currently unused for length "
+            "peakatail switch length: --cluster-pairs is currently unused for length "
             "analysis (your value %r will NOT filter the output).",
             cluster_pairs,
         )
@@ -1529,14 +1529,14 @@ def run_length(
         # that looks right is worse than no answer, so refuse to guess.
         if pasbed is not None and not Path(pasbed).exists():
             raise FileNotFoundError(
-                f"ema switch length: --pasbed {pasbed!r} does not exist. "
+                f"peakatail switch length: --pasbed {pasbed!r} does not exist. "
                 "Refusing to fall back to the directory walk-up, which could "
                 "rank PAS against a different run's coordinates."
             )
         _pb = _resolve_pasbed(h5ad_path, pasbed)
         if _pb is None:
             raise FileNotFoundError(
-                "ema switch length: no pasbed.bed could be resolved for "
+                "peakatail switch length: no pasbed.bed could be resolved for "
                 f"{h5ad_path} (searched its directory and 3 parents"
                 + (f"; --pasbed {pasbed!r} does not exist" if pasbed else "")
                 + "). PAS start + strand are REQUIRED to order proximal->"
@@ -1553,7 +1553,7 @@ def run_length(
             ).set_index("pas_id")[["chrom", "start", "end", "strand"]]
         except Exception as _e:
             raise ValueError(
-                f"ema switch length: could not read PAS coordinates from {_pb} "
+                f"peakatail switch length: could not read PAS coordinates from {_pb} "
                 f"({_e}). A BED6 (chrom/start/end/pas_id/score/strand) is "
                 "required; ranking proximal->distal without it inverts every "
                 "minus-strand gene."
@@ -1583,7 +1583,7 @@ def run_length(
             # Cache the parsed isoform UTR map next to the source h5ad's run
             # dir (or fall back to the user-level ~/.cache).  Without this the
             # human GTF is re-parsed (~1 GB on disk, ~3-5 GB in memory) on
-            # every `ema switch length --isoform-agg per_isoform` invocation.
+            # every `peakatail switch length --isoform-agg per_isoform` invocation.
             # Cap workers via the same ResourceManager n_jobs we already
             # computed for this run so we don't spawn one-per-chromosome.
             _gtf_cache = Path(h5ad_path).resolve().parent
@@ -1764,4 +1764,4 @@ def run_length(
 
 
 # NOTE: The old argparse cli() has been removed.
-# Use `ema switch diff` / `ema switch length` instead.
+# Use `peakatail switch diff` / `peakatail switch length` instead.

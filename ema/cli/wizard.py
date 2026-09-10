@@ -18,11 +18,11 @@ log = logging.getLogger(__name__)
 
 _MODES = {
     "Run full pipeline (peak calling -> cluster)": "run",
-    "Differential APA test (ema switch diff)": "switch_diff",
-    "3'UTR shortening / lengthening (ema switch length)": "switch_length",
-    "Cross-dataset cluster matching (ema switch match)": "switch_match",
-    "Merge BAMs (ema merge)": "merge",
-    "Pre-warm GTF cache (ema parse-gtf)": "parse_gtf",
+    "Differential APA test (peakatail switch diff)": "switch_diff",
+    "3'UTR shortening / lengthening (peakatail switch length)": "switch_length",
+    "Cross-dataset cluster matching (peakatail switch match)": "switch_match",
+    "Merge BAMs (peakatail merge)": "merge",
+    "Pre-warm GTF cache (peakatail parse-gtf)": "parse_gtf",
 }
 
 
@@ -346,7 +346,7 @@ def _spawn_ema(args: list[str]) -> int:
 
 
 def _dispatch_run(cfg: dict) -> int:
-    """Write cfg to a temp YAML and dispatch to ``ema run --config <yaml>``."""
+    """Write cfg to a temp YAML and dispatch to ``peakatail run --config <yaml>``."""
     import tempfile
 
     import yaml

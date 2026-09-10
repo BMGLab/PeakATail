@@ -1,4 +1,4 @@
-"""E5: normalized long outputs for `ema switch` — findings_long / length_long.
+"""E5: normalized long outputs for `peakatail switch` — findings_long / length_long.
 
 Reshapes the per-pair `switch diff` wide TSVs (and `switch length` outputs) into
 one tidy long table conforming to peakatail_contract.models.FindingRow /

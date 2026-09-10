@@ -1,8 +1,8 @@
-# `ema wizard` (and bare `ema`)
+# `peakatail wizard` (and bare `peakatail`)
 
 An interactive `questionary`-based wizard that walks you through assembling a config for any of PeakATail's main commands, saves it to `.peakatail/last_run.yaml`, and dispatches into the same code path as the explicit CLI invocations.
 
-`ema` with **no subcommand** also drops you into this wizard — handy for first-time users who haven't memorised the flag set yet.
+`peakatail` with **no subcommand** also drops you into this wizard — handy for first-time users who haven't memorised the flag set yet.
 
 !!! note "When to use it"
     - First exposure to PeakATail — you don't know the flag names yet.
@@ -15,11 +15,11 @@ An interactive `questionary`-based wizard that walks you through assembling a co
 ## Quick example
 
 ```bash
-# Bare ema also routes here
-uv run ema
+# Bare peakatail also routes here
+uv run peakatail
 
 # Or explicitly
-uv run ema wizard
+uv run peakatail wizard
 ```
 
 The wizard first asks **which mode** you want:
@@ -27,11 +27,11 @@ The wizard first asks **which mode** you want:
 ```
 ? What do you want to do?
   > Run full pipeline (peak calling -> cluster)
-    Differential APA test (ema switch diff)
-    3'UTR shortening / lengthening (ema switch length)
-    Cross-dataset cluster matching (ema switch match)
-    Merge BAMs (ema merge)
-    Pre-warm GTF cache (ema parse-gtf)
+    Differential APA test (peakatail switch diff)
+    3'UTR shortening / lengthening (peakatail switch length)
+    Cross-dataset cluster matching (peakatail switch match)
+    Merge BAMs (peakatail merge)
+    Pre-warm GTF cache (peakatail parse-gtf)
 ```
 
 Then sequences mode-specific prompts (paths to BAMs, GTF, strategy, FDR, output dir, etc.) and finally asks:
@@ -44,13 +44,13 @@ Then sequences mode-specific prompts (paths to BAMs, GTF, strategy, FDR, output 
 If you decline the run, the YAML is still on disk so you can launch it later via:
 
 ```bash
-uv run ema run --config .peakatail/last_run.yaml
+uv run peakatail run --config .peakatail/last_run.yaml
 ```
 
 ## Full `--help` output
 
 ```text
-Usage: ema wizard [OPTIONS]
+Usage: peakatail wizard [OPTIONS]
 
   Launch the interactive wizard explicitly.
 
@@ -64,12 +64,12 @@ No flags — the wizard takes everything via prompts.
 
 | Wizard option | Dispatches to |
 |---|---|
-| Run full pipeline | [`ema run`](run.md) |
-| Differential APA test | [`ema switch diff`](switch-diff.md) |
-| 3'UTR shortening/lengthening | [`ema switch length`](switch-length.md) |
-| Cross-dataset cluster matching | [`ema switch match`](switch-match.md) |
-| Merge BAMs | [`ema merge`](merge.md) |
-| Pre-warm GTF cache | [`ema parse-gtf`](parse-gtf.md) |
+| Run full pipeline | [`peakatail run`](run.md) |
+| Differential APA test | [`peakatail switch diff`](switch-diff.md) |
+| 3'UTR shortening/lengthening | [`peakatail switch length`](switch-length.md) |
+| Cross-dataset cluster matching | [`peakatail switch match`](switch-match.md) |
+| Merge BAMs | [`peakatail merge`](merge.md) |
+| Pre-warm GTF cache | [`peakatail parse-gtf`](parse-gtf.md) |
 
 ## Output files
 

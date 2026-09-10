@@ -136,13 +136,13 @@ def apply_yaml_to_kwargs(
 ) -> dict[str, Any]:
     """Merge a YAML config file into *kwargs* for switch subcommands.
 
-    This is the ``ema switch {diff,length,match}`` equivalent of the
-    YAML-then-CLI merge that ``ema run`` performs.  It is intentionally
+    This is the ``peakatail switch {diff,length,match}`` equivalent of the
+    YAML-then-CLI merge that ``peakatail run`` performs.  It is intentionally
     separate from :func:`ema.cli.yaml_loader.load_run_yaml` because that
     function enforces a ``datasets:`` key which does not apply to the
     switch subcommands.
 
-    Merge rules (mirrors the ``ema run`` contract):
+    Merge rules (mirrors the ``peakatail run`` contract):
     * If ``kwargs["config"]`` is ``None``, this is a no-op.
     * YAML keys are mapped to kwarg names via the :class:`RunConfig` schema
       (``yaml_key`` → field name).  Unknown YAML keys emit a WARNING.
@@ -243,7 +243,7 @@ def _no_timestamp() -> bool:
 def detect_run_dir(input_paths: list[str | Path] | tuple) -> Path | None:
     """Return the originating ``peakatail_runs/<run>/`` directory for inputs, if any.
 
-    A subcommand like ``ema switch diff -i RUN/per_dataset/sampleA/clusters.h5ad``
+    A subcommand like ``peakatail switch diff -i RUN/per_dataset/sampleA/clusters.h5ad``
     should write its outputs INSIDE ``RUN/`` so the run dir stays self-contained.
     This helper walks each input path upward looking for a directory whose
     parent is named ``peakatail_runs``.  All inputs must agree on the same run

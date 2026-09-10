@@ -4,7 +4,7 @@ This tutorial works through a real differential APA result from the `full_v8_202
 
 - Locate a statistically significant PAS in the differential TSV.
 - Decode every column in the output row.
-- Run `ema switch length` to compute PDUI per cell.
+- Run `peakatail switch length` to compute PDUI per cell.
 - Interpret PDUI distributions across clusters.
 - Draw a biological conclusion about 3'UTR isoform usage.
 
@@ -12,7 +12,7 @@ This tutorial works through a real differential APA result from the `full_v8_202
 
 ## Background
 
-After `ema run` completes, you have `clusters.h5ad` files under `per_dataset/<id>/`. Running `ema switch diff` tests every cluster pair for differential APA and produces one TSV per pair in `differential/`. The `full_v8` run produced 66 TSVs (12 clusters → 66 unique pairs).
+After `peakatail run` completes, you have `clusters.h5ad` files under `per_dataset/<id>/`. Running `peakatail switch diff` tests every cluster pair for differential APA and produces one TSV per pair in `differential/`. The `full_v8` run produced 66 TSVs (12 clusters → 66 unique pairs).
 
 For this tutorial we work with the **cluster 0 vs cluster 4** comparison. The volcano from the `figures_INDEX.md` shows 935 significant PAS out of 1433 tested — a strong signal.
 
@@ -45,7 +45,7 @@ pas_id  gene_id         chrom  start     end       strand  cluster1  cluster2  p
 
 ## Step 2 — Decode the row
 
-Here is the top row from `fisher_0_vs_4.tsv` copied verbatim. The TSV was produced by `ema switch diff --strategy fisher` on this branch:
+Here is the top row from `fisher_0_vs_4.tsv` copied verbatim. The TSV was produced by `peakatail switch diff --strategy fisher` on this branch:
 
 ```
 pas_id  = 23926
@@ -95,12 +95,12 @@ Column-by-column explanation:
 
 ---
 
-## Step 3 — Run `ema switch length` for PDUI
+## Step 3 — Run `peakatail switch length` for PDUI
 
 The Fisher test tells you *which* PAS differ. PDUI (Proximal-Distal Usage Index) tells you the aggregate 3'UTR length direction: are cells in cluster 4 using longer or shorter 3'UTR isoforms overall?
 
 ```bash
-uv run ema switch length \
+uv run peakatail switch length \
   --h5ad peakatail_runs/full_v8_2026-05-11_152746/per_dataset/only/clusters.h5ad \
   --strategy classic \
   --isoform-agg per_gene
@@ -151,7 +151,7 @@ A PDUI difference of 0.1 between two clusters corresponds to a meaningful shift 
 The `proportion` strategy computes a different quantity: for each cell and each PAS, the fraction of total gene reads that land at that specific PAS. This is complementary to PDUI (which only uses the proximal/distal pair):
 
 ```bash
-uv run ema switch length \
+uv run peakatail switch length \
   --h5ad peakatail_runs/full_v8_2026-05-11_152746/per_dataset/only/clusters.h5ad \
   --strategy proportion \
   --isoform-agg per_gene

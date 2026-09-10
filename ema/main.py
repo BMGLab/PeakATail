@@ -132,7 +132,7 @@ def run(
     progress=None,
     **kwargs,
 ) -> int:
-    """Entry point called by ``ema run`` (Click CLI).
+    """Entry point called by ``peakatail run`` (Click CLI).
 
     Bridges the Click-driven ``cfg`` dict and keyword overrides into the
     module-level config dataclasses (``directory_config``, ``variable_config``,
@@ -291,7 +291,7 @@ def run(
 #
 # The filter LOGIC lives in ema.experimental.peak_filters / internal_priming
 # (pre-existing, not modified here). These two helpers are the wiring seam
-# that makes `ema run` actually invoke it:
+# that makes `peakatail run` actually invoke it:
 #
 #   * _validate_pas_filter_config() — fail loud, before any pipeline compute,
 #     if a filter is enabled but its required input is missing.

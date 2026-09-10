@@ -78,7 +78,7 @@ Cell barcodes in the order corresponding to the columns of `raw/pos.mtx` and `ra
 **Produced by:** `write_per_dataset_beds()` in `ema/outputs.py`.  
 **Format:** BED6. The 4th column is the integer PAS ID; the 5th column is always 0 (unused score field); the 6th column is the strand.
 
-The canonical post-merge BED files for this dataset. `pasbed.bed` is the union of positive and negative strand PAS and is the primary coordinate reference for all downstream analysis. `ema switch diff` reads it to annotate result rows with `chrom`, `start`, `end`, and `strand`.
+The canonical post-merge BED files for this dataset. `pasbed.bed` is the union of positive and negative strand PAS and is the primary coordinate reference for all downstream analysis. `peakatail switch diff` reads it to annotate result rows with `chrom`, `start`, `end`, and `strand`.
 
 ### `filtered_cb.tsv`
 
@@ -134,14 +134,14 @@ The count matrix after applying `min_cells` (PAS filter) and `min_pas_per_cell` 
 **Produced by:** `clustering()` in `ema/clustering/clustering.py`.  
 **Format:** HDF5/AnnData.
 
-The primary output of `ema run`. Contains:
+The primary output of `peakatail run`. Contains:
 
 - `adata.obs['leiden']` — cluster label for each cell (string).
 - `adata.var['gene_id']` — gene assignment for each PAS.
 - `adata.obsm['X_pca']` or `adata.obsm['X_lsi']` — dimensionality-reduced embedding.
 - `adata.obsm['X_umap']` — UMAP coordinates.
 
-All `ema switch` subcommands take this file as their primary input via `--h5ad`.
+All `peakatail switch` subcommands take this file as their primary input via `--h5ad`.
 
 ---
 
@@ -227,7 +227,7 @@ Every figure has a `.meta.json` sidecar with metadata:
 
 ## Switch diff outputs: `switch_diff_<timestamp>/`
 
-Produced by `ema switch diff`. The subdirectory is created inside the run directory of the input h5ad, keeping all analysis of a run in one place.
+Produced by `peakatail switch diff`. The subdirectory is created inside the run directory of the input h5ad, keeping all analysis of a run in one place.
 
 | File | Contents |
 |------|----------|
@@ -249,7 +249,7 @@ loudly instead of matching nothing ([issue #110](https://github.com/BMGLab/PeakA
 
 ## Switch length outputs: `switch_length_<timestamp>/`
 
-Produced by `ema switch length`. The output filename depends on the strategy class's `output_filename` attribute:
+Produced by `peakatail switch length`. The output filename depends on the strategy class's `output_filename` attribute:
 
 | Strategy | Output file | Contents |
 |----------|-------------|----------|
@@ -270,7 +270,7 @@ Figures:
 
 ## Switch geneview outputs: `switch_geneview_<timestamp>/`
 
-Produced by `ema switch geneview`.
+Produced by `peakatail switch geneview`.
 
 | File | Contents |
 |------|----------|

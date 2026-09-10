@@ -1,4 +1,4 @@
-"""Shared body for ``ema reannotate`` — branch a completed ``ema run`` into a
+"""Shared body for ``peakatail reannotate`` — branch a completed ``peakatail run`` into a
 new trim / clustering variant WITHOUT re-running peak calling.
 
 Peak calling (streaming the BAMs) is the expensive stage.  The "trim" —
@@ -13,18 +13,18 @@ depends only on artifacts a base run already wrote to disk:
 
 :func:`reannotate_run` reuses the *exact* tested internals the pipeline uses
 (``find_close`` + the per-dataset worker ``run_one_dataset_downstream``), so a
-branch is behaviourally identical to having run ``ema run`` with those trim /
+branch is behaviourally identical to having run ``peakatail run`` with those trim /
 clustering parameters — it just skips peak calling.  It mirrors the
 multi-sample downstream section of ``ema/main.py`` (the code after "Run
 find_close ONCE on the unified PAS coordinate set"), including the E3
 provenance reconcile step and the E2 ``run_manifest.json`` write, so the
 branch's ``--out`` directory is a COMPLETE, CHAINABLE run dir — structurally
 indistinguishable from a base run's downstream output.  ``ema.data.Run.
-from_dir()`` can load it directly and ``ema switch {diff,length,trend}`` can
+from_dir()`` can load it directly and ``peakatail switch {diff,length,trend}`` can
 consume its ``07_clustering/<ds>/clusters.h5ad`` files.
 
 This module is the single implementation both callers delegate to:
-  * ``ema/cli/reannotate.py``      — the ``ema reannotate`` Click subcommand.
+  * ``ema/cli/reannotate.py``      — the ``peakatail reannotate`` Click subcommand.
   * ``scripts/reannotate_from_run.py`` — the original standalone script,
     kept working as a thin shim over this function.
 """
@@ -66,7 +66,7 @@ OUT_DIR_LOCK_NAME = ".ema_reannotate.lock"
 def _claim_out_dir(out: Path):
     """Take an exclusive claim on ``out`` for the life of this branch.
 
-    Two ``ema reannotate`` invocations pointed at the SAME ``--out`` are
+    Two ``peakatail reannotate`` invocations pointed at the SAME ``--out`` are
     never a legitimate configuration -- they write the same
     ``04_pas_gene_assignment/<ds>/pas_gene.tsv``,
     ``05_annotated_matrix/<ds>/*`` and ``07_clustering/<ds>/clusters.h5ad``
@@ -86,7 +86,7 @@ def _claim_out_dir(out: Path):
     or crashed branch never leaves a stale lock that blocks the re-run
     (which a plain ``O_EXCL`` marker file would). It is advisory and
     process-scoped, so it does not protect against a run that ignores it,
-    only against a second ``ema reannotate``.
+    only against a second ``peakatail reannotate``.
     """
     out.mkdir(parents=True, exist_ok=True)
     lock_path = out / OUT_DIR_LOCK_NAME
@@ -101,7 +101,7 @@ def _claim_out_dir(out: Path):
             except OSError:
                 pass
             raise ReannotateError(
-                f"--out is already in use by another running `ema reannotate`: "
+                f"--out is already in use by another running `peakatail reannotate`: "
                 f"{out}{f' (held by {holder})' if holder else ''} — two branches "
                 "writing one output dir interleave their artifacts and silently "
                 "corrupt both. Give every branch its OWN --out; a duplicate "
@@ -256,11 +256,11 @@ def reannotate_run(
          ``reconcile_summary.json`` (same code path ``ema/main.py`` calls
          after its per-dataset workers finish).
       5. Writes ``run_manifest.json`` (E2) via
-         ``ema.outputs.OutputManager.write_manifest``, exactly as ``ema run``
+         ``ema.outputs.OutputManager.write_manifest``, exactly as ``peakatail run``
          does, so the branch is a complete, chainable run dir.
 
     Args:
-        base_run: Completed ``ema run`` output dir to branch from.
+        base_run: Completed ``peakatail run`` output dir to branch from.
         out: Fresh output dir for this branch (must differ from ``base_run``).
         gtf: Same GTF as the base run (or a different one, to re-annotate
             against a new annotation without re-calling peaks).
@@ -280,7 +280,7 @@ def reannotate_run(
             ``external_clusters`` is the label TSV path for
             ``--cluster-method external``.
         min_read, min_cells, min_pas_per_cell: Cell/PAS filters. Defaults
-            MUST match ``ema run``'s schema defaults (``ema/cli/
+            MUST match ``peakatail run``'s schema defaults (``ema/cli/
             config_schema.py``) so a branch with unchanged params reproduces
             the base run's clustering.
         threads: Absolute worker ceiling wired into the ``ResourceManager``
@@ -302,7 +302,7 @@ def reannotate_run(
             internal_priming.filter_internal_priming` (mode="annotate" --
             label only, nothing dropped). Required when
             *exclude_internal_priming* is set. The other four are forwarded
-            verbatim; same defaults as ``ema run``'s schema.
+            verbatim; same defaults as ``peakatail run``'s schema.
         annotation_bed: A region BED (e.g. a 3'UTR-only BED, for "PAS inside
             an annotated transcript 3'UTR"). When given, every PAS is
             labeled ``in_3utr`` in ``annotatedpas.bed`` via
@@ -332,7 +332,7 @@ def reannotate_run(
 
     Raises:
         ReannotateError: ``out == base_run``; ``out`` is already claimed by
-            another live ``ema reannotate`` (see :func:`_claim_out_dir`); or a
+            another live ``peakatail reannotate`` (see :func:`_claim_out_dir`); or a
             required base-run artifact is missing.
     """
     base = Path(base_run).resolve()
@@ -360,7 +360,7 @@ def reannotate_run(
     from ema.provenance import reconcile_dataset_ledgers
     from ema.utils import get_resource_manager
 
-    # Wire --threads into the ResourceManager the same way `ema run` does
+    # Wire --threads into the ResourceManager the same way `peakatail run` does
     # (ema/cli/run.py), so the downstream per-dataset Pool respects it.
     if threads is not None:
         from ema.utils import reset_resource_manager
@@ -508,7 +508,7 @@ def reannotate_run(
     genes_pkl = pickle.dumps(genes)
 
     # 3. Derive datasets from the namespaced barcodes.  cb = "<ds_id>_<barcode>";
-    #    the barcode half is underscore-free but ds_id need not be (ema merge
+    #    the barcode half is underscore-free but ds_id need not be (peakatail merge
     #    stamps RG = dataset_id), so split on the LAST '_' -- see
     #    ema.countmatrix.indexing.split_cb.  Splitting on the first '_' here
     #    truncated ids like "pbmc_10k_v3" to "pbmc", after which the
@@ -518,7 +518,7 @@ def reannotate_run(
     log.info("branching %d datasets: %s", len(unique_ds_ids), ", ".join(unique_ds_ids))
 
     # Record the dataset list on directory_config so the run manifest (E2)
-    # carries DatasetRef entries for the branch, mirroring `ema run`.
+    # carries DatasetRef entries for the branch, mirroring `peakatail run`.
     set_directory_config(datasets=[{"id": ds_id} for ds_id in unique_ds_ids])
 
     # write_pas_gene_artifacts() (called inside run_one_dataset_downstream)
@@ -655,9 +655,9 @@ def reannotate_run(
     # 5b. Cross-dataset cluster matching (only meaningful if >1 dataset) —
     #     mirrors ema/main.py's post-downstream block so a multi-dataset
     #     branch also gets `canonical_cluster` written into each dataset's
-    #     obs, letting `ema switch diff --cluster-key canonical_cluster`
+    #     obs, letting `peakatail switch diff --cluster-key canonical_cluster`
     #     compare clusters across datasets the same way it would for a base
-    #     `ema run`. Best-effort / non-fatal, same narrow exception set as
+    #     `peakatail run`. Best-effort / non-fatal, same narrow exception set as
     #     the code it mirrors.
     if len(unique_ds_ids) > 1:
         h5ad_paths = [directory_config.clusters_h5ad_for(ds) for ds in unique_ds_ids]
@@ -692,9 +692,9 @@ def reannotate_run(
             except (FileNotFoundError, KeyError, ValueError, OSError) as e:
                 log.warning("Cross-dataset matching skipped (%s): %s", type(e).__name__, e)
 
-    # 6. E2 run manifest — exactly as `ema run` does (ema/main.py), so the
+    # 6. E2 run manifest — exactly as `peakatail run` does (ema/main.py), so the
     #    branch is a COMPLETE, CHAINABLE run dir: `ema.data.Run.from_dir(out)`
-    #    loads it and `ema switch {diff,length,trend}` can consume its
+    #    loads it and `peakatail switch {diff,length,trend}` can consume its
     #    07_clustering/<ds>/clusters.h5ad files directly.
     entity_counts = {
         "n_datasets": len(results),

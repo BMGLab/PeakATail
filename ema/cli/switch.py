@@ -1,4 +1,4 @@
-"""`ema switch` — group for per-cluster differential APA analyses."""
+"""`peakatail switch` — group for per-cluster differential APA analyses."""
 import click
 
 from ema.cli.switch_combine import combine

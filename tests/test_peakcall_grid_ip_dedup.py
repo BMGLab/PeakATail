@@ -4,7 +4,7 @@ two arms that produce a byte-identical ``pasbed.bed``.
 Background
 ----------
 ``experiments/laughney/main.nf::GRID_RUN`` turns each row of
-``peakcall_grid.tsv`` into one ``ema run``. The internal-priming CLI it emits
+``peakcall_grid.tsv`` into one ``peakatail run``. The internal-priming CLI it emits
 is (see main.nf)::
 
     ip_mode == 'off'   -> (no --ip-filter flag)                # keep-all

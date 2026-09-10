@@ -6,7 +6,7 @@ Two independent defects made the mapping non-injective, and both merge cells
 that belong to *different* samples into a single count-matrix column:
 
 0e  ``read_check`` DISCARDED any ``RG`` containing ``_`` and substituted the
-    run-level sample id (commit ``eb13529``).  ``ema merge`` stamps
+    run-level sample id (commit ``eb13529``).  ``peakatail merge`` stamps
     ``RG = dataset_id`` and ``samtools merge`` derives RG ids from file names,
     so ``sampleA_rep1.bam`` / ``sampleB_rep1.bam`` merged into one run
     collapsed onto ONE read group -> identical barcodes from the two samples
@@ -165,7 +165,7 @@ def test_read_check_preserves_underscore_sample_id_fallback() -> None:
 @pytest.mark.parametrize(
     "rg_a, rg_b",
     [
-        ("sampleA_rep1", "sampleB_rep1"),   # the ema merge / samtools case
+        ("sampleA_rep1", "sampleB_rep1"),   # the peakatail merge / samtools case
         ("lib_1", "lib-1"),                 # what "_"->"-" sanitising collides
         ("a_b_c", "a_b-c"),                 # ... and again, one level deeper
         ("pbmc_10k_v3", "pbmc"),            # truncation to the first token
@@ -243,7 +243,7 @@ def test_batch_and_single_index_paths_agree_on_underscore_sample() -> None:
 
 
 def test_canonical_cb_strips_run_suffix_from_underscore_library() -> None:
-    """``ema collapse`` must pool runs of a library whose id contains ``_``."""
+    """``peakatail collapse`` must pool runs of a library whose id contains ``_``."""
     assert (
         canonical_cb(f"lib_A-4B7F9BA8_{BARCODE}") == f"lib_A_{BARCODE}"
     )

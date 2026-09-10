@@ -1,4 +1,4 @@
-"""`ema parse-gtf` — pre-warm the global GTF cache."""
+"""`peakatail parse-gtf` — pre-warm the global GTF cache."""
 from __future__ import annotations
 
 import logging

@@ -1,4 +1,4 @@
-"""A2: `ema switch combine` — stitch stage-labelled h5ads for grouped analysis.
+"""A2: `peakatail switch combine` — stitch stage-labelled h5ads for grouped analysis.
 
 Promotes the stage-combining glue (previously only in
 scripts/b3_stage_celltype_switch.py) into a package feature: stamp obs[group_key]

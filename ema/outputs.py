@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 def _unique_write_token() -> str:
     """A token unique enough to disambiguate concurrent atomic-write temp
     files, whether the concurrency is across OS processes (the real-world
-    case -- two separate ``ema reannotate`` invocations) or threads within
+    case -- two separate ``peakatail reannotate`` invocations) or threads within
     one process (e.g. test harnesses). PID alone only disambiguates the
     former; adding the thread ident closes the latter too.
     """
@@ -50,7 +50,7 @@ def atomic_write(dst: Path | str, mode: str = "w", **open_kwargs):
     directory as ``dst`` (same filesystem, so ``os.replace()`` is a single
     atomic rename syscall), which closes a real corruption window: two
     pipeline invocations whose ``--out`` accidentally resolves to the same
-    run dir (e.g. a duplicate ``ema reannotate`` branch name) run
+    run dir (e.g. a duplicate ``peakatail reannotate`` branch name) run
     CONCURRENTLY, and two processes writing the same path with a plain
     ``open(..., "w")`` can interleave, leaving a reader with a torn file --
     the actual mechanism behind a real bug (5 A2/A3 trim/cluster branches

@@ -1,7 +1,7 @@
-"""`ema switch trend` — ordered-stage APA trend from a PDUI long table.
+"""`peakatail switch trend` — ordered-stage APA trend from a PDUI long table.
 
 Reads a per-cluster PDUI/proportion/entropy table (as produced by
-``ema switch length``), treats the clusters as an ORDERED progression given by
+``peakatail switch length``), treats the clusters as an ORDERED progression given by
 ``--stage-order``, and reports the trend (slope + Spearman monotonicity +
 direction) overall and per gene. See :mod:`ema.switch_test.trend`.
 
@@ -9,7 +9,7 @@ Two extra modes on top of the original single-table/``--value-col`` path:
 
 * ``--metric {pdui,proportion,entropy}`` — a convenience selector that picks
   the right value column (and, with ``--length-dir``, the right source TSV)
-  for one of ``ema switch length``'s three strategies. ``proportion`` is
+  for one of ``peakatail switch length``'s three strategies. ``proportion`` is
   derived (per-(gene,cell) distal-PAS usage fraction) via
   :func:`ema.switch_test.trend.derive_distal_fraction`.
 * ``--combine pdui,proportion,entropy`` — runs the per-gene trend for EACH
@@ -33,7 +33,7 @@ from ema.cli.common import common_options, parse_log_overrides
 
 log = logging.getLogger(__name__)
 
-# strategy name -> (source filename under `ema switch length`, subdir to
+# strategy name -> (source filename under `peakatail switch length`, subdir to
 # prefer when searching --length-dir, default value column on the raw table).
 # "proportion" has no fixed value column: it is DERIVED per (gene, cell).
 _METRIC_FILES = {
@@ -56,7 +56,7 @@ def _find_in_length_dir(length_dir: str, filename: str, subdir: str) -> str:
     """Locate ``filename`` under a `length/<celltype>/` directory.
 
     Prefers ``length_dir/<subdir>/**/filename`` (matches the
-    ``length/<CT>/<strategy>/...`` layout ``ema switch length`` writes) and
+    ``length/<CT>/<strategy>/...`` layout ``peakatail switch length`` writes) and
     falls back to searching the whole ``length_dir`` if that subdir isn't
     present.
     """
@@ -127,7 +127,7 @@ def _load_metric_frame(kwargs: dict, metric: str, ctx: click.Context):
 @common_options(include_output=True)
 @click.option("--pdui", "pdui_tsv", required=False, default=None,
               type=click.Path(exists=True, dir_okay=False),
-              help="Input long TSV from `ema switch length` (has stage + value "
+              help="Input long TSV from `peakatail switch length` (has stage + value "
                    "columns). Required for the default pdui metric unless "
                    "--length-dir is given; also usable as a generic 'the input "
                    "tsv' path for --metric entropy/proportion, and by every "
@@ -144,18 +144,18 @@ def _load_metric_frame(kwargs: dict, metric: str, ctx: click.Context):
                    "prior behavior exactly.")
 @click.option("--length-dir", "length_dir", default=None,
               type=click.Path(exists=True, file_okay=False),
-              help="A `length/<celltype>/` directory from `ema switch length` "
+              help="A `length/<celltype>/` directory from `peakatail switch length` "
                    "(containing classic/proportion/shannon subdirs); used to "
                    "auto-locate a metric's source TSV when its explicit "
                    "--pdui/--proportion-tsv/--entropy-tsv is not given.")
 @click.option("--proportion-tsv", "proportion_tsv", default=None,
               type=click.Path(exists=True, dir_okay=False),
-              help="Per-PAS proportion TSV from `ema switch length -s "
+              help="Per-PAS proportion TSV from `peakatail switch length -s "
                    "proportion` (gene_id/cell/rank/proportion/stage columns). "
                    "Used by --metric proportion and by --combine.")
 @click.option("--entropy-tsv", "entropy_tsv", default=None,
               type=click.Path(exists=True, dir_okay=False),
-              help="Shannon entropy TSV from `ema switch length -s shannon` "
+              help="Shannon entropy TSV from `peakatail switch length -s shannon` "
                    "(gene_id/cell/normalized_entropy/stage columns). Used by "
                    "--metric entropy and by --combine.")
 @click.option("--combine", "combine", default=None,

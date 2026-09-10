@@ -1,4 +1,4 @@
-"""`ema switch length` — 3'UTR shortening / lengthening quantification."""
+"""`peakatail switch length` — 3'UTR shortening / lengthening quantification."""
 from __future__ import annotations
 
 import logging
@@ -120,7 +120,7 @@ def length(ctx: click.Context, **kwargs) -> None:
     )
 
     try:
-        log.info("ema switch length: strategy=%s", kwargs["strategy"])
+        log.info("peakatail switch length: strategy=%s", kwargs["strategy"])
         from ema.switch_test.runner import run_length
         n_h5ads = len(kwargs["h5ad"])
         with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:

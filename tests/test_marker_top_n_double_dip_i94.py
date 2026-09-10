@@ -1,6 +1,6 @@
 """Issue #94 regression: `--marker-top-n` pre-selection is a label double-dip.
 
-``ema switch diff`` used to default to ``--marker-top-n 200``: before testing,
+``peakatail switch diff`` used to default to ``--marker-top-n 200``: before testing,
 the PAS matrix was restricted to the union of the top-200 marker PAS per
 cluster, ranked by ``scanpy.tl.rank_genes_groups`` on the SAME
 ``--cluster-key`` labels the differential test then contrasts.  The PAS that
@@ -156,7 +156,7 @@ def null_stats(tmp_path_factory) -> dict[int, list[tuple[float, int]]]:
 
 
 def test_marker_top_n_default_is_zero():
-    """A flagless `ema switch diff` must do no label-based pre-selection."""
+    """A flagless `peakatail switch diff` must do no label-based pre-selection."""
     from ema.cli.config_schema import RunConfig
 
     assert DEFAULTS["marker-top-n"] == 0, (
@@ -240,7 +240,7 @@ def test_default_marker_top_n_does_not_warn(tmp_path, caplog):
 
 
 def test_caller_can_suppress_the_duplicate_warning(tmp_path, caplog):
-    """`ema switch diff` warns in --marker-top-n vocabulary, then calls in.
+    """`peakatail switch diff` warns in --marker-top-n vocabulary, then calls in.
 
     Without an opt-out the user reads the same ten lines twice -- once from the
     CLI, once from ``run_diff``.  ``warn_marker_top_n=False`` is how the CLI
@@ -284,7 +284,7 @@ def test_cli_suppresses_the_runner_warning_it_already_emitted():
 
     src = inspect.getsource(switch_diff_mod)
     assert "warn_marker_top_n=False" in src, (
-        "ema switch diff warns about --marker-top-n itself; it must pass "
+        "peakatail switch diff warns about --marker-top-n itself; it must pass "
         "warn_marker_top_n=False so run_diff does not repeat it verbatim"
     )
 

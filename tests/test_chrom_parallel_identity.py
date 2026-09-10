@@ -165,7 +165,7 @@ def _sequential(bam: Path, out: Path, strategy_name: str, *, reset_pasnumber: bo
 def _parallel(bam: Path, out: Path, strategy_name: str, n_workers: int, *, reset_pasnumber: bool = True) -> tuple[dict[str, Path], dict]:
     """What ema/main.py's default path does for one BAM.  The dispatcher
     seeds the merged ids from ``Peak.pasnumber`` exactly like the legacy
-    ``peak_calling()`` (0 in a fresh ``ema run`` process; ``_sequential``
+    ``peak_calling()`` (0 in a fresh ``peakatail run`` process; ``_sequential``
     leaves it at its last id, so reset it here unless the test wants the
     multi-BAM continuation)."""
     from ema.countmatrix.chrom_parallel import run_chrom_parallel
@@ -403,7 +403,7 @@ def test_parallel_matches_sequential_under_a_non_default_read_geometry(
         bam, tmp_path, geometry):
     """``--read-geometry`` has to reach the SPAWNED per-contig workers.
 
-    ``chrom_parallel`` is the path a real ``ema run --threads N`` takes, and
+    ``chrom_parallel`` is the path a real ``peakatail run --threads N`` takes, and
     its workers are spawned: ``ema.config``'s legacy globals come back at
     their MODULE defaults in the child.  ``read_geometry``'s module default is
     ``"fixed"``, and every other integration test in this suite runs at that

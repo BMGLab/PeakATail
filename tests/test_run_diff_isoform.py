@@ -1,4 +1,4 @@
-"""Tests for `ema switch diff`'s ``--isoform-agg`` scoping.
+"""Tests for `peakatail switch diff`'s ``--isoform-agg`` scoping.
 
 Covers the 3-way differential-test scope added on top of the plain
 ``per_gene`` background:

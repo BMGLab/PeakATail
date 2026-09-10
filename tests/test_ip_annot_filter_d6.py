@@ -1,5 +1,5 @@
 """D6: internal-priming (``--ip-filter``) / annotation (``--annot-filter``)
-wiring into ``ema run``.
+wiring into ``peakatail run``.
 
 Prior to D6 these flags existed on the CLI/YAML surface (``RunConfig``) and
 the filter *logic* existed (``ema.experimental.peak_filters.apply_filters``,

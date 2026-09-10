@@ -1,4 +1,4 @@
-"""A3: `ema switch trend` — ordered-stage APA trend aggregation.
+"""A3: `peakatail switch trend` — ordered-stage APA trend aggregation.
 
 Generalizes the Laughney-specific stage-PDUI-trend glue (previously only in
 scripts/b3_stage_celltype_switch.py) into a package feature: given a per-cluster

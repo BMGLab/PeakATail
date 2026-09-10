@@ -1,7 +1,7 @@
-"""Tests for `ema reannotate` (ema/cli/reannotate.py + ema/reannotate.py).
+"""Tests for `peakatail reannotate` (ema/cli/reannotate.py + ema/reannotate.py).
 
-Builds a tiny synthetic BASE ``ema run`` output dir with the raw artifacts
-`ema reannotate` needs:
+Builds a tiny synthetic BASE ``peakatail run`` output dir with the raw artifacts
+`peakatail reannotate` needs:
 
     <base>/posbed.bed                         (unified +strand PAS)
     <base>/negbed.bed                         (unified -strand PAS)
@@ -12,7 +12,7 @@ Builds a tiny synthetic BASE ``ema run`` output dir with the raw artifacts
 
 plus a minimal 2-gene GTF, then drives the real ``find_close`` ->
 ``annotate`` -> ``preprocessing`` chain end to end (real bedtools, real
-pandas/scipy) through the ``ema reannotate`` CLI.  Only the clustering step
+pandas/scipy) through the ``peakatail reannotate`` CLI.  Only the clustering step
 is stubbed -- exactly like ``tests/test_downstream_parallel.py`` does --
 since Leiden clustering correctness is exercised by the dedicated clustering
 test suite, not here; this file is about reannotate-specific plumbing: trim
@@ -82,7 +82,7 @@ def _fake_clustering(adata, output_h5ad=None, **_kwargs):
 
 
 def _build_base_run(tmp_path: Path) -> Path:
-    """Synthetic BASE `ema run` output: 1 dataset ('ds1'), 2 PAS, 10 cells."""
+    """Synthetic BASE `peakatail run` output: 1 dataset ('ds1'), 2 PAS, 10 cells."""
     base = tmp_path / "base_run"
     (base / "unified").mkdir(parents=True)
     (base / "01_peak_calling" / "ds1").mkdir(parents=True)
@@ -190,7 +190,7 @@ class TestReannotateProducesChainableRunDir:
         import ema.countmatrix.peackcalling as pc_mod
         with patch.object(
             pc_mod, "peak_calling",
-            side_effect=AssertionError("peak calling must NOT run under ema reannotate"),
+            side_effect=AssertionError("peak calling must NOT run under peakatail reannotate"),
         ):
             result = _invoke_reannotate(base, out, gtf)
 
@@ -229,7 +229,7 @@ class TestReannotateProducesChainableRunDir:
         assert run.manifest["root"] == str(out.resolve())
 
     def test_run_dir_is_valid_switch_diff_input(self, tmp_path, gtf):
-        """`ema switch diff` can consume the reannotated matrix directly —
+        """`peakatail switch diff` can consume the reannotated matrix directly —
         proves the branch is a chainable input to the next pipeline step."""
         base = _build_base_run(tmp_path)
         out = tmp_path / "branch_switch"

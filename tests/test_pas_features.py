@@ -487,7 +487,7 @@ def test_collect_from_bed_reads_the_cleavage_base_per_strand(tmp_path):
 # the branch default lives in exactly one place
 # ---------------------------------------------------------------------------
 def test_the_branch_default_is_single_valued():
-    """Same lesson as ``--read-geometry``: `ema run` reads RunConfig and a
+    """Same lesson as ``--read-geometry``: `peakatail run` reads RunConfig and a
     direct library call reads variable_config.  If they disagree the two entry
     points write different sidecars and neither looks wrong."""
     from ema.cli.config_schema import RunConfig

@@ -1,8 +1,8 @@
-# `ema parse-gtf`
+# `peakatail parse-gtf`
 
-Pre-parse and cache an Ensembl-style GTF so subsequent `ema run` / `ema switch length --isoform-agg per_isoform` invocations skip the expensive multi-minute GTF parse and load from disk in milliseconds.
+Pre-parse and cache an Ensembl-style GTF so subsequent `peakatail run` / `peakatail switch length --isoform-agg per_isoform` invocations skip the expensive multi-minute GTF parse and load from disk in milliseconds.
 
-The cache lives at `~/.cache/peakatail/gtf/<gtf-hash>/` by default. Both `ema run` and `ema switch length` look it up automatically — `parse-gtf` is just a way to warm it explicitly (e.g. as part of an environment-setup script, or before a Docker build).
+The cache lives at `~/.cache/peakatail/gtf/<gtf-hash>/` by default. Both `peakatail run` and `peakatail switch length` look it up automatically — `parse-gtf` is just a way to warm it explicitly (e.g. as part of an environment-setup script, or before a Docker build).
 
 !!! note "When to use it"
     - First-time setup for a fresh environment — warm the cache so the first real run doesn't pay the parse cost.
@@ -10,32 +10,32 @@ The cache lives at `~/.cache/peakatail/gtf/<gtf-hash>/` by default. Both `ema ru
     - You changed GTFs (e.g. Ensembl version bump) and want to confirm the new file parses cleanly before the pipeline tries to use it.
 
 !!! warning "When NOT to use it"
-    - You're running a one-off pipeline once — `ema run` will populate the cache anyway on first invocation. Pre-warming has no benefit.
+    - You're running a one-off pipeline once — `peakatail run` will populate the cache anyway on first invocation. Pre-warming has no benefit.
 
 ## Quick examples
 
 Pre-parse one GTF:
 
 ```bash
-uv run ema parse-gtf -g /data/gtfs/Homo_sapiens.GRCh38.99.gtf
+uv run peakatail parse-gtf -g /data/gtfs/Homo_sapiens.GRCh38.99.gtf
 ```
 
 List existing cache entries:
 
 ```bash
-uv run ema parse-gtf --show-cache
+uv run peakatail parse-gtf --show-cache
 ```
 
 Force re-parse on cache hit (e.g. after a code change):
 
 ```bash
-uv run ema parse-gtf -g /data/gtfs/Homo_sapiens.GRCh38.99.gtf --force
+uv run peakatail parse-gtf -g /data/gtfs/Homo_sapiens.GRCh38.99.gtf --force
 ```
 
 ## Full `--help` output
 
 ```text
-Usage: ema parse-gtf [OPTIONS]
+Usage: peakatail parse-gtf [OPTIONS]
 
   Pre-warm the GTF cache so subsequent runs hit instantly.
 
@@ -73,20 +73,20 @@ The parse writes to `<cache-dir>/<gtf-content-hash>/`:
 - **`<hash>/source.txt`** — original GTF path + hash for provenance
 - **`<hash>/meta.json`** — parse timestamp, peakatail version, transcript count
 
-Future invocations of `ema run` / `ema switch length` compute the same content-hash and skip directly to loading the parquet.
+Future invocations of `peakatail run` / `peakatail switch length` compute the same content-hash and skip directly to loading the parquet.
 
 ## How it relates to other commands
 
 The cache is consumed transparently by:
 
-- `ema run` — when annotating peaks against transcripts.
-- `ema switch length --isoform-agg per_isoform` — when mapping PAS to isoform UTRs.
-- `ema switch geneview --gtf <gtf>` — when rendering the isoform structure track.
+- `peakatail run` — when annotating peaks against transcripts.
+- `peakatail switch length --isoform-agg per_isoform` — when mapping PAS to isoform UTRs.
+- `peakatail switch geneview --gtf <gtf>` — when rendering the isoform structure track.
 
 No manual flag is required to use a cached entry; PeakATail computes the hash and looks it up automatically.
 
 ## See also
 
-- [`ema run`](run.md)
-- [`ema switch length`](switch-length.md) — per-isoform mode
-- [`ema switch geneview`](switch-geneview.md) — isoform overlay
+- [`peakatail run`](run.md)
+- [`peakatail switch length`](switch-length.md) — per-isoform mode
+- [`peakatail switch geneview`](switch-geneview.md) — isoform overlay

@@ -24,7 +24,7 @@ from pathlib import Path
 # Mapping per spec §8 — old argparse flag → new Click flag (or "DROPPED" for
 # explicitly dead flags).
 MAPPING: dict[str, str] = {
-    # ema → ema run
+    # ema → peakatail run
     "--config": "--config",
     "--bamDir": "--bam-dir",
     "--bamFiles": "--bam-files",

@@ -19,7 +19,7 @@ Two arms, chosen because between them they cover every module Changes 1-5 touch:
 * ``clip_seeded_91`` -- the manuscript arm's geometry (``--seq-len 91``, ``--peak-strategy
   clip_seeded``): the poly(A) clip detector, the clip-cluster seeding, the (CB,UMI) molecule
   counts in BED column 5, and the ``pas_support.tsv`` sidecar.
-* ``original_150`` -- the coverage path at the shipped ``ema run`` backstop ``--seq-len 150``:
+* ``original_150`` -- the coverage path at the shipped ``peakatail run`` backstop ``--seq-len 150``:
   the read-acceptance geometry of ``read.py`` and the coverage state machine, with poly(A)
   evidence in annotate-only mode.
 

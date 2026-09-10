@@ -420,7 +420,7 @@ def test_the_frozen_v2_snapshot_still_matches_the_v2_worktree():
 
 
 #: Fields that exist in v2's ``RunConfig`` but CANNOT appear on the documented
-#: v2-compat command line, because that command line is an ``ema run``
+#: v2-compat command line, because that command line is an ``peakatail run``
 #: invocation and these options belong to a different subcommand.  Declared by
 #: name, with the reason, rather than inferred silently -- the whole point of
 #: the check below is that a moved default must never go unnoticed.
@@ -428,7 +428,7 @@ def test_the_frozen_v2_snapshot_still_matches_the_v2_worktree():
 #: ``marker_top_n`` is a ``switch diff`` option.  ``develop`` moved its default
 #: 200 -> 0 (issue #94: pre-selecting the tested PAS with the SAME cluster
 #: labels the test then contrasts is a double-dip, and 0 was the only
-#: FDR-controlled setting measured).  ``ema run`` does not accept
+#: FDR-controlled setting measured).  ``peakatail run`` does not accept
 #: ``--marker-top-n``, so restoring v2's 200 on the compat RUN command is
 #: impossible AND meaningless: no run-level output depends on it.  The default
 #: itself is guarded by ``tests/test_marker_top_n_double_dip_i94.py``.
@@ -436,7 +436,7 @@ _NOT_ON_THE_RUN_COMMAND_LINE = {"marker_top_n"}
 
 
 def _is_run_option(spec) -> bool:
-    """True when a field can be typed on an ``ema run`` command line."""
+    """True when a field can be typed on an ``peakatail run`` command line."""
     return not spec.applies_to or "run" in spec.applies_to
 
 
@@ -472,10 +472,10 @@ def test_every_v2_option_whose_default_this_branch_moved_is_on_the_command_line(
             continue
         moved.append((name, v2_defaults[name], branch[name]))
         if not _is_run_option(spec):
-            # Not typeable on an `ema run` line at all; must be declared.
+            # Not typeable on an `peakatail run` line at all; must be declared.
             assert name in _NOT_ON_THE_RUN_COMMAND_LINE, (
                 f"{spec.cli_flag} belongs to {sorted(spec.applies_to)} rather "
-                "than to `ema run`, so the v2-compat RUN command cannot "
+                "than to `peakatail run`, so the v2-compat RUN command cannot "
                 "restore it. Add it to _NOT_ON_THE_RUN_COMMAND_LINE with the "
                 "reason, and make sure something else guards its default."
             )

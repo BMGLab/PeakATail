@@ -1,6 +1,6 @@
-# `ema switch length`
+# `peakatail switch length`
 
-`ema switch length` quantifies 3' UTR shortening and lengthening patterns by
+`peakatail switch length` quantifies 3' UTR shortening and lengthening patterns by
 computing a per-cell, per-gene score from the PAS count matrix in one or more
 `clusters.h5ad` files. Three strategies are available: `classic` (2-PAS PDUI),
 `proportion` (full per-PAS proportion vector), and `shannon` (entropy of PAS
@@ -20,24 +20,24 @@ Source: `ema/cli/common.py::resolve_subcommand_output_dir`.
       Shannon entropy.
 
 !!! warning "When NOT to use it"
-    - You want pairwise statistical tests between clusters. Use `ema switch diff`.
+    - You want pairwise statistical tests between clusters. Use `peakatail switch diff`.
     - You are using `--isoform-agg=per_isoform` without providing `--gtf`. The
       command falls back to `per_gene` and emits a warning.
     - Your h5ad `var` has no `gene_id` column (older files from before the
-      annotation refactor). PDUI output will be empty; re-run `ema run` first.
+      annotation refactor). PDUI output will be empty; re-run `peakatail run` first.
 
 ## Quick example
 
 ```bash
 # Classic PDUI (default strategy)
-uv run ema switch length \
+uv run peakatail switch length \
   --h5ad peakatail_runs/emaout_2026-05-11_120000/per_dataset/sample1/clusters.h5ad \
   --strategy classic \
   --isoform-agg per_gene \
   --pdui-pseudocount 1.0
 
 # Shannon entropy with isoform-level aggregation
-uv run ema switch length \
+uv run peakatail switch length \
   --h5ad peakatail_runs/emaout_2026-05-11_120000/per_dataset/sample1/clusters.h5ad \
   --strategy shannon \
   --isoform-agg per_isoform \
@@ -53,7 +53,7 @@ What lands on disk after the first command:
 ## Full `--help` output
 
 ```text
-Usage: ema switch length [OPTIONS]
+Usage: peakatail switch length [OPTIONS]
 
   3'UTR shortening / lengthening quantification (PDUI variants).
 
@@ -108,7 +108,7 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--h5ad` / `-i` | PATH (repeatable) | — | One or more `clusters.h5ad` files from `ema run`. Results are computed per h5ad independently; only the last result is returned to the viz hooks. Required. |
+| `--h5ad` / `-i` | PATH (repeatable) | — | One or more `clusters.h5ad` files from `peakatail run`. Results are computed per h5ad independently; only the last result is returned to the viz hooks. Required. |
 | `--gtf` | PATH | — | Ensembl/GENCODE GTF file. Required when `--isoform-agg=per_isoform`. When absent and `per_isoform` is requested, the runner logs a warning and falls back to `per_gene`. |
 | `--cluster-key` | TEXT | `leiden` | The `adata.obs` column holding cluster labels. Used to add a `cluster` column to the augmented output TSV. |
 | `--cluster-pairs` | TEXT | — | Currently unused by the length analysis. The flag is accepted but any value logs a warning and has no effect. Reserved for future per-pair PDUI comparisons. |
@@ -117,7 +117,7 @@ Options:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--strategy` / `-s` | TEXT | `classic` | PDUI quantification method. Options: `classic`, `proportion`, `shannon`. Run `ema switch length --list-strategies` to see all registered names. |
+| `--strategy` / `-s` | TEXT | `classic` | PDUI quantification method. Options: `classic`, `proportion`, `shannon`. Run `peakatail switch length --list-strategies` to see all registered names. |
 | `--isoform-agg` | CHOICE | `per_gene` | Aggregation level. `per_gene` collapses all isoforms of a gene and selects proximal/distal by genomic rank. `per_isoform` computes the score independently per transcript using UTR structure from the GTF. Use `per_gene` for speed; `per_isoform` for isoform-resolution results. |
 | `--isoform-collapse` | CHOICE | `none` | How to collapse isoform-level scores when `--isoform-agg=per_gene`. `none` leaves them separate; `mean` averages across isoforms; `majority` takes the dominant value. Not used by the `classic` or `shannon` strategies; relevant for `proportion`. |
 | `--pdui-pseudocount` | FLOAT | 0.0 | Pseudocount added to each per-cell PAS count before computing PDUI, proportions, or entropy. The default `0.0` preserves the original behaviour exactly. Set to `1.0` to avoid `NaN` in the output for cells with zero reads at a gene. Note that any non-zero pseudocount shifts entropy toward uniformity. |
@@ -232,9 +232,9 @@ for uniform distribution across N PAS (maximally dispersed usage).
 
 ## How it relates to other commands
 
-- **[`ema run`](run.md)** — produces the `clusters.h5ad` inputs. The `gene_id` column in `adata.var` is required for all strategies; it is written by `ema run` when `--gtf` is provided.
-- **[`ema switch geneview`](switch-geneview.md)** — accepts `--length-tsv` pointing at the `pdui_classic.tsv`, `proportion.tsv`, or `entropy_shannon.tsv` file to overlay strategy scores on per-cluster PAS bars.
-- **[`ema switch diff`](switch-diff.md)** — complementary pairwise test; combine with `switch length` to characterise both significance and magnitude of APA changes.
+- **[`peakatail run`](run.md)** — produces the `clusters.h5ad` inputs. The `gene_id` column in `adata.var` is required for all strategies; it is written by `peakatail run` when `--gtf` is provided.
+- **[`peakatail switch geneview`](switch-geneview.md)** — accepts `--length-tsv` pointing at the `pdui_classic.tsv`, `proportion.tsv`, or `entropy_shannon.tsv` file to overlay strategy scores on per-cluster PAS bars.
+- **[`peakatail switch diff`](switch-diff.md)** — complementary pairwise test; combine with `switch length` to characterise both significance and magnitude of APA changes.
 
 ## See also
 

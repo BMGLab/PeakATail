@@ -4,14 +4,14 @@ Bug (caught on a real run): scanpy's rank_genes_groups reads
 ``adata.obs[groupby].cat.categories`` internally, so a groupby column that
 isn't categorical dtype raises "Can only use .cat accessor with a 'category'
 dtype". Real clusters.h5ad stores ``canonical_cluster`` as int/object, so
-``ema switch diff --cluster-key canonical_cluster`` crashed. select_marker_pas
+``peakatail switch diff --cluster-key canonical_cluster`` crashed. select_marker_pas
 now coerces the column to categorical before calling rank_genes_groups.
 
 These tests assert exactly that coercion by intercepting rank_genes_groups and
 checking the dtype it receives — deliberately NOT exercising scanpy's full
 wilcoxon internals, which are version-fragile on tiny synthetic data and are
 not what this fix is about (the real end-to-end path is covered by the server
-run of `ema switch diff`).
+run of `peakatail switch diff`).
 """
 from __future__ import annotations
 

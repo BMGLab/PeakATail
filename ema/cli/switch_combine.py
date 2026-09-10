@@ -1,8 +1,8 @@
-"""`ema switch combine` — stitch stage-labelled h5ads for grouped switch analysis.
+"""`peakatail switch combine` — stitch stage-labelled h5ads for grouped switch analysis.
 
 Combines several clustered ``clusters.h5ad`` files (one per dataset/stage) into
 per-group ``<slug>.h5ad`` files whose ``obs[group_key]`` carries the stage
-label, ready for ``ema switch {diff,length} --cluster-key <group_key>``.
+label, ready for ``peakatail switch {diff,length} --cluster-key <group_key>``.
 Optionally splits by an existing cell-type obs column. See
 :mod:`ema.switch_test.combine`.
 """
