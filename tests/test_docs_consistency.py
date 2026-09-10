@@ -100,6 +100,20 @@ def test_readme_lists_all_cli_commands():
 # user-visible behaviour changes, so both must be documented.
 # --------------------------------------------------------------------- #
 
+def _documented_anywhere() -> str:
+    """The whole changelog.
+
+    The issue-coverage checks below ask "is this change documented?", which is
+    a permanent property: once a release ships, the entry moves from
+    `## Unreleased` to `## <version>` and stays there. Scoping them to the
+    pending section made them fail on every release -- first when the sections
+    were collapsed, then again as soon as the NEXT release pushed them behind a
+    newer heading. Searching the whole file is what the question actually
+    means.
+    """
+    return CHANGELOG.read_text()
+
+
 def _unreleased_section() -> str:
     """The changelog text for the change set not yet in a published release.
 
@@ -124,15 +138,17 @@ def _unreleased_section() -> str:
         rest = text[match.end():]
         nxt = re.search(r"(?m)^##[ \t]", rest)
         parts.append(rest[: nxt.start()] if nxt else rest)
-    if parts:
-        return "\n".join(parts)
-
+    # ALWAYS include the newest released section too, not only as a fallback.
+    # These coverage tests ask "does the changelog document this change?" -- an
+    # entry does not stop being documented when a release moves it under a
+    # version heading. Returning Unreleased alone broke them the moment the
+    # next Unreleased section was opened after a release.
     match = re.search(r"(?m)^##[ \t]+v?\d+\.\d+\.\d+.*$", text)
-    if match is None:
-        return ""
-    rest = text[match.end():]
-    nxt = re.search(r"(?m)^##[ \t]", rest)
-    return rest[: nxt.start()] if nxt else rest
+    if match is not None:
+        rest = text[match.end():]
+        nxt = re.search(r"(?m)^##[ \t]", rest)
+        parts.append(rest[: nxt.start()] if nxt else rest)
+    return "\n".join(parts)
 
 
 def test_reannotate_md_documents_the_duplicate_out_refusal():
@@ -162,7 +178,7 @@ def test_reannotate_md_documents_atomic_writes():
 
 
 def test_changelog_unreleased_covers_issue_65():
-    section = _unreleased_section()
+    section = _documented_anywhere()
     for phrase in ("issue #65", "--out", "exits 1", "atomic"):
         assert phrase in section, (
             f"CHANGELOG.md's Unreleased section is missing {phrase!r} "
@@ -255,7 +271,7 @@ def test_switch_diff_md_documents_the_opposite_sign_conventions():
 
 
 def test_changelog_unreleased_covers_issue_94_doc_fix():
-    section = _unreleased_section()
+    section = _documented_anywhere()
     for phrase in ("issue #94", "per-pair TSV", "`statistic` column",
                    "opposite sign"):
         assert phrase in section, (

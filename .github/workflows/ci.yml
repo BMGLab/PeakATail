@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,3 +62,109 @@ jobs:
         # (Stage 0d) are xfailed, and an XPASS is the signal to delete the
         # marker.  Do not silence this.
         run: pytest -q -rxX
+
+  lowest-direct:
+    # Install the versions pyproject actually PROMISES, not the latest ones.
+    # CI otherwise only ever proves "works with today's releases", so a wrong
+    # lower bound is invisible until a user with an older resolver hits it.
+    # This job caught two real ones: pybedtools 0.10/0.11 have no wheels for
+    # the supported interpreters and fail to build, and pyfaidx 0.7.0 imports
+    # `pkg_resources` and so fails to import at all -- which made the
+    # internal-priming filter silently skip rather than error.
+    name: Tests at the declared dependency floors
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install bedtools (exercises the bedtools-guarded tests)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bedtools
+
+      - name: Install at the lowest declared versions
+        run: |
+          uv venv --python 3.10 .venv-lowest
+          uv pip install --python .venv-lowest/bin/python \
+            --resolution lowest-direct -e '.[test]'
+
+      - name: Show what was resolved
+        run: |
+          .venv-lowest/bin/python - <<'PY'
+          import importlib.metadata as md
+          for pkg in ("scanpy", "anndata", "numpy", "pandas", "scipy",
+                      "matplotlib", "pysam", "pybedtools", "pyfaidx"):
+              try:
+                  print(f"{pkg:12} {md.version(pkg)}")
+              except md.PackageNotFoundError:
+                  print(f"{pkg:12} ABSENT")
+          PY
+
+      - name: Run the suite against those versions
+        run: PATH="$PWD/.venv-lowest/bin:$PATH" .venv-lowest/bin/python -m pytest -q -rxX
+
+  no-compiler-install:
+    # Reproduce a USER's machine: python:*-slim has no gcc, no cmake, no build
+    # toolchain. GitHub runners have all three, so a dependency that needs
+    # compiling installs fine in normal CI and fails for everyone else -- which
+    # is exactly how `louvain` (no wheel for CPython >= 3.12, builds igraph's C
+    # core with cmake) shipped in the first public release and made
+    # `pip install peakatail` impossible on 3.12 and 3.13 while CI stayed green.
+    #
+    # NOT `--only-binary=:all:`: that also rejects pure-Python sdists such as
+    # upsetplot, which build fine without any compiler. The thing that breaks
+    # users is a NATIVE build, and the absence of a toolchain is what tests it.
+    name: Installs with no compiler present
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-dists
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    container: python:${{ matrix.python-version }}-slim
+    steps:
+      - name: Confirm the image really has no toolchain
+        run: |
+          set -eu
+          for tool in gcc cc cmake make; do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is present; this job must run WITHOUT a toolchain" >&2
+              exit 1
+            fi
+          done
+          echo "no gcc/cc/cmake/make -- this is a user-like environment"
+
+      - name: Fetch the built wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: dists
+          path: dist/
+
+      - name: Install the wheel
+        run: pip install --no-cache-dir dist/*.whl
+
+      - name: Import the package
+        run: python -c "import ema; print('import ok')"
+
+      - name: The CLI answers --help
+        run: peakatail --help > /dev/null && echo "cli ok"
+
+  build-dists:
+    name: Build sdist + wheel once
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Build
+        run: uv build
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dists
+          path: dist/

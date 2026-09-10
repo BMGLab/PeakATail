@@ -284,12 +284,26 @@ def test_resolve_auto_mode_estimates_from_data(tmp_path):
     assert PLANTED_ARUN[0] - 4 <= offset <= PLANTED_ARUN[1] + 4
 
 
-def test_resolve_auto_mode_missing_fasta_falls_back(tmp_path):
-    offset, diag = resolve_cleavage_offset(
-        0, auto=True, bed_paths=[], genome_fasta=str(tmp_path / "nope.fa"),
-    )
-    assert offset == DEFAULT_CLEAVAGE_OFFSET
-    assert diag["method"] == "fallback"
+def test_resolve_auto_mode_missing_fasta_refuses(tmp_path):
+    """EXPECTATION CHANGED (was `..._falls_back`).
+
+    This used to assert that a missing genome FASTA silently yielded the
+    default constant. That is a silent fallback of exactly the kind
+    `ema/main.py` forbids -- "Never silently skips a requested filter" -- and
+    it is not a data condition: `auto` is opt-in (`--auto-cleavage-offset`,
+    default False), so reaching here means the user explicitly asked to
+    estimate the offset from the data and the input needed to do it is absent.
+    Substituting a constant shifts every reported PAS 3' end while the run
+    still exits 0, i.e. a silently different analysis.
+
+    The fallback for a genuine DATA condition (a readable FASTA that yields no
+    usable downstream windows) is unchanged and still returns
+    ``method="fallback"`` with ``reason="no_windows"``.
+    """
+    with pytest.raises(FileNotFoundError, match="auto-cleavage-offset"):
+        resolve_cleavage_offset(
+            0, auto=True, bed_paths=[], genome_fasta=str(tmp_path / "nope.fa"),
+        )
 
 
 def test_resolve_auto_applied_shifts_peaks_but_unset_is_noop(tmp_path):

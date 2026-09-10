@@ -217,7 +217,7 @@ Every figure has a `.meta.json` sidecar with metadata:
   "figure_name": "umap_default",
   "viz_strategy": "umap_matplotlib",
   "generated_at": "2026-05-11T15:32:00+00:00",
-  "peakatail_version": "0.3.0",
+  "peakatail_version": "0.3.1",
   "n_cells": 1051,
   "n_clusters": 12
 }

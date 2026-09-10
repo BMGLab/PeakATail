@@ -81,7 +81,7 @@ uv run peakatail --version
 Expected output (version number matches `pyproject.toml`):
 
 ```
-peakatail, version 0.3.0
+peakatail, version 0.3.1
 ```
 
 Running `peakatail --help` lists every subcommand:

@@ -88,6 +88,26 @@ jobs:
           pip install -e '.[test]'
           pytest -q -rxX
 
+      # main is the published branch: GitHub landing page, release tarball,
+      # Zenodo archive. Internal planning material lives on develop only.
+      # See docs/INTERNAL_ONLY_PATHS.md. Checked on the tagged tree, because
+      # that is exactly what gets archived under the DOI.
+      - name: Verify no internal-only paths are being published
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          leaked=""
+          for path in PRIME_PLAN.md HANDOFF.md ROADMAP.md CLAUDE.md reports other_repos experiments test; do
+            if [ -e "$path" ]; then leaked="$leaked $path"; fi
+          done
+          if [ -n "$leaked" ]; then
+            echo "::error::Internal-only paths present on the tagged tree:$leaked" >&2
+            echo "::error::These belong on develop, not main. See docs/INTERNAL_ONLY_PATHS.md." >&2
+            echo "::error::Delete them on main and re-cut the tag; do not restore them." >&2
+            exit 1
+          fi
+          echo "no internal-only paths found"
+
       - name: Verify the release notes can be generated
         if: startsWith(github.ref, 'refs/tags/')
         run: python scripts/changelog_section.py "$GITHUB_REF_NAME" > /dev/null

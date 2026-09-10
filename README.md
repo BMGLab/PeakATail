@@ -272,7 +272,7 @@ author list — once the paper is out. -->
   author  = {Amiri Tabat, Amir},
   title   = {{PeakATail}: single-cell poly(A) site detection and APA analysis},
   url     = {https://github.com/BMGLab/PeakATail},
-  version = {0.3.0},
+  version = {0.3.1},
   note    = {Preprint in preparation; replace with the journal citation when available}
 }
 ```

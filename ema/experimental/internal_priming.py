@@ -178,16 +178,21 @@ def filter_internal_priming(bed_path: str, genome_fasta: str,
     """
     try:
         from pyfaidx import Fasta
-    except ImportError:
-        logger.error("pyfaidx not installed. Run: pip install pyfaidx")
-        logger.error("Skipping internal priming filter.")
-        # Copy input to output unchanged
-        if output_path is not None:
-            import shutil
-            shutil.copy2(bed_path, output_path)
-        return {"total": 0, "passed": 0, "filtered": 0, "filtered_fraction": 0,
-                "flagged": 0, "flagged_fraction": 0, "mode": mode, "flags": {},
-                "error": "pyfaidx not installed"}
+    except ImportError as exc:  # pragma: no cover - exercised via monkeypatch
+        # NEVER degrade here. This used to log two errors, copy the input
+        # through UNFILTERED and return {"error": ...} -- a key no caller reads
+        # -- so the run exited 0 with a call set roughly 17% larger than
+        # intended. The internal-priming veto is on by default, so that was the
+        # default path. `ema/main.py` states the contract: "Never silently
+        # skips a requested filter."
+        raise RuntimeError(
+            "the internal-priming filter was requested but pyfaidx is not "
+            "importable, so the filter cannot run. Refusing to continue: "
+            "skipping it would silently inflate the call set by roughly 17%. "
+            "Install a working pyfaidx (`pip install 'pyfaidx>=0.7.2.2'` -- "
+            "0.7.0 imports pkg_resources and fails on modern environments), "
+            "or disable the filter explicitly with --no-ip-filter."
+        ) from exc
 
     if mode not in ("annotate", "filter"):
         raise ValueError(f"filter_internal_priming: mode must be 'annotate' or 'filter', got {mode!r}")

@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.3.1 — 2026-09-11
+
+### Fixed
+
+- **Three silent fallbacks now raise.** A missing dependency is a broken
+  install, not a data condition, and `ema/main.py` already stated the contract:
+  "Never silently skips a requested filter."
+  - `filter_internal_priming` caught `ImportError`, logged, copied the input
+    through **unfiltered** and returned `{"error": ...}` -- a key no caller
+    reads. The run exited 0 with a call set roughly 17 % larger than intended,
+    and the internal-priming veto is on by default, so this was the default
+    path. It now raises and names `--no-ip-filter`.
+  - `--auto-cleavage-offset` substituted the default constant when pyfaidx was
+    unimportable, shifting every reported PAS 3' end. It now raises.
+  - The same flag also fell back when the genome FASTA was missing. The flag is
+    opt-in, so that is a misconfiguration, not a data condition; it now raises
+    and names `--cleavage-offset N`. The genuine data fallback (a readable
+    FASTA yielding no usable windows) is unchanged.
+- **`pip install peakatail` failed on Python 3.10 for no reason.**
+  `requires-python` said `>=3.11`; nothing in the package needs it. The real
+  constraint is a `match` statement in `ema/annotate/gtftobed.py` (3.10+) — the
+  floor had been raised one release too far during a packaging refactor, from
+  an original `>=3.9`. Now `>=3.10`, with 3.10 in the CI matrix. The full suite
+  passes there: 1733 tests, both against current dependencies and against the
+  declared floors.
+- **BREAKING (bug fix): `pybedtools>=0.10` was uninstallable.** 0.10 and 0.11
+  publish no wheels for the supported interpreters and their sdist build fails
+  without setuptools present, so any resolver that picked one could not install
+  PeakATail at all. Raised to `>=0.12.1`, the first release with wheels.
+- **`pyfaidx>=0.7` silently disabled the internal-priming filter.** 0.7.0
+  imports `pkg_resources`, which modern environments no longer ship, so it
+  fails to import. The filter caught that, logged an error and **skipped** —
+  producing a call set roughly 17 % larger than intended, with no crash and no
+  non-zero exit. Raised to `>=0.7.2.2`, the lowest verified to import.
+
+- **BREAKING (bug fix): `louvain` is no longer a dependency.** Nothing in
+  `ema/` imports it -- the only match in the tree is a column *name* in
+  benchmark code -- every clustering strategy uses `sc.tl.leiden` via
+  `leidenalg`, and the default is `leiden_tfidf`. But `louvain` publishes no
+  wheel for CPython >= 3.12, so installing PeakATail on 3.12 or 3.13 tried to
+  compile igraph's C core from source and failed unless the user had CMake and
+  a full toolchain. `pip install peakatail` was therefore impossible on current
+  Pythons. CI did not catch it because GitHub runners ship CMake, so the source
+  build succeeded there.
+
+### Added
+
+- **A `lowest-direct` CI job.** CI installed only latest versions, which proves
+  "works with today's releases" and nothing about the bounds the package
+  declares. The new job resolves with `uv pip install --resolution
+  lowest-direct` and runs the full suite against the promised minimums. Both
+  bugs above were invisible until it existed.
+- **A `no-compiler-install` CI job** (3.10-3.13). It installs the built wheel
+  inside `python:<ver>-slim`, a container with no gcc, cc, cmake or make, then
+  imports the package and runs the CLI -- first asserting the toolchain really
+  is absent, so a future base-image change cannot silently restore the blind
+  spot. CI previously proved "installs on a machine with a full build
+  toolchain", a much weaker claim than "installs", and that difference is
+  exactly what made `louvain` invisible. (A first attempt used
+  `--only-binary=:all:`; that also rejects pure-Python sdists such as
+  `upsetplot`, which build fine anywhere. What breaks users is a *native*
+  build, so the absence of a toolchain is the right test.)
+- **Python 3.13 in the CI matrix**, alongside 3.10-3.12.
+- **Tests that keep the claims and the CI matrix in sync** — the declared
+  Python floor must appear in the matrix, CI must not test below it, and the
+  dependency floors must be exercised by a job that actually runs pytest.
+- `docs/SUPPORTED_VERSIONS.md`, recording the policy and its one deliberate
+  deviation from [SPEC 0](https://scientific-python.org/specs/spec-0000/):
+  3.10 is supported past SPEC 0's schedule, and reaches upstream end-of-life in
+  October 2026.
+
 ## 0.3.0 — 2026-09-10
 
 ### Added
