@@ -1,3 +1,6 @@
+from ema.countmatrix.polya import molecule_cb
+
+
 class Peak():
 
     pasnumber = 0
@@ -5,19 +8,39 @@ class Peak():
     TODO
     '''
 
-    def __init__(self, peak_list=[], peak_start=0, last_peak_end=0, peak_strand=True, cb_dict={}):
+    @classmethod
+    def reset_pasnumber(cls):
+        """Reset the global PAS number counter to 0.
+
+        Call between independent peak-calling runs (e.g. between datasets in
+        multi-sample mode) so per-run pasnumbers start at 1. Safe to call;
+        downstream code that keys on (dataset_id, pasnumber) tuples remains
+        correct because dataset_id provides global uniqueness.
+        """
+        cls.pasnumber = 0
+
+    def __init__(self, peak_list=None, peak_start=0, last_peak_end=0, peak_strand=True, cb_dict=None, cb_positions=None, polya_sites=None):
         '''
         :param peak_list: [[read_end1, height1], [read_end2, height]...., [read_endn, heightendn]]
         :param peak_start: this point is one read endpoint that detect as peak start but it not mean firat start of peak cause coulde merge multiple peaks
             peak_start assigne when signal turn True in peakcalling function
-        :param peak_strand: presents gene strand 
+        :param peak_strand: presents gene strand
         :param cb_dict: collect all CellBarcodes are in peak
+        :param polya_sites: poly(A) soft-clip evidence accumulated into this
+            peak: {cleavage_site: [n_reads, umi_set, n_reads_without_umi,
+            n_reads_f3844, umi_set_f3844, n_reads_without_umi_f3844]}.
+            Populated via polya_counting() when --polya-evidence is on.
+            Support is reported in DISTINCT MOLECULES; the f3844 slots hold
+            the same counts restricted to reads passing samtools -F 3844
+            (see ema.countmatrix.polya.clip_read_ok).
         '''
-        self.peak_list = peak_list
+        self.peak_list = peak_list if peak_list is not None else []
         self.peak_start = peak_start
         self.last_peak_end = last_peak_end
         self.peak_strand = peak_strand
-        self.cb_dict = cb_dict
+        self.cb_dict = cb_dict if cb_dict is not None else {}
+        self.cb_positions = cb_positions if cb_positions is not None else {}
+        self.polya_sites = polya_sites if polya_sites is not None else {}
 
     # each time data_array slicing ubdate peak_add 
     def peak_add(self, data_array:list, slice_loc:int):
@@ -34,7 +57,107 @@ class Peak():
             self.cb_dict[cb] = 1
 
 
-    
+    def cb_position_counting(self, end_pos:int, cb:str):
+        '''Track which CB contributed a read at which position.'''
+        if end_pos not in self.cb_positions:
+            self.cb_positions[end_pos] = {}
+        try:
+            self.cb_positions[end_pos][cb] += 1
+        except KeyError:
+            self.cb_positions[end_pos][cb] = 1
+
+
+    def polya_counting(self, site: int, cb: str, umi=None, primary: bool = True):
+        '''Record one poly(A)-clipped read's inferred cleavage site.
+
+        Mirrors cb_position_counting: called from the peak-calling loop for
+        reads counted into this peak that carry a qualifying terminal
+        poly(A) soft clip (see ema.countmatrix.polya.clip_site).
+
+        :param site: 0-based cleavage coordinate from clip_site().
+        :param cb: cell barcode (composite sample_cb string).
+        :param umi: UMI (UB tag) or None. Distinct molecules per site are
+            len(umi_set) + n_reads_without_umi.
+        :param primary: clip_read_ok(read) -- False for secondary /
+            supplementary / duplicate / qcfail alignments, which are
+            tracked separately so both support units are available.
+        '''
+        rec = self.polya_sites.get(site)
+        if rec is None:
+            rec = [0, set(), 0, 0, set(), 0]
+            self.polya_sites[site] = rec
+        rec[0] += 1
+        mol = None if umi is None else (molecule_cb(cb), umi)
+        if mol is None:
+            rec[2] += 1
+        else:
+            rec[1].add(mol)
+        if primary:
+            rec[3] += 1
+            if mol is None:
+                rec[5] += 1
+            else:
+                rec[4].add(mol)
+
+    def polya_support(self, pas_1: int, pas_2: int, strand: bool, window: int):
+        '''Clip support for one emitted PAS: reads and distinct molecules
+        whose cleavage site lies within +/-window of the PAS's strand-aware
+        3' base (forward: bed_end - 1; reverse: bed_start).
+
+        Returns (n_clip_reads, n_distinct_molecules, n_clip_reads_f3844,
+        n_distinct_molecules_f3844).  BED column 5 carries the MOLECULE
+        count; the sidecar carries all four.
+        '''
+        if not self.polya_sites:
+            return 0, 0, 0, 0
+        bed_start = min(pas_1, pas_2)
+        bed_end = max(pas_1, pas_2)
+        three = bed_start if strand else bed_end - 1
+        nreads = 0
+        n_no_umi = 0
+        umis = set()
+        nreads_f = 0
+        n_no_umi_f = 0
+        umis_f = set()
+        for site, rec in self.polya_sites.items():
+            if abs(site - three) <= window:
+                nreads += rec[0]
+                umis |= rec[1]
+                n_no_umi += rec[2]
+                nreads_f += rec[3]
+                umis_f |= rec[4]
+                n_no_umi_f += rec[5]
+        return (nreads, len(umis) + n_no_umi,
+                nreads_f, len(umis_f) + n_no_umi_f)
+
+    def polya_site_geometry(self, pas_1: int, pas_2: int, strand: bool,
+                            window: int) -> tuple[int, int]:
+        '''peakAtail-prime ``--pas-features on``: the SHAPE of the clip
+        evidence backing one emitted PAS -- ``(distinct clip positions,
+        bp span)`` within +/-*window* of the same strand-aware 3' base
+        :meth:`polya_support` counts over.
+
+        The clip-seeded caller gets these from the cluster itself
+        (``cluster_clip_sites``'s member list); this is the coverage-strategy
+        counterpart, so the two tiers mean the same thing in the sidecar.
+        Only called when the feature columns are enabled.
+        '''
+        if not self.polya_sites:
+            return 0, 0
+        bed_start = min(pas_1, pas_2)
+        bed_end = max(pas_1, pas_2)
+        three = bed_start if strand else bed_end - 1
+        lo = hi = None
+        n = 0
+        for site in self.polya_sites:
+            if abs(site - three) <= window:
+                n += 1
+                if lo is None or site < lo:
+                    lo = site
+                if hi is None or site > hi:
+                    hi = site
+        return (n, hi - lo) if n else (0, 0)
+
     def pasfind(self) -> int:
         '''
         pasfind method loop on peak_list and fidn max_height
@@ -79,6 +202,6 @@ class Peak():
                     else:
                         return 0, 0
 
-        except:
+        except Exception:
             return 0, 0
         

@@ -1,0 +1,263 @@
+"""`peakatail switch diff` — differential APA test across cluster pairs."""
+from __future__ import annotations
+
+import logging
+
+import click
+
+from ema.cli.common import (
+    apply_yaml_to_kwargs,
+    common_options,
+    parse_log_overrides,
+    resolve_subcommand_output_dir,
+)
+from ema.cli.defaults import DEFAULTS
+from ema.progress import ProgressManager
+
+log = logging.getLogger(__name__)
+
+
+def _list_diff_strategies() -> list[str]:
+    try:
+        from ema.switch_test.strategies import list_diff_strategies
+        return list(list_diff_strategies())
+    except ImportError:
+        return []
+
+
+def _list_strategies_callback(ctx, param, value):
+    if value:
+        for s in _list_diff_strategies():
+            click.echo(s)
+        ctx.exit(0)
+
+
+@click.command(name="diff")
+@click.option("--list-strategies", is_flag=True, default=False,
+              is_eager=True, expose_value=False,
+              callback=_list_strategies_callback,
+              help="Print available diff strategies and exit.")
+@common_options(output_default="switch_out")
+@click.option("--h5ad", "-i", "h5ad", multiple=True, required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Per-dataset clusters.h5ad. Repeat for multi-dataset.")
+@click.option("--pasbed", type=click.Path(exists=True, dir_okay=False),
+              default=None, help="Optional PAS BED for context.")
+@click.option("--counts-layer", "counts_layer", type=str, default=None,
+              help="AnnData layer holding raw counts. Default: prefer "
+                   "layers['counts'], else .X. Pass 'X' to force .X. The "
+                   "differential tests cast to integers, so testing "
+                   "normalised .X makes the effective n meaningless.")
+@click.option("--allow-non-count-matrix", "allow_non_count_matrix",
+              is_flag=True, default=False,
+              help="Proceed even when the chosen matrix is non-integral "
+                   "(i.e. normalised, not counts). Diagnostics only.")
+@click.option("--gtf", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Required when --isoform-agg=within_utr/between_utr "
+                   "(needed to resolve each PAS's 3'UTR isoform).")
+@click.option("--cluster-pairs", "cluster_pairs", type=str, default=None,
+              help="`c1,c2;c3,c4` — limit to specific pairwise contrasts.")
+@click.option("--cluster-key", "cluster_key", type=str, default="leiden",
+              help="obs column defining the two (or more) groups to contrast "
+                   "-- ANY column works, not just clusters: e.g. 'stage', "
+                   "'celltype', 'leiden'. Combine with --cluster-pairs to "
+                   "pick specific pairs (e.g. --cluster-key stage "
+                   "--cluster-pairs E14,E18).")
+@click.option("--isoform-agg", "isoform_agg",
+              type=click.Choice(["per_gene", "within_utr", "between_utr", "per_isoform"]),
+              default=DEFAULTS["isoform-agg"], show_default=True,
+              help="Scope of each differential test's background/denominator "
+                   "(applies to all strategies: fisher/nb_multi/nb_pairwise/"
+                   "mwu_percell). per_gene: each PAS vs the rest of its GENE "
+                   "(unchanged/default). within_utr: each PAS vs the other "
+                   "PAS sharing its 3'UTR isoform -- tandem-UTR APA "
+                   "('per_isoform' is a legacy alias). between_utr: collapse "
+                   "PAS to 3'UTR-level counts and test differential 3'UTR "
+                   "PREFERENCE between groups (genes with >=2 UTRs only). "
+                   "Requires --gtf for within_utr/between_utr.")
+@click.option("--utr-unmatched", "utr_unmatched",
+              type=click.Choice(["drop", "gene"]),
+              default=DEFAULTS["utr-unmatched"], show_default=True,
+              help="How to handle PAS that overlap no annotated UTR under "
+                   "--isoform-agg=within_utr/between_utr. 'gene' (default) "
+                   "KEEPS them via a gene-level fallback bucket (UTR-agnostic, "
+                   "still tested/counted at the gene level); 'drop' omits "
+                   "them entirely.")
+@click.option("--marker-top-n", "marker_top_n", type=int,
+              default=DEFAULTS["marker-top-n"], show_default=True,
+              help="Pre-filter the tested PAS to the union of the top-N "
+                   "marker PAS per cluster. 0 (default) disables "
+                   "pre-selection and is the only FDR-controlled setting "
+                   "(issue #94): markers are ranked with the SAME cluster "
+                   "labels the differential test then contrasts, so any "
+                   "non-zero value double-dips on the labels, making every "
+                   "strategy anti-conservative. The restriction no longer "
+                   "changes the within-gene Fisher denominator (that is "
+                   "computed from the full matrix), but it still selects "
+                   "what is tested. Speed-only; not a statistical filter. "
+                   "For speed WITHOUT the double-dip use "
+                   "--prefilter-min-cells instead.")
+@click.option("--prefilter-min-cells", "prefilter_min_cells", type=int,
+              default=DEFAULTS["prefilter-min-cells"], show_default=True,
+              help="LABEL-INDEPENDENT speed pre-filter (issue #94): test only "
+                   "the PAS detected (count > 0) in at least N cells, counted "
+                   "over ALL cells POOLED. 0 (default) disables it, leaving "
+                   "behaviour unchanged. This is the safe alternative to "
+                   "--marker-top-n: the criterion never looks at "
+                   "--cluster-key, so the PAS kept are identical under any "
+                   "permutation of the group labels and the null stays "
+                   "calibrated. Like --marker-top-n it gates only WHICH PAS "
+                   "are tested -- the within-gene Fisher denominator still "
+                   "comes from the full matrix.")
+@click.option("--marker-method", "marker_method", type=str, default=DEFAULTS["marker-method"])
+@click.option("--strategy", "-s", "strategy", type=str, default="fisher",
+              show_default=True,
+              help="Differential APA strategy (run --list-strategies to see).")
+@click.option("--count-mode", "count_mode",
+              type=click.Choice(["reads", "cells"]),
+              default=DEFAULTS["count-mode"], show_default=True,
+              help="Aggregation unit for the fisher strategy's contingency "
+                   "table. 'cells' (default, D4): each cell counted at most "
+                   "once via per-cell PAS detection, de-pseudoreplicating the "
+                   "test -- this is the FDR-calibrated path (issue #74). "
+                   "'reads' (legacy, opt-in): read/UMI totals per group -- "
+                   "pseudoreplicated over correlated within-cell reads, so its "
+                   "q-values are NOT FDR-calibrated and are a ranking screen "
+                   "only. Ignored by the NB strategies.")
+@click.option("--fdr", "fdr", type=float, default=DEFAULTS["fdr"])
+@click.option("--per-worker-mb", "per_worker_mb", type=int, default=DEFAULTS["per-worker-mb"])
+@click.option("--min-cells-per-group", "min_cells_per_group", type=int,
+              default=DEFAULTS["min-cells-per-group"],
+              help="Minimum cells per group for a PAS to enter differential testing.")
+@click.option("--log2fc-thresh", "log2fc_thresh", type=float,
+              default=DEFAULTS["log2fc-thresh"],
+              help="log2 fold-change threshold drawn on the volcano plot. Default 1.0.")
+@click.pass_context
+def diff(ctx: click.Context, **kwargs) -> None:
+    """Differential APA test (Fisher / NB regression) across cluster pairs."""
+    # Merge YAML config first; CLI flags (explicitly set) always win.
+    apply_yaml_to_kwargs(ctx, kwargs)
+
+    valid = _list_diff_strategies()
+    if valid and kwargs["strategy"] not in valid:
+        raise click.BadParameter(
+            f"Invalid --strategy {kwargs['strategy']!r}. Available: {', '.join(valid)}",
+        )
+
+    # When --output is left at its default and the input h5ads come from a
+    # peakatail run dir, route output INSIDE that run dir so the run stays
+    # self-contained: peakatail_runs/<run>/switch_diff_<ts>/
+    user_explicit_output = (
+        ctx.get_parameter_source("output").name == "COMMANDLINE"
+    )
+    out_dir = resolve_subcommand_output_dir(
+        kwargs["output"],
+        user_explicit=user_explicit_output,
+        source_paths=list(kwargs["h5ad"]),
+        subdir="switch_diff",
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    from ema.logging_config import setup_logging, teardown_logging
+    setup_logging(
+        level=(kwargs["log_level"] or "INFO").split(",")[0],
+        output_dir=out_dir,
+        quiet=kwargs["quiet"],
+        verbose_count=kwargs["verbose"],
+        no_log_file=kwargs["no_log_file"],
+        per_logger_overrides=parse_log_overrides(kwargs["log_level"]),
+    )
+
+    try:
+        log.info("peakatail switch diff: %d h5ad input(s); strategy=%s count_mode=%s",
+                 len(kwargs["h5ad"]), kwargs["strategy"], kwargs["count_mode"])
+        # Issue #74 trap removal. The default for --count-mode was flipped
+        # reads->cells (see ema/cli/config_schema.py) so the out-of-the-box
+        # fisher path is FDR-calibrated: a user can no longer UNKNOWINGLY emit
+        # miscalibrated q-values. We chose "safe default" (Option A) over an
+        # acknowledgment gate because it is the least-surprising for end users
+        # -- doing nothing yields calibrated inference; the miscalibrated
+        # read-level path now requires an explicit, informed --count-mode reads.
+        # When that explicit opt-in is used we still warn loudly (below), since
+        # the reads path remains available only as a ranking screen.
+        if kwargs["strategy"] == "fisher" and kwargs["count_mode"] == "reads":
+            log.warning(
+                "fisher --count-mode reads is NOT FDR-calibrated: reads within "
+                "a cell are correlated (pseudoreplication), so q-values are "
+                "anti-conservative -- a permutation null reports q<0.05 hits in "
+                "100% of runs (issue #74). You opted into it explicitly; treat "
+                "these q-values as a RANKING SCREEN only, not evidence of "
+                "significance. The calibrated default is --count-mode cells "
+                "(per-cell, de-pseudoreplicated); nb_pairwise is also calibrated."
+            )
+        # Issue #94: marker pre-selection is a label double-dip. Same remedy
+        # shape as #74 above -- the safe value (0 = no pre-selection) is the
+        # default, and the unsafe path stays reachable but warns loudly.
+        if kwargs["marker_top_n"] > 0:
+            log.warning(
+                "--marker-top-n %d SELECTS THE TESTED PAS WITH THE SAME "
+                "CLUSTER LABELS THE TEST THEN CONTRASTS (label double-dip; "
+                "issue #94). Under a 20-run label-permutation null this "
+                "inflated the fraction of null p<0.05 from 3.0%% (top-n 0) to "
+                "20.3%% (fisher --count-mode reads), 13.0%% (fisher "
+                "--count-mode cells) and 24.7%% (nb_pairwise), with a q<0.05 "
+                "hit in 19-20 of 20 permutations vs 0 of 20 at top-n 0; the "
+                "SELECTION ALONE accounts for 17.4%%. The other half of #94 -- "
+                "a within-gene Fisher denominator computed over only the "
+                "selected PAS -- is fixed (the denominator now comes from the "
+                "full matrix, and so does the NB library-size offset, so "
+                "p-values match the unrestricted run), but the "
+                "selection bias remains: these q-values are NOT FDR-calibrated "
+                "-- use as a speed shortcut / ranking screen only. Pass "
+                "--marker-top-n 0 (the default) for calibrated inference, and "
+                "--prefilter-min-cells N if you need the speed: it cuts the "
+                "tested PAS set without ever looking at --cluster-key.",
+                kwargs["marker_top_n"],
+            )
+        from ema.switch_test.runner import run_diff
+        # Visualisation lives in ema.viz.pipeline_hooks (one entry point per
+        # CLI command).  Failures are warned, never raised.
+        from ema.cli.common import parse_plot_engines
+        from ema.viz.pipeline_hooks import render_switch_diff_outputs
+        with ProgressManager(disable=kwargs.get("no_progress", False)) as pm:
+            pair_results = run_diff(
+                h5ad_paths=list(kwargs["h5ad"]),
+                pasbed=kwargs["pasbed"],
+                gtf=kwargs["gtf"],
+                output_dir=str(out_dir),
+                cluster_pairs=kwargs["cluster_pairs"],
+                cluster_key=kwargs["cluster_key"],
+                marker_top_n=kwargs["marker_top_n"],
+                marker_method=kwargs["marker_method"],
+                strategy=kwargs["strategy"],
+                count_mode=kwargs["count_mode"],
+                fdr=kwargs["fdr"],
+                threads=kwargs["threads"],
+                per_worker_mb=kwargs["per_worker_mb"],
+                min_cells_per_group=kwargs["min_cells_per_group"],
+                isoform_agg=kwargs["isoform_agg"],
+                utr_unmatched=kwargs["utr_unmatched"],
+                counts_layer=kwargs["counts_layer"],
+                allow_non_count_matrix=kwargs["allow_non_count_matrix"],
+                prefilter_min_cells=kwargs["prefilter_min_cells"],
+                progress_manager=pm,
+                # The CLI has just warned in --marker-top-n vocabulary above;
+                # run_diff would otherwise repeat the same ten lines verbatim.
+                warn_marker_top_n=False,
+            )
+            render_switch_diff_outputs(
+                out_dir=out_dir,
+                pair_results=pair_results,
+                fdr=kwargs["fdr"],
+                log2fc_thresh=kwargs["log2fc_thresh"],
+                engines=parse_plot_engines(
+                    kwargs.get("plot_engine", "matplotlib"),
+                    kwargs.get("no_plots", False),
+                ),
+                h5ad_paths=list(kwargs["h5ad"]),
+                cluster_key=kwargs["cluster_key"],
+                pasbed_path=kwargs["pasbed"],
+                progress_manager=pm,
+            )
+    finally:
+        teardown_logging()

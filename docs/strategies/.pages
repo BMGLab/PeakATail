@@ -1,0 +1,9 @@
+nav:
+  - index.md
+  - peak-calling.md
+  - pas-merger.md
+  - clustering.md
+  - quantification.md
+  - diff.md
+  - match.md
+  - viz.md

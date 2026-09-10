@@ -1,7 +1,10 @@
 /test/testdata
+/data/
 **/__pycache__
 **/*.egg-info
 **/emaout
+**/emaout_*
+peakatail_runs/
 **/cbtotal.py
 *.pyc
 /dist/
@@ -9,7 +12,114 @@
 *.tsv
 *.csv
 *.mtx
+*.bam
+*.bai
+# ...except the committed test fixtures.  tests/fixtures/cellranger_pbmc_tiny.bam
+# is the CellRanger input replay (148 kB, 2072 reads); without this negation it
+# is silently dropped and tests/test_cellranger_input_compat.py cannot run --
+# which is how 8 of the 9 skipped tests came to skip for "no BAM available".
+# The .bai stays ignored on purpose: the tests build it with pysam.index().
+!tests/fixtures/*.bam
+*.h5ad
 **/.vscode
 Emaenv
 .venv/
-.emaenv/
+prompts/
+other_repos/
+references/
+test_run/
+logs/
+reports/figures/*.png
+reports/figures/*.svg
+gtf_cache/
+reports/PeakATail_Technical_Report.pdf
+
+# Local-only project notes / specs / plans (not for upstream)
+docs/superpowers/
+.peakatail/
+**/.claude/site/
+
+# MkDocs build output (regenerated on every `mkdocs build`)
+/site/
+.claude/
+reports/.claude/
+
+# AI agent artefacts (plans, prompts, scratch analyses — kept on disk locally)
+plans/
+*plan*.md
+*PLAN*.md
+*prompt*.md
+*PROMPT*.md
+*analysis*.md
+*ANALYSIS*.md
+*.local.md
+notes/
+scratch/
+analysis/
+
+# Agent-generated delivery notes / dev-phase scratch at repo root
+TECHNICAL_REPORT_COMPLETE.md
+README_TECHNICAL_REPORT.md
+REPORT_DELIVERY.txt
+
+# Reports directory (local technical write-up scratch, not upstream content)
+reports/technical_report.md
+reports/README.md
+reports/PDF_CONVERSION_INSTRUCTIONS.txt
+reports/build_report.sh
+reports/build_simple.py
+reports/convert_to_pdf.py
+reports/generate_figures_simple.py
+reports/generate_report.py
+reports/run_build_simple.sh
+reports/build_pdf.sh
+reports/build_latex.sh
+reports/subset_heavy_strategies.py
+# LaTeX source and build artefacts
+reports/PeakATail_Technical_Report.tex
+reports/*.aux
+reports/*.log
+reports/*.toc
+reports/*.out
+reports/explainer_figures.py
+reports/baseline_apa_completeness/
+reports/subset_curated.h5ad
+reports/diff_compare/
+reports/length_compare/
+reports/subset_diff_compare/
+reports/subset_length_compare/
+
+# Root-level report build helpers (invoke scripts inside reports/)
+run_build.sh
+run_generate_figures.sh
+
+# Performance report (local-only artefacts, same pattern as Technical Report)
+reports/PeakATail_Performance_Report.tex
+reports/PeakATail_Performance_Report.pdf
+reports/PeakATail_Performance_Report.md
+reports/perf_figures.py
+reports/build_perf.sh
+reports/figures/perf/
+
+# PR scratch (paste into GitHub — not for upstream)
+PR_DESCRIPTION.md
+
+# Dev caches and editor artefacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage.xml
+.coverage
+.DS_Store
+Thumbs.db
+*~
+*.swp
+.gstack/
+
+# CLI run debris at the repo root: every `ema`/`ema switch ...` invocation
+# opens `<output>/peakatail_<timestamp>.log` as its run log, and
+# `ema switch combine` defaults `--output` to ./switch_combined -- so running
+# the CLI (or the test suite) from a checkout leaves both behind.
+peakatail_*.log
+switch_combined/
