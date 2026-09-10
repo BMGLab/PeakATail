@@ -1222,6 +1222,12 @@ def run_diff(
                         if _pair_client is not None:
                             _pair_client.advance(1)
 
+            # Issue #110: between_utr rows are 3'UTR isoforms, so their
+            # ``pas_id`` (``GENE::TRANSCRIPT``) is NOT a key into either
+            # annotation lookup below.  within_utr keeps PAS as the unit, so it
+            # annotates exactly like per_gene.
+            _utr_level_rows = _isoform_agg == "between_utr"
+
             # Build annotation lookup once per h5ad, shared across all pairs.
             # gene_id from adata.var (index = pas_id as str).
             _gene_id_map: pd.Series | None = None
@@ -1296,6 +1302,17 @@ def run_diff(
                 strand, cluster1, cluster2, <original stat columns>.
                 If a lookup is unavailable the corresponding columns are filled
                 with empty strings so the TSV structure stays consistent.
+
+                Issue #110: under ``between_utr`` the row unit is a 3'UTR
+                isoform, not a PAS -- ``pas_id`` reads ``GENE::TRANSCRIPT``, so
+                both joins below (keyed on a PAS id) matched nothing and left
+                ``gene_id`` blank while the gene sat in ``diff_group_id`` only.
+                Joining that output to a ``per_gene`` output on ``gene_id``
+                then matched 0 rows instead of raising.  For that scope the
+                gene is taken straight from the group id, and the four
+                PAS-level coordinate columns -- which have no meaning for a
+                whole UTR -- are OMITTED rather than written blank, so a join
+                on them fails loudly.
                 """
                 aug = df_raw.copy()
                 # Normalise index name so joins work regardless of whether the
@@ -1305,8 +1322,16 @@ def run_diff(
                 aug = aug.reset_index()  # pas_id becomes a regular column
                 aug["pas_id"] = aug["pas_id"].astype(str)
 
-                # --- gene_id join ---
-                if _gene_id_map is not None:
+                # --- gene_id ---
+                if _utr_level_rows:
+                    # ``diff_group_id`` IS the gene under between_utr (groups
+                    # are keyed by gene); fall back to the ``GENE::TRANSCRIPT``
+                    # prefix if a strategy ever drops the column.
+                    if "diff_group_id" in aug.columns:
+                        aug["gene_id"] = aug["diff_group_id"].astype(str)
+                    else:
+                        aug["gene_id"] = aug["pas_id"].str.split("::").str[0]
+                elif _gene_id_map is not None:
                     gene_series = _gene_id_map.rename_axis("pas_id").reset_index()
                     gene_series["pas_id"] = gene_series["pas_id"].astype(str)
                     aug = aug.merge(gene_series, on="pas_id", how="left")
@@ -1314,32 +1339,25 @@ def run_diff(
                     aug["gene_id"] = ""
 
                 # --- coordinate join ---
-                if _pasbed_cols is not None:
+                coord_cols = [] if _utr_level_rows else ["chrom", "start", "end", "strand"]
+                if _utr_level_rows:
+                    pass  # UTR-level rows carry no single PAS coordinate
+                elif _pasbed_cols is not None:
                     coord_df = _pasbed_cols.rename_axis("pas_id").reset_index()
                     aug = aug.merge(coord_df, on="pas_id", how="left")
-                    aug[["chrom", "start", "end", "strand"]] = (
-                        aug[["chrom", "start", "end", "strand"]].fillna("")
-                    )
+                    aug[coord_cols] = aug[coord_cols].fillna("")
                 else:
-                    aug["chrom"] = ""
-                    aug["start"] = ""
-                    aug["end"] = ""
-                    aug["strand"] = ""
+                    for _c in coord_cols:
+                        aug[_c] = ""
 
                 # --- self-describing cluster columns ---
                 aug.insert(0, "cluster2", c2_label)
                 aug.insert(0, "cluster1", c1_label)
 
                 # Reorder: pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, <stats>
-                stat_cols = [
-                    c for c in aug.columns
-                    if c not in {"pas_id", "gene_id", "chrom", "start", "end",
-                                 "strand", "cluster1", "cluster2"}
-                ]
-                aug = aug[
-                    ["pas_id", "gene_id", "chrom", "start", "end", "strand",
-                     "cluster1", "cluster2"] + stat_cols
-                ]
+                lead_cols = ["pas_id", "gene_id"] + coord_cols + ["cluster1", "cluster2"]
+                stat_cols = [c for c in aug.columns if c not in set(lead_cols)]
+                aug = aug[lead_cols + stat_cols]
                 return aug
 
             total_sig = 0

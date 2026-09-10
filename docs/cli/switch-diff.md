@@ -220,12 +220,12 @@ One TSV per cluster pair. Columns (in order):
 
 | Column | Type | Description |
 |---|---|---|
-| `pas_id` | str | PAS identifier matching `adata.var_names`. |
-| `gene_id` | str | Gene annotation from `adata.var["gene_id"]` (empty string if unavailable). |
-| `chrom` | str | Chromosome from `pasbed.bed` (empty if pasbed not found). |
-| `start` | str | Genomic start position (0-based). |
-| `end` | str | Genomic end position. |
-| `strand` | str | `+` or `-`. |
+| `pas_id` | str | PAS identifier matching `adata.var_names`. Under `--isoform-agg between_utr` the row unit is a 3'UTR isoform and this reads `GENE::TRANSCRIPT`. |
+| `gene_id` | str | Gene annotation from `adata.var["gene_id"]` (empty string if unavailable). Under `--isoform-agg between_utr` it is the group's gene. |
+| `chrom` | str | Chromosome from `pasbed.bed` (empty if pasbed not found). **Omitted under `--isoform-agg between_utr`.** |
+| `start` | str | Genomic start position (0-based). **Omitted under `--isoform-agg between_utr`.** |
+| `end` | str | Genomic end position. **Omitted under `--isoform-agg between_utr`.** |
+| `strand` | str | `+` or `-`. **Omitted under `--isoform-agg between_utr`.** |
 | `cluster1` | str | First cluster label of this pair. |
 | `cluster2` | str | Second cluster label of this pair. |
 | `n_reads_gene_cluster1` | int | Total reads for this gene in cluster 1 (fisher within-gene framing). Summed over **all** PAS of the gene, including any excluded by `--marker-top-n`. |
@@ -234,7 +234,23 @@ One TSV per cluster pair. Columns (in order):
 | `pvalue` | float | Raw p-value. |
 | `qvalue` | float | Benjamini–Hochberg adjusted p-value (FDR). |
 
-The augmented column order (pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, then statistical columns) is produced by the `_augment_diff_df` helper in `ema/switch_test/runner.py`. Source: lines 316–384.
+The augmented column order (pas_id, gene_id, chrom, start, end, strand, cluster1, cluster2, then statistical columns) is produced by the `_augment_diff_df` helper in `ema/switch_test/runner.py`.
+
+The UTR-scoped values of `--isoform-agg` add a `diff_group_id` column naming the
+group each row was tested within, and `between_utr` changes the row unit:
+
+| `--isoform-agg` | Row unit | `pas_id` | `gene_id` | `diff_group_id` | `chrom`/`start`/`end`/`strand` |
+|---|---|---|---|---|---|
+| `per_gene` (default) | PAS | PAS id | gene of the PAS | *(column absent)* | present |
+| `within_utr` (alias `per_isoform`) | PAS | PAS id | gene of the PAS | `GENE::TRANSCRIPT` of the tested 3'UTR (`GENE::_gene_` for the `--utr-unmatched gene` fallback bucket) | present |
+| `between_utr` | 3'UTR isoform | `GENE::TRANSCRIPT` | the gene (same value as `diff_group_id`) | the gene | **absent** |
+
+Under `between_utr` a row is a whole 3'UTR, not a single cleavage site, so there
+is no one position to report: the four coordinate columns are **omitted from the
+TSV entirely** rather than written as empty strings ([issue #110](https://github.com/BMGLab/PeakATail/issues/110)).
+A join keyed on them therefore fails with a missing-column error instead of
+silently matching nothing. `gene_id` *is* populated for these rows, so joining
+`between_utr` output to `per_gene` output on `gene_id` works as expected.
 
 **`markers.tsv`**
 

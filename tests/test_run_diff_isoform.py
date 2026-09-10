@@ -316,6 +316,79 @@ class TestBetweenUtr:
 
 
 # ---------------------------------------------------------------------------
+# Issue #110: between_utr rows must carry gene_id, and must NOT carry blank
+# PAS-level coordinate columns.
+# ---------------------------------------------------------------------------
+
+class TestBetweenUtrGeneIdAndCoords:
+    def test_gene_id_populated_and_equals_diff_group_id(self, _run_diff_env):
+        """``gene_id`` was written empty for every between_utr row (the
+        annotation joins are keyed on a PAS id, but the row unit is a 3'UTR
+        whose id reads ``GENE::TRANSCRIPT``); the gene appeared only in
+        ``diff_group_id``."""
+        df = _pair_df(_run_diff_env("between_utr", utr_unmatched="drop"))
+        assert not df.empty
+        assert (df["gene_id"].astype(str) != "").all()
+        assert df["gene_id"].notna().all()
+        assert (df["gene_id"].astype(str) == df["diff_group_id"].astype(str)).all()
+        # And it really is the gene prefix of the UTR id.
+        assert (
+            df["gene_id"].astype(str) == df["pas_id"].astype(str).str.split("::").str[0]
+        ).all()
+
+    def test_pas_level_coordinate_columns_are_omitted(self, _run_diff_env, tmp_path):
+        """chrom/start/end/strand have no meaning for a whole UTR, so they are
+        dropped rather than written blank -- a join on them fails loudly."""
+        df = _pair_df(_run_diff_env("between_utr", utr_unmatched="drop"))
+        for col in ("chrom", "start", "end", "strand"):
+            assert col not in df.columns
+        # ... and the same for the TSV actually written to disk.
+        tsv = pd.read_csv(
+            tmp_path / "out" / "differential" / "fisher_A_vs_B.tsv", sep="\t"
+        )
+        for col in ("chrom", "start", "end", "strand"):
+            assert col not in tsv.columns
+        assert list(tsv.columns[:4]) == ["pas_id", "gene_id", "cluster1", "cluster2"]
+
+    def test_join_to_per_gene_output_on_gene_id_matches(self, _run_diff_env):
+        """THE point of issue #110: joining between_utr output to per_gene
+        output on ``gene_id`` -- the obvious comparison, and the column is
+        present -- used to match nothing and report 0% overlap silently."""
+        df_between = _pair_df(
+            _run_diff_env("between_utr", utr_unmatched="drop", out_subdir="between")
+        )
+        df_gene = _pair_df(_run_diff_env("per_gene", out_subdir="pergene"))
+
+        merged = df_between.merge(
+            df_gene[["gene_id", "pas_id"]].rename(columns={"pas_id": "pas_id_gene"}),
+            on="gene_id",
+            how="inner",
+        )
+        assert not merged.empty
+        # Every gene tested at UTR level is also present in the per_gene run.
+        genes_between = set(df_between["gene_id"])
+        genes_gene = set(df_gene["gene_id"])
+        assert genes_between  # GENE_X and GENE_Z each have >= 2 UTRs
+        assert genes_between <= genes_gene
+        assert len(genes_between & genes_gene) / len(genes_between) == 1.0
+
+    def test_within_utr_gene_id_is_populated_too(self, _run_diff_env):
+        """within_utr keeps PAS as the row unit, so its gene_id join is the
+        per_gene one and was never blank -- pinned so it stays that way."""
+        df = _pair_df(_run_diff_env("within_utr", utr_unmatched="drop"))
+        assert not df.empty
+        assert (df["gene_id"].astype(str) != "").all()
+        # PAS-level coordinates DO apply here, so they stay in the schema.
+        for col in ("chrom", "start", "end", "strand"):
+            assert col in df.columns
+        # gene_id is the gene, diff_group_id the UTR -- not the same thing.
+        assert (
+            df["diff_group_id"].astype(str).str.split("::").str[0]
+            == df["gene_id"].astype(str)
+        ).all()
+
+
+# ---------------------------------------------------------------------------
 # Fallback + validation
 # ---------------------------------------------------------------------------
 

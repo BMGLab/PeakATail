@@ -232,10 +232,18 @@ Produced by `peakatail switch diff`. The subdirectory is created inside the run 
 | File | Contents |
 |------|----------|
 | `markers.tsv` | **Only written when `--marker-top-n N` is passed with `N > 0`** (the default is `0`, so a flagless run produces no `markers.tsv`). Top-N marker PAS per cluster, used to subset testing. Columns: `cluster`, `pas_id`, `score`. Marker pre-selection ranks PAS with the same cluster labels the test then contrasts, so it is a speed shortcut, not calibrated inference — see [issue #94](https://github.com/BMGLab/PeakATail/issues/94) |
-| `differential/<strategy>_<c1>_vs_<c2>.tsv` | Per-pair differential results. See [Tutorial 04 — switch analysis](../tutorials/04-switch-analysis.md) for column definitions |
+| `differential/<strategy>_<c1>_vs_<c2>.tsv` | Per-pair differential results. Columns: `pas_id`, `gene_id`, `chrom`, `start`, `end`, `strand`, `cluster1`, `cluster2`, then the strategy's statistical columns. Under `--isoform-agg within_utr`/`between_utr` a `diff_group_id` column names the group each row was tested within. See [`ema switch diff` — Output files](../cli/switch-diff.md#output-files) for the full schema and [Tutorial 04 — switch analysis](../tutorials/04-switch-analysis.md) for a walkthrough |
 | `figures/volcano_<c1>_vs_<c2>.png/.svg/.html` | Volcano plot for one cluster pair |
 | `figures/figures_INDEX.md` | Human-readable index of all figures with per-pair statistics |
 | `figures/figures_INDEX.json` | Machine-readable version of the index |
+
+Under `--isoform-agg between_utr` a row is a whole 3'UTR isoform rather than a
+single PAS: `pas_id` reads `GENE::TRANSCRIPT`, `gene_id` holds that UTR's gene
+(the same value as `diff_group_id`), and the four PAS-level coordinate columns
+`chrom`, `start`, `end` and `strand` are **not written at all** — a whole UTR has
+no single cleavage position, so omitting them makes a join keyed on them fail
+loudly instead of matching nothing ([issue #110](https://github.com/BMGLab/PeakATail/issues/110)).
+`within_utr` keeps PAS as the row unit and so keeps the full column set.
 
 ---
 
