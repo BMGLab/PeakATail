@@ -10,6 +10,7 @@ abstract: "Single-cell poly(A) site detection and alternative polyadenylation (A
 authors:
   - family-names: "Amiri Tabat"
     given-names: "Amir"
+    orcid: "https://orcid.org/0009-0009-8740-7770"
     affiliation: "Department of Computer Engineering, Faculty of Computer and Informatics Sciences, Ege University, İzmir, Türkiye"
   - family-names: "Kaymaz"
     given-names: "Yasin"
