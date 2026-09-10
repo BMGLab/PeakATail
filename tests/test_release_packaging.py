@@ -382,3 +382,42 @@ def test_release_refuses_to_publish_internal_only_paths():
 
     build_idx = next(i for i, n in enumerate(names) if "Build distributions" in n)
     assert guard[0] < build_idx, "the guard runs after the build"
+
+
+def test_ci_proves_the_package_installs_without_a_compiler() -> None:
+    """The gap that shipped an uninstallable release.
+
+    GitHub runners have gcc, cc, cmake and make. A dependency that needs
+    compiling therefore installs fine in normal CI and fails on a user machine
+    -- which is how `louvain` (no wheel for CPython >= 3.12) made
+    `pip install peakatail` impossible on 3.12 and 3.13 while every check was
+    green. Some job must install the built artifact in an environment that
+    genuinely lacks a toolchain.
+    """
+    ci = yaml.safe_load((RELEASE_WF.parent / "ci.yml").read_text())
+    jobs = ci["jobs"]
+
+    slim = {
+        name: job for name, job in jobs.items()
+        if "slim" in str(job.get("container", ""))
+    }
+    assert slim, (
+        "no CI job installs in a compiler-free container, so a dependency "
+        "needing a native build would pass CI and fail for users"
+    )
+
+    name, job = next(iter(slim.items()))
+    steps = " ".join(str(s.get("run", "")) for s in job.get("steps", []))
+    assert "cmake" in steps and "gcc" in steps, (
+        f"{name} must assert the toolchain is genuinely absent, otherwise a "
+        "future base-image change silently restores the blind spot"
+    )
+    assert "pip install" in steps, f"{name} never installs the artifact"
+
+    declared = _ci_matrix_versions()
+    covered = [str(v) for v in job["strategy"]["matrix"]["python-version"]]
+    missing = {f"{a}.{b}" for a, b in declared} - set(covered)
+    assert not missing, (
+        f"{name} does not cover {sorted(missing)}; every supported Python must "
+        "be proven installable without a compiler"
+    )

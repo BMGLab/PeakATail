@@ -52,11 +52,16 @@
   declares. The new job resolves with `uv pip install --resolution
   lowest-direct` and runs the full suite against the promised minimums. Both
   bugs above were invisible until it existed.
-- **A `wheels-only` CI job** (`--only-binary=:all:`, on 3.10-3.13). It refuses
-  any source build, installs the built wheel, imports the package and runs the
-  CLI. CI previously proved "installs on a machine with a full build
-  toolchain", which is a much weaker claim than "installs" -- and the
-  difference is exactly what made `louvain` invisible.
+- **A `no-compiler-install` CI job** (3.10-3.13). It installs the built wheel
+  inside `python:<ver>-slim`, a container with no gcc, cc, cmake or make, then
+  imports the package and runs the CLI -- first asserting the toolchain really
+  is absent, so a future base-image change cannot silently restore the blind
+  spot. CI previously proved "installs on a machine with a full build
+  toolchain", a much weaker claim than "installs", and that difference is
+  exactly what made `louvain` invisible. (A first attempt used
+  `--only-binary=:all:`; that also rejects pure-Python sdists such as
+  `upsetplot`, which build fine anywhere. What breaks users is a *native*
+  build, so the absence of a toolchain is the right test.)
 - **Python 3.13 in the CI matrix**, alongside 3.10-3.12.
 - **Tests that keep the claims and the CI matrix in sync** — the declared
   Python floor must appear in the matrix, CI must not test below it, and the

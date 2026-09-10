@@ -105,38 +105,66 @@ jobs:
       - name: Run the suite against those versions
         run: PATH="$PWD/.venv-lowest/bin:$PATH" .venv-lowest/bin/python -m pytest -q -rxX
 
-  wheels-only:
-    # Refuse ANY source build. CI runners ship cmake and a full toolchain, so a
-    # dependency without a wheel compiles here and fails on a user machine --
-    # which is exactly how `louvain` (no wheel for CPython >= 3.12, needs cmake
-    # to build igraph's C core) shipped in the first public release and made
+  no-compiler-install:
+    # Reproduce a USER's machine: python:*-slim has no gcc, no cmake, no build
+    # toolchain. GitHub runners have all three, so a dependency that needs
+    # compiling installs fine in normal CI and fails for everyone else -- which
+    # is exactly how `louvain` (no wheel for CPython >= 3.12, builds igraph's C
+    # core with cmake) shipped in the first public release and made
     # `pip install peakatail` impossible on 3.12 and 3.13 while CI stayed green.
-    name: Installs from wheels only (no compiler needed)
+    #
+    # NOT `--only-binary=:all:`: that also rejects pure-Python sdists such as
+    # upsetplot, which build fine without any compiler. The thing that breaks
+    # users is a NATIVE build, and the absence of a toolchain is what tests it.
+    name: Installs with no compiler present
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    needs: build-dists
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+    container: python:${{ matrix.python-version }}-slim
+    steps:
+      - name: Confirm the image really has no toolchain
+        run: |
+          set -eu
+          for tool in gcc cc cmake make; do
+            if command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is present; this job must run WITHOUT a toolchain" >&2
+              exit 1
+            fi
+          done
+          echo "no gcc/cc/cmake/make -- this is a user-like environment"
+
+      - name: Fetch the built wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: dists
+          path: dist/
+
+      - name: Install the wheel
+        run: pip install --no-cache-dir dist/*.whl
+
+      - name: Import the package
+        run: python -c "import ema; print('import ok')"
+
+      - name: The CLI answers --help
+        run: peakatail --help > /dev/null && echo "cli ok"
+
+  build-dists:
+    name: Build sdist + wheel once
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-
-      - name: Build the distributions
+      - name: Build
         run: uv build
-
-      - name: Install the wheel with source builds forbidden
-        run: |
-          uv venv --python ${{ matrix.python-version }} .venv-wheels
-          uv pip install --python .venv-wheels/bin/python \
-            --only-binary=:all: dist/*.whl
-
-      - name: Import the package
-        run: .venv-wheels/bin/python -c "import ema; print('import ok')"
-
-      - name: The CLI answers --help
-        run: .venv-wheels/bin/peakatail --help > /dev/null && echo "cli ok"
-
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: dists
+          path: dist/
