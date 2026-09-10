@@ -7,6 +7,34 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — the release that mints a DOI
+
+### Fixed
+
+- **A tag push now creates a GitHub Release, not just a PyPI upload.** Zenodo
+  mints a DOI when a GitHub *Release* is published; a bare git tag does not
+  trigger it. `release.yml` built and published to PyPI and then stopped, so
+  pushing `v0.3.0` as documented would have produced a package on PyPI and **no
+  DOI at all** — silently, with every step of the workflow green. A new
+  `github_release` job creates the Release from the tag with the sdist + wheel
+  attached, after the PyPI publish succeeds, so a release that never reached
+  PyPI is never archived either.
+
+### Added
+
+- **`scripts/changelog_section.py`** prints one version's `CHANGELOG.md`
+  section, and the release workflow uses it as the Release body — which is also
+  what Zenodo records against the DOI. It **exits non-zero** when there is no
+  `## <version>` heading, so a CHANGELOG still stuck on `Unreleased` fails the
+  release instead of publishing an empty archival record.
+
+### Changed
+
+- `CONTRIBUTING.md`'s release section now describes what the workflow does
+  (verify tag → publish to PyPI → create the Release) instead of telling the
+  maintainer to draft the Release by hand, and records that Zenodo takes the
+  archived record's authors and title from `CITATION.cff` as of tag time.
+
 ## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
 
 ### Fixed
