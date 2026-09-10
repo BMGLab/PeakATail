@@ -178,7 +178,9 @@ with `N > 0`, and the command above uses the default `0`. That default is
 deliberate — marker pre-selection ranks PAS with the same cluster labels the
 test then contrasts, so it is a speed shortcut rather than calibrated
 inference. See
-[Why `--marker-top-n` defaults to 0](../cli/switch-diff.md#why---marker-top-n-defaults-to-0).
+[Why `--marker-top-n` defaults to 0](../cli/switch-diff.md#why---marker-top-n-defaults-to-0). If the run is too slow, cut the tested
+PAS set with the label-independent `--prefilter-min-cells N` instead — see
+[Cutting the tested PAS set without a double-dip](../cli/switch-diff.md#cutting-the-tested-pas-set-without-a-double-dip).
 
 ---
 

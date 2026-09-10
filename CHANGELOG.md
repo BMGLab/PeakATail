@@ -7,6 +7,40 @@
 > bioconda recipe are already at 0.3.0; convert these `Unreleased` headings to
 > `## 0.3.0` at tag time.
 
+## Unreleased — label-independent `switch diff` pre-filter (issue #94)
+
+### Added
+
+- **`ema switch diff --prefilter-min-cells N`** — a **label-independent** speed
+  pre-filter, the replacement for the speed knob that disappeared when
+  `--marker-top-n` was defaulted to `0`. It tests only the PAS detected
+  (count > 0) in at least `N` cells, counted over **all cells pooled**.
+  Default `0` = OFF, so nothing changes unless you ask for it.
+  Where `--marker-top-n` ranks the tested PAS with the *same* `--cluster-key`
+  labels the test then contrasts (a double-dip that put 13.0–24.7 % of null
+  p-values below 0.05, issue #94), this criterion never sees the labels: it is
+  computed by `ema.switch_test.prefilter.select_expressed_pas`, whose signature
+  is `(count_matrix, min_cells)` — there is no `cluster_key`, label vector or
+  AnnData parameter for it to peek at, so the PAS kept are identical under
+  every permutation of the labels. Measured on the same permutation null the
+  marker flag is measured on: the null p<0.05 rate is 3.5 % with the
+  pre-filter on vs 3.6 % unfiltered and 16.6 % at `--marker-top-n 200`, while
+  only 469 of 2000 PAS are tested,
+  and each surviving p-value is bit-identical to the unfiltered run's — the
+  pre-filter removes hypotheses, it never changes a test (the within-gene
+  Fisher denominator still comes from the full matrix).
+  Guarded by `tests/test_label_independent_prefilter_i94.py`.
+  Chosen over a read-total or variance threshold because "cells in which the
+  PAS is detected" is what the per-cell contingency table is built from, a
+  read-total cut mostly ranks sequencing depth, and a variance cut starts to
+  correlate with the between-group difference being tested even without
+  reading the labels.
+
+### Changed
+
+- `--marker-top-n`'s help text and its runtime warning now name
+  `--prefilter-min-cells` as the safe way to get the speed.
+
 ## Unreleased — `switch diff --isoform-agg between_utr` row identity (issue #110)
 
 ### Fixed

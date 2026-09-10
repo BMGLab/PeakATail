@@ -96,6 +96,20 @@ Options:
                                   Fisher denominator (that is computed from the
                                   full matrix), but it still selects what is
                                   tested. Speed-only; not a statistical filter.
+                                  For speed WITHOUT the double-dip use
+                                  --prefilter-min-cells instead.  [default: 0]
+  --prefilter-min-cells INTEGER   LABEL-INDEPENDENT speed pre-filter (issue
+                                  #94): test only the PAS detected (count > 0)
+                                  in at least N cells, counted over ALL cells
+                                  POOLED. 0 (default) disables it, leaving
+                                  behaviour unchanged. This is the safe
+                                  alternative to --marker-top-n: the criterion
+                                  never looks at --cluster-key, so the PAS kept
+                                  are identical under any permutation of the
+                                  group labels and the null stays calibrated.
+                                  Like --marker-top-n it gates only WHICH PAS
+                                  are tested -- the within-gene Fisher
+                                  denominator still comes from the full matrix.
                                   [default: 0]
   --marker-method TEXT            [default: wilcoxon]
   -s, --strategy TEXT             Differential APA strategy (run --list-
@@ -127,6 +141,7 @@ Options:
 |---|---|---|---|
 | `--strategy` / `-s` | TEXT | `fisher` | Differential APA strategy. Run `peakatail switch diff --list-strategies` to see registered names. `fisher` applies a within-gene Fisher exact test (see Within-gene Fisher framing below). |
 | `--marker-top-n` | INT | `0` (disabled) | **Speed shortcut, not a statistical filter — leave it at 0.** Pre-filters the PAS matrix to the union of the top-N marker PAS per cluster before differential testing. Any non-zero value ranks those markers with the **same cluster labels** the differential test then contrasts (a label double-dip), so the reported q-values are **not FDR-calibrated** — see [Why `--marker-top-n` defaults to 0](#why---marker-top-n-defaults-to-0). When set, the markers TSV is saved to `markers.tsv` for inspection. |
+| `--prefilter-min-cells` | INT | `0` (disabled) | **Label-independent speed knob — the safe alternative to `--marker-top-n`.** Tests only the PAS detected (count > 0) in at least N cells, counted over **all cells pooled**. The criterion never looks at `--cluster-key`, so the PAS kept are identical under any permutation of the group labels and the null stays calibrated — see [Cutting the tested PAS set without a double-dip](#cutting-the-tested-pas-set-without-a-double-dip). Like `--marker-top-n` it gates only *which* PAS are tested; the within-gene Fisher denominator still comes from the full matrix. Source: `ema/switch_test/prefilter.py`. |
 | `--marker-method` | TEXT | `wilcoxon` | Marker ranking method passed to `scanpy.tl.rank_genes_groups`. Options include `wilcoxon`, `t-test`, `logreg`. |
 | `--min-cells-per-group` | INT | 10 | Minimum number of cells (with non-zero counts for NB strategies) in each cluster group for a PAS to be included in differential testing. PAS failing this filter in either cluster of a pair are dropped. Source: `ema/cli/config_schema.py`, `ema/switch_test/runner.py::run_diff`. |
 
@@ -185,8 +200,58 @@ Only `--marker-top-n 0` controls the FDR, so it is now the default: a flagless
 warning — use it as a **speed shortcut / ranking screen** on large datasets
 (NB strategies scale badly in the number of PAS), never as evidence of
 significance. If you need both speed and calibration, cut the search space
-with something independent of the labels instead (e.g. `--cluster-pairs`,
-`--min-cells-per-group`, or a PAS list from a separate dataset).
+with something independent of the labels instead — `--prefilter-min-cells N`
+(see [Cutting the tested PAS set without a double-dip](#cutting-the-tested-pas-set-without-a-double-dip)),
+`--cluster-pairs`, `--min-cells-per-group`, or a PAS list from a separate
+dataset.
+
+## Cutting the tested PAS set without a double-dip
+
+`--marker-top-n 0` is calibrated but tests everything, which is slow on a large
+matrix (the NB strategies scale badly in the number of PAS). `--prefilter-min-cells N`
+is the speed knob to reach for instead:
+
+```bash
+peakatail switch diff -i clusters.h5ad --cluster-key celltype --prefilter-min-cells 25
+```
+
+It keeps only the PAS detected (count > 0) in at least `N` cells, counted over
+**all cells pooled** — the labels are never grouped, split or read. That is
+structural, not a promise: the criterion is computed by
+`ema.switch_test.prefilter.select_expressed_pas(count_matrix, min_cells)`, whose
+signature has no `cluster_key`, no label vector and no AnnData parameter, so
+there is nothing for it to double-dip on. `run_diff` calls it before the label
+vector is even built.
+
+Consequences, measured on the same label-permutation null the marker flag was
+measured on (2000 PAS, 120 cells, `fisher --count-mode cells`, 5 permutations):
+
+| Configuration | PAS tested | Null p < 0.05 |
+|---|---|---|
+| unfiltered (`--marker-top-n 0`) | 2000 | 3.6 % |
+| `--prefilter-min-cells 80` | 469 | **3.5 %** |
+| `--marker-top-n 200` | 400 | 16.6 % |
+
+Two further properties hold exactly, not approximately, and are pinned by
+`tests/test_label_independent_prefilter_i94.py`:
+
+* the pre-filtered PAS set is **identical under every permutation of the
+  labels** (the marker set is different every time), and
+* every surviving p-value is **bit-identical** to the one the unfiltered run
+  reports for that PAS — the pre-filter removes hypotheses, it never changes a
+  test. The q-values are then plain Benjamini–Hochberg over that smaller,
+  label-blind set of hypotheses.
+
+**Choosing N.** The criterion counts *cells*, not reads, because the per-cell
+contingency table (`--count-mode cells`) is built from exactly that number: a
+PAS detected in fewer than `--min-cells-per-group` cells cannot populate a
+usable table in either group anyway. A read-total threshold would mostly rank
+sequencing depth, and a variance/abundance threshold starts to correlate with
+the between-group difference being tested even without reading the labels. A
+safe starting point is roughly `2 × --min-cells-per-group`; raise it until the
+run is fast enough, and note that (as with any independent filter) testing
+fewer hypotheses makes the BH threshold less stringent — that is the intended
+multiplicity saving, not selection bias.
 
 ## Within-gene Fisher framing
 
