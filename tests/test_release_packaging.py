@@ -233,3 +233,41 @@ def test_release_workflow_shell_steps_use_valid_git_flags() -> None:
         "actions/checkout and a plain `git fetch` here"
     )
     assert "--depth 0" not in text, "same, spelled with a space"
+
+
+def test_release_workflow_installs_the_same_system_deps_as_ci() -> None:
+    """The release suite must run in the same environment CI validates.
+
+    release.yml runs the full suite on the tagged tree, but it did not install
+    bedtools -- which ci.yml does. Several tests shell out to bedtools and
+    ERROR (not skip) without it, so the release run failed on code that was
+    green in CI. Any apt package CI installs must be installed here too.
+    """
+    ci = (RELEASE_WF.parent / "ci.yml").read_text()
+    rel = RELEASE_WF.read_text()
+
+    def apt_packages(text: str) -> set[str]:
+        """Packages from real `apt-get install` RUN lines, not prose.
+
+        Matching the bare package name anywhere in the file is useless: the
+        comment explaining why bedtools is needed also contains "bedtools", so
+        deleting the install step left this test green.
+        """
+        found = set()
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") or "apt-get install" not in stripped:
+                continue
+            tail = stripped.split("apt-get install", 1)[1]
+            for token in tail.split():
+                if not token.startswith("-") and token not in {"&&", "|"}:
+                    found.add(token)
+        return found
+
+    packages = apt_packages(ci)
+    assert packages, "could not parse CI's apt packages; update this test"
+    missing = packages - apt_packages(rel)
+    assert not missing, (
+        f"ci.yml installs {sorted(missing)} but release.yml does not, so the "
+        "test suite runs in a different environment during a release"
+    )

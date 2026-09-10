@@ -74,6 +74,13 @@ jobs:
             exit 1
           fi
 
+      # Mirror ci.yml: several tests shell out to bedtools, and without it they
+      # ERROR rather than skip -- so the suite cannot pass here even though the
+      # identical code is green in CI.
+      - name: Install bedtools (exercises the bedtools-guarded tests)
+        if: startsWith(github.ref, 'refs/tags/')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends bedtools
+
       - name: Run the test suite on the tagged tree
         if: startsWith(github.ref, 'refs/tags/')
         run: |
