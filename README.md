@@ -8,9 +8,10 @@ PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alte
 
 [![Docs](https://img.shields.io/badge/docs-bmglab.github.io%2FPeakATail-blue)](https://bmglab.github.io/PeakATail/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](pyproject.toml)
-
-<!-- TODO[verify]: A CI workflow badge is not included because the repository currently contains only a docs-deploy workflow (.github/workflows/docs.yml). Add a badge once a CI workflow (e.g. .github/workflows/ci.yml) is committed. -->
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](pyproject.toml)
+[![PyPI](https://img.shields.io/pypi/v/peakatail)](https://pypi.org/project/peakatail/)
+[![CI](https://github.com/BMGLab/PeakATail/actions/workflows/ci.yml/badge.svg)](https://github.com/BMGLab/PeakATail/actions/workflows/ci.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22697820.svg)](https://doi.org/10.5281/zenodo.22697820)
 
 ---
 
@@ -258,24 +259,38 @@ PeakATail/
 
 ## Citation
 
-If you use PeakATail, please cite the software entry below for now. The `author`
-field mirrors the package author declared in `pyproject.toml`; the full
-manuscript author list and a machine-readable `CITATION.cff` will be added with
-the paper release (tracked in the release-engineering issue).
+If you use PeakATail, please cite the archived release you actually ran.
+`CITATION.cff` in this repository carries the same metadata in machine-readable
+form, and GitHub renders it under **Cite this repository**.
 
-<!-- TODO[verify]: No CITATION.cff file exists yet. Replace this software entry
-with the published journal citation — and expand `author` to the full manuscript
-author list — once the paper is out. -->
+| What to cite | DOI |
+|---|---|
+| **PeakATail in general** (concept DOI — always resolves to the latest version) | [10.5281/zenodo.22697820](https://doi.org/10.5281/zenodo.22697820) |
+| **The exact version you ran** (v0.3.1) | [10.5281/zenodo.22699241](https://doi.org/10.5281/zenodo.22699241) |
+
+Results depend on the version, so a methods section should name the **version
+DOI** and the tag, not just the repository URL.
 
 ```bibtex
 @software{peakatail,
-  author  = {Amiri Tabat, Amir},
-  title   = {{PeakATail}: single-cell poly(A) site detection and APA analysis},
-  url     = {https://github.com/BMGLab/PeakATail},
-  version = {0.3.1},
-  note    = {Preprint in preparation; replace with the journal citation when available}
+  author    = {Amiri Tabat, Amir and Kaymaz, Yasin},
+  title     = {{PeakATail}: single-cell poly(A) site detection and APA analysis},
+  version   = {0.3.1},
+  doi       = {10.5281/zenodo.22699241},
+  url       = {https://github.com/BMGLab/PeakATail},
+  publisher = {Zenodo},
+  year      = {2026}
 }
 ```
+
+A suggested availability statement:
+
+> PeakATail v0.3.1 is available at <https://github.com/BMGLab/PeakATail> and
+> archived at Zenodo (DOI: 10.5281/zenodo.22699241). Install with
+> `pip install peakatail`.
+
+The manuscript describing PeakATail is in preparation; this entry will be
+updated with the journal citation when it is published.
 
 ---
 

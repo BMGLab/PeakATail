@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased — citation metadata and badges
+
+### Changed
+
+- **README's Citation section now cites the DOIs.** It previously said "No
+  `CITATION.cff` file exists yet" (it does), listed one author rather than the
+  manuscript's two, and gave no DOI at all — so anyone following it would cite
+  a bare repository URL. It now names the concept DOI (cite the tool) and the
+  version DOI (cite the exact release that produced the results), carries both
+  authors, and includes a ready availability statement.
+- **Badges corrected.** The Python badge claimed 3.11+ while the package now
+  supports 3.10–3.13, and a comment asserted no CI workflow existed — there are
+  ten jobs. Added PyPI, CI and DOI badges.
+- `scripts/bump_version.py`'s README pattern is whitespace-tolerant. It matched
+  a literal `version = {` and silently stopped matching when the BibTeX entry
+  was reformatted with aligned `=`; `--check` caught it, which is what that
+  guard is for.
+
 ## 0.3.1 — 2026-09-11
 
 ### Fixed
