@@ -107,6 +107,25 @@ peakatail_runs/emaout_20240501_143022/
 
 ---
 
+## How it works
+
+```mermaid
+flowchart TD
+    A["BAM with CB:Z tags<br/><i>any 10x-style aligner</i>"] --> B["<b>Peak calling</b><br/>read 3'ends, streamed per chromosome"]
+    B --> C["<b>Poly(A) evidence</b><br/>non-templated A-runs in soft-clips"]
+    C --> D["<b>Internal-priming veto</b><br/>genomic A-stretch → drop<br/><i>on by default with a genome FASTA</i>"]
+    D --> E["<b>PAS → gene assignment</b><br/>tiered, annotation-aware"]
+    E --> F["<b>Per-cell PAS count matrix</b><br/>AnnData / .h5ad"]
+    F --> G["<b>Clustering</b><br/>TF-IDF → LSI → Leiden"]
+    G --> H1["<b>switch diff</b><br/>differential APA"]
+    G --> H2["<b>switch length</b><br/>3'UTR shortening / lengthening"]
+    G --> H3["<b>switch match</b><br/>cross-dataset clusters"]
+```
+
+Each stage writes its own artefacts, so a run can be resumed or re-analysed
+without repeating peak calling — see
+[`reannotate`](https://bmglab.github.io/PeakATail/cli/reannotate/).
+
 ## What PeakATail produces
 
 ### Peak calling stage

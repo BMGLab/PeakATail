@@ -25,6 +25,19 @@
 
 ### Changed
 
+- **README gained a pipeline diagram** (Mermaid, so it renders on GitHub and in
+  the docs site and cannot silently go stale the way an image does). It
+  includes the internal-priming veto, which the existing
+  `pipeline_flow_report.png` predates: that figure shows Stages 0-9 with no
+  veto step, "Min reads per cell: 50" and cluster counts from a May 2026 run,
+  and there is no generator to refresh it — so it is deliberately NOT used.
+- **`docs/strategies/clustering.md` now shows the TF-IDF → LSI → Leiden
+  figure**, whose claims were checked against the source first
+  (`_remove_depth_correlated_components(..., threshold=0.75)` matches, as do
+  `n_neighbors` and `resolution`). The caption states the matrix is synthetic,
+  so it is not mistaken for a result.
+- **`CITATION.cff` carries the concept DOI**, so GitHub's "Cite this
+  repository" shows it. It was absent.
 - **README's Citation section now cites the DOIs.** It previously said "No
   `CITATION.cff` file exists yet" (it does), listed one author rather than the
   manuscript's two, and gave no DOI at all — so anyone following it would cite

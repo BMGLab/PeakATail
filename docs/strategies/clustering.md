@@ -36,6 +36,16 @@ as a "document"?
    (flavor=`igraph`, `n_iterations=2`, undirected) at the specified
    `resolution`.
 
+![TF-IDF + LSI clustering pipeline](../assets/figures/clustering_tfidf_pipeline.png)
+
+*The six steps above, on a deliberately tiny illustrative matrix (15 PAS ×
+10 cells) so each transform stays readable: raw counts → per-cell TF → per-PAS
+IDF → `log1p(TF × IDF × scale)` → the LSI embedding → the depth-correlation
+filter (components whose |r| with library size exceeds
+`depth_corr_threshold`, 0.75, are dropped) → the cosine k-NN graph → Leiden
+communities. The matrix is synthetic; the panel exists to show the transforms,
+not to report a result.*
+
 ### Inputs and outputs
 
 **Inputs:**
