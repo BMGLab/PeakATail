@@ -135,7 +135,7 @@ shows the distribution of PDUI values across all cells in that cluster.
 Medians are shown as horizontal lines.
 
 **When to interpret it:** After running `peakatail switch length` with
-`--pdui-method classic`. Clusters with PDUI median near 1.0 tend toward
+`--strategy classic`. Clusters with PDUI median near 1.0 tend toward
 longer 3' UTRs. Clusters with median near 0.0 tend toward shorter UTRs.
 Bimodal violins within a cluster indicate heterogeneous PAS usage and may
 warrant sub-clustering.
@@ -163,7 +163,7 @@ cross-cluster variance (most discriminating). Columns are clusters. Cell
 values are mean within-gene proportion across cells of that cluster.
 Color scale: viridis (dark = 0, bright = 1).
 
-**When to interpret it:** After `peakatail switch length --pdui-method proportion`.
+**When to interpret it:** After `peakatail switch length --strategy proportion`.
 A PAS with a bright cell in one cluster and dark in another is shifting its
 within-gene proportion across conditions. Use this as a visual triage before
 running `fisher` or `nb_pairwise`.
@@ -182,7 +182,7 @@ running `fisher` or `nb_pairwise`.
 `pdui_distribution` but for the entropy metric. Color scale uses viridis
 rather than tab10.
 
-**When to interpret it:** After `peakatail switch length --pdui-method shannon`.
+**When to interpret it:** After `peakatail switch length --strategy shannon`.
 Progenitor or cycling cell populations often show higher entropy (more uniform
 PAS usage) than terminally differentiated cells. Clusters where the violin is
 collapsed near 0 bits contain cells with highly focused PAS usage.
@@ -202,7 +202,7 @@ j. Diagonal = 1.0 (each strategy agrees with itself). Off-diagonal values
 show pairwise strategy agreement. Annotated with numeric values.
 
 **When to interpret it:** When running `peakatail switch diff` with multiple
-`--diff-method` values simultaneously. High Jaccard (> 0.7) between `fisher`
+`--strategy` values simultaneously. High Jaccard (> 0.7) between `fisher`
 and `nb_pairwise` indicates the results are robust. Low Jaccard (< 0.3)
 indicates the two tests are sensitive to different PAS or that one is
 anti-conservative (Fisher) relative to the other.

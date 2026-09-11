@@ -25,7 +25,7 @@ Full DEBUG-level log of the run. Includes per-stage timings, cell/PAS counts at 
 ### `resources.jsonl`
 
 **Path:** `<run>/resources.jsonl`  
-**Produced by:** `_ResourceSampler` thread in `ema/main.py`, started when `--plot-engines` is set.  
+**Produced by:** `_ResourceSampler` thread in `ema/main.py`, started when `--plot-engine` is set.  
 **Format:** newline-delimited JSON, one record per 5-second sample.
 
 Each record: `{"elapsed_s": float, "rss_gb": float, "cpu_pct": float}`. Read by the `resource_timeline` visualisation strategy.
@@ -199,7 +199,7 @@ The cache is invalidated and rebuilt when the GTF path or its modification time 
 
 ## Figures directory: `figures/` (run root)
 
-Produced by `ema/viz/pipeline_hooks.py::render_run_outputs()` after the pipeline completes. Only generated when `--plot-engines` is set (default: matplotlib only).
+Produced by `ema/viz/pipeline_hooks.py::render_run_outputs()` after the pipeline completes. Only generated when `--plot-engine` is set (default: matplotlib only).
 
 | File | Strategy | Contents |
 |------|----------|---------|

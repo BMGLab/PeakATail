@@ -2,6 +2,27 @@
 
 ## Unreleased — citation metadata and badges
 
+### Fixed
+
+- **The docs named three CLI flags that do not exist**, in copy-pasteable
+  examples, so following the documentation produced an error:
+  - `--pdui-method` (5 places) — `switch length`'s selector is `--strategy`/`-s`
+  - `--diff-method` (2 places) — `switch diff`'s selector is `--strategy`/`-s`
+  - `--length-tsv` (5 places, including a full example command) — removed from
+    `switch geneview`; it overlays differential results via `--diff-tsv` and
+    never consumed the length TSVs
+  - `--plot-engines` (2 places) — the flag is singular, `--plot-engine`
+
+### Added
+
+- **`tests/test_docs_flags_exist.py`** walks the real Click command tree and
+  fails on any backticked `--flag` in `docs/` that is not a real option. The
+  four above had been wrong since the 0.2.0 CLI rework and nothing compared the
+  documentation against the CLI. Flags belonging to other tools (alevin-fry's
+  `--rad`, STARsolo's `--solo`) are allowlisted with a stated reason, and a
+  second test fails if an allowlisted flag turns out to be real — which would
+  hide a rename.
+
 ### Changed
 
 - **README's Citation section now cites the DOIs.** It previously said "No

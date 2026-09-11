@@ -233,7 +233,7 @@ for uniform distribution across N PAS (maximally dispersed usage).
 ## How it relates to other commands
 
 - **[`peakatail run`](run.md)** — produces the `clusters.h5ad` inputs. The `gene_id` column in `adata.var` is required for all strategies; it is written by `peakatail run` when `--gtf` is provided.
-- **[`peakatail switch geneview`](switch-geneview.md)** — accepts `--length-tsv` pointing at the `pdui_classic.tsv`, `proportion.tsv`, or `entropy_shannon.tsv` file to overlay strategy scores on per-cluster PAS bars.
+- **[`peakatail switch geneview`](switch-geneview.md)** — draws per-cluster PAS coverage tracks. It overlays differential results via `--diff-tsv`; it does not consume the length TSVs.
 - **[`peakatail switch diff`](switch-diff.md)** — complementary pairwise test; combine with `switch length` to characterise both significance and magnitude of APA changes.
 
 ## See also
