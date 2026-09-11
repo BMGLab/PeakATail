@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased — citation metadata and badges
+
+### Fixed
+
+- **The docs named three CLI flags that do not exist**, in copy-pasteable
+  examples, so following the documentation produced an error:
+  - `--pdui-method` (5 places) — `switch length`'s selector is `--strategy`/`-s`
+  - `--diff-method` (2 places) — `switch diff`'s selector is `--strategy`/`-s`
+  - `--length-tsv` (5 places, including a full example command) — removed from
+    `switch geneview`; it overlays differential results via `--diff-tsv` and
+    never consumed the length TSVs
+  - `--plot-engines` (2 places) — the flag is singular, `--plot-engine`
+
+### Added
+
+- **`tests/test_docs_flags_exist.py`** walks the real Click command tree and
+  fails on any backticked `--flag` in `docs/` that is not a real option. The
+  four above had been wrong since the 0.2.0 CLI rework and nothing compared the
+  documentation against the CLI. Flags belonging to other tools (alevin-fry's
+  `--rad`, STARsolo's `--solo`) are allowlisted with a stated reason, and a
+  second test fails if an allowlisted flag turns out to be real — which would
+  hide a rename.
+
+### Changed
+
+- **README gained a pipeline diagram** (Mermaid, so it renders on GitHub and in
+  the docs site and cannot silently go stale the way an image does). It
+  includes the internal-priming veto, which the existing
+  `pipeline_flow_report.png` predates: that figure shows Stages 0-9 with no
+  veto step, "Min reads per cell: 50" and cluster counts from a May 2026 run,
+  and there is no generator to refresh it — so it is deliberately NOT used.
+- **`docs/strategies/clustering.md` now shows the TF-IDF → LSI → Leiden
+  figure**, whose claims were checked against the source first
+  (`_remove_depth_correlated_components(..., threshold=0.75)` matches, as do
+  `n_neighbors` and `resolution`). The caption states the matrix is synthetic,
+  so it is not mistaken for a result.
+- **`CITATION.cff` carries the concept DOI**, so GitHub's "Cite this
+  repository" shows it. It was absent.
+- **README's Citation section now cites the DOIs.** It previously said "No
+  `CITATION.cff` file exists yet" (it does), listed one author rather than the
+  manuscript's two, and gave no DOI at all — so anyone following it would cite
+  a bare repository URL. It now names the concept DOI (cite the tool) and the
+  version DOI (cite the exact release that produced the results), carries both
+  authors, and includes a ready availability statement.
+- **Badges corrected.** The Python badge claimed 3.11+ while the package now
+  supports 3.10–3.13, and a comment asserted no CI workflow existed — there are
+  ten jobs. Added PyPI, CI and DOI badges.
+- `scripts/bump_version.py`'s README pattern is whitespace-tolerant. It matched
+  a literal `version = {` and silently stopped matching when the BibTeX entry
+  was reformatted with aligned `=`; `--check` caught it, which is what that
+  guard is for.
+
 ## 0.3.1 — 2026-09-11
 
 ### Fixed

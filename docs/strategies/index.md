@@ -25,9 +25,9 @@ score. See [quantification strategies](quantification.md).
 
 | Strategy | CLI flag | Output file | When to use |
 |---|---|---|---|
-| `classic` | `--pdui-method classic` | `pdui_classic.tsv` | Binary proximal/distal question on a per-gene or per-isoform basis. |
-| `proportion` | `--pdui-method proportion` | `proportion.tsv` | Full per-PAS usage vector per cell; feeds `proportion_heatmap` viz. |
-| `shannon` | `--pdui-method shannon` | `entropy_shannon.tsv` | Heterogeneity of PAS usage; genes with many PAS, or pseudotime analyses. |
+| `classic` | `--strategy classic` | `pdui_classic.tsv` | Binary proximal/distal question on a per-gene or per-isoform basis. |
+| `proportion` | `--strategy proportion` | `proportion.tsv` | Full per-PAS usage vector per cell; feeds `proportion_heatmap` viz. |
+| `shannon` | `--strategy shannon` | `entropy_shannon.tsv` | Heterogeneity of PAS usage; genes with many PAS, or pseudotime analyses. |
 
 ## Differential APA
 
@@ -36,9 +36,9 @@ See [diff strategies](diff.md).
 
 | Strategy | CLI flag | Multi-condition | When to use |
 |---|---|---|---|
-| `fisher` | `--diff-method fisher` | No | Fast exploratory screen; within-gene framing (DEXSeq-style). |
-| `nb_pairwise` | `--diff-method nb_pairwise` | No | Cell-level NB GLM; corrects for library size; no pseudo-replication. |
-| `nb_multi` | `--diff-method nb_multi` | Yes | Omnibus test across all clusters at once. |
+| `fisher` | `--strategy fisher` | No | Fast exploratory screen; within-gene framing (DEXSeq-style). |
+| `nb_pairwise` | `--strategy nb_pairwise` | No | Cell-level NB GLM; corrects for library size; no pseudo-replication. |
+| `nb_multi` | `--strategy nb_multi` | Yes | Omnibus test across all clusters at once. |
 
 ## Cross-dataset matching
 

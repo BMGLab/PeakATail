@@ -16,6 +16,10 @@ authors:
     given-names: "Yasin"
     orcid: "https://orcid.org/0000-0002-9725-7536"
     affiliation: "Department of Bioengineering, Faculty of Engineering, Ege University, İzmir, Türkiye"
+# Concept DOI: always resolves to the latest version. GitHub renders this
+# under "Cite this repository". Cite the VERSION DOI of the release you ran
+# when the exact numbers matter -- see the Citation section of README.md.
+doi: "10.5281/zenodo.22697820"
 repository-code: "https://github.com/BMGLab/PeakATail"
 url: "https://bmglab.github.io/PeakATail/"
 license: MIT
