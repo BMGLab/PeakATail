@@ -25,7 +25,9 @@ SITES: list[tuple[str, list[str]]] = [
     ("pyproject.toml", [r'(?m)^(version = ")([^"]+)(")']),
     ("CITATION.cff", [r'(?m)^(version: ")([^"]+)(")']),
     ("recipes/peakatail/meta.yaml", [r'(\{%\s*set version = ")([^"]+)("\s*%\})']),
-    ("README.md", [r'(version = \{)([0-9][^}]*)(\})']),
+    # Whitespace-tolerant: the BibTeX entry aligns its `=`, and a fixed
+    # single-space pattern silently stopped matching when it was reformatted.
+    ("README.md", [r'(version\s*=\s*\{)([0-9][^}]*)(\})']),
     ("docs/tutorials/01-installation.md", [r'(peakatail, version )([0-9][0-9A-Za-z.+-]*)(\s)']),
     ("docs/concepts/output-files.md", [r'("peakatail_version": ")([^"]+)(")']),
     # uv.lock records the project's OWN version alongside every dependency's,
