@@ -3,9 +3,9 @@
 `peakatail switch geneview` renders gene-track panels showing per-cluster PAS
 coverage and proportions for a set of genes. For each gene, it builds a panel
 with depth-normalised per-cluster PAS read bars, optional isoform structure
-(from a GTF), and optional PDUI / proportion / entropy score overlays (from a
-length TSV). The output is one figure file per gene, a `meta.json` manifest,
-and a `figures_INDEX.md` index.
+(from a GTF), and optional differential-result overlays (from `--diff-tsv`).
+The output is one figure file per gene, a `meta.json` manifest, and a
+`figures_INDEX.md` index.
 
 Genes are selected from the union of:
 
@@ -50,7 +50,6 @@ uv run peakatail switch geneview \
   --gene-id ACTB \
   --gene-id MYC \
   --diff-tsv peakatail_runs/emaout_.../switch_diff_<ts>/differential/fisher_0_vs_1.tsv \
-  --length-tsv peakatail_runs/emaout_.../switch_length_<ts>/pdui_classic.tsv \
   --pasbed peakatail_runs/emaout_.../per_dataset/sample1/pasbed.bed \
   --h5ad peakatail_runs/emaout_.../per_dataset/sample1/clusters.h5ad \
   --gtf /path/to/gencode.v44.annotation.gtf \
@@ -106,7 +105,6 @@ Options:
                                   (repeatable). Used to auto-select top-N genes
                                   by volcano score. Optional when --gene-id is
                                   supplied.
-  --length-tsv PATH               PDUI / proportion / entropy TSV from `peakatail
                                   switch length`. When present, overlays
                                   strategy scores on per-cluster bars.
   --pasbed PATH                   pasbed.bed — PAS coordinates (BED6 format).
@@ -132,7 +130,6 @@ Options:
 | `--h5ad` / `-i` | PATH | — | Single `clusters.h5ad` file from `peakatail run`. Must have `gene_id` in `adata.var` (written when `--gtf` was provided to `peakatail run`). The Leiden cluster labels (`adata.obs[cluster_key]`) drive the per-cluster display. Required. |
 | `--pasbed` | PATH | — | PAS BED file in BED6 format (chrom, start, end, pas_id, score, strand). Loaded to retrieve genomic coordinates for PAS track positioning. Required. |
 | `--diff-tsv` | PATH (repeatable) | — | One or more differential TSV files from `peakatail switch diff`. Each TSV is parsed for `cluster1`, `cluster2`, `gene_id`, and volcano columns. Multiple TSVs for the same cluster pair are concatenated. Optional when `--gene-id` is provided; required otherwise. |
-| `--length-tsv` | PATH | — | PDUI, proportion, or entropy TSV from `peakatail switch length`. When provided, score values are overlaid on per-cluster PAS bars. Optional. |
 | `--gtf` | PATH | — | Ensembl/GENCODE GTF file. When provided, isoform structure is loaded via `ema.viz._gene_track_helpers.load_isoforms_for_gene` and drawn as a transcript model track below the PAS bars. Optional; failures are logged as warnings and do not abort the run. |
 
 ### Gene selection
@@ -194,7 +191,7 @@ Markdown index of figure files in the `figures/` directory, generated alongside
 
 - **[`peakatail run`](run.md)** — produces `clusters.h5ad` and `pasbed.bed`. Gene annotation in `adata.var["gene_id"]` is required.
 - **[`peakatail switch diff`](switch-diff.md)** — produces the `differential/*.tsv` files consumed via `--diff-tsv` for auto gene ranking.
-- **[`peakatail switch length`](switch-length.md)** — produces the PDUI / proportion / entropy TSV consumed via `--length-tsv` for score overlay.
+- **[`peakatail switch length`](switch-length.md)** — produces the PDUI / proportion / entropy TSVs. `geneview` does not read them; it overlays differential results supplied with `--diff-tsv`.
 
 ## See also
 
