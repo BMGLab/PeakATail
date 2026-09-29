@@ -16,6 +16,8 @@ PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alte
 
 **Paper:** Amiri Tabat A, Bafandeh Zendeh E, Kaymaz Y. *PeakATail: precision-first poly(A)-site calling and calibrated alternative polyadenylation analysis in single-cell RNA-seq.* bioRxiv (2026). doi: [10.64898/2026.09.18.752791](https://doi.org/10.64898/2026.09.18.752791). Under review at *NAR Genomics and Bioinformatics*.
 
+**Found a bug, or tried it on your data?** [Open an issue](https://github.com/BMGLab/PeakATail/issues/new/choose) or start a [discussion](https://github.com/BMGLab/PeakATail/discussions).
+
 ---
 
 ## Quick install
