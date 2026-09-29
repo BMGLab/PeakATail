@@ -1,0 +1,51 @@
+name: I tried it on my data
+description: Tell us how PeakATail behaved on a real dataset, whether it worked or not.
+title: "[report] "
+labels: ["help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is not a bug form. We want to know what happened when you ran PeakATail on your own data, including the parts that were confusing, slow, or simply fine. Every report here shapes the roadmap.
+  - type: textarea
+    id: dataset
+    attributes:
+      label: Dataset
+      description: Tissue or cell line, species, chemistry (10x 3' v2/v3, Drop-seq, etc.), number of cells and samples, public accession if any.
+    validations:
+      required: true
+  - type: input
+    id: aligner
+    attributes:
+      label: Aligner and barcode tags
+      placeholder: "STARsolo 2.7.11 with --soloCBwhitelist, CB:Z tags present"
+    validations:
+      required: true
+  - type: textarea
+    id: ran
+    attributes:
+      label: What you ran
+      description: Commands or config, and which steps (peak calling, matrix, clustering, switch diff, length).
+    validations:
+      required: true
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked
+  - type: textarea
+    id: didnt
+    attributes:
+      label: What did not work, or was unclear
+      description: Wrong-looking output, long runtimes, missing docs, parameters you had to guess.
+  - type: textarea
+    id: next
+    attributes:
+      label: What would you need next
+      description: A feature, an output format, an integration, a comparison with another tool.
+  - type: checkboxes
+    id: share
+    attributes:
+      label: Follow-up
+      options:
+        - label: I am willing to share a small anonymised subset of this data to help debug.
+        - label: You may quote this report (without the dataset details) in the docs or a release note.
