@@ -1,0 +1,45 @@
+name: Bug report
+description: Something crashed, produced wrong output, or disagrees with the docs.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting. The more of this you can fill in, the faster it gets fixed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead. Paste the full traceback if there is one.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Exact command or Python call
+      placeholder: peakatail run --config my.yaml
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PeakATail version
+      description: Output of `peakatail --version` or `pip show peakatail`.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Python 3.12, Ubuntu 22.04, samtools 1.19, bedtools 2.31, installed via pip"
+  - type: textarea
+    id: data
+    attributes:
+      label: Input data
+      description: Chemistry (10x 3' v3, etc.), aligner (STARsolo, Cell Ranger, alevin-fry), species and genome build, approximate cell and read counts. Never attach patient data.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Config file, log excerpt, or a small reproducer if you have one.

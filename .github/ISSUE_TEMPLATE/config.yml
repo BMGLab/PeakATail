@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/BMGLab/PeakATail/discussions
+    about: Ask how to use PeakATail, or tell us what it should do next.
+  - name: Documentation
+    url: https://bmglab.github.io/PeakATail/
+    about: Tutorials, CLI reference, and the Python API.
