@@ -7,6 +7,8 @@
 - **Preprint links.** README badge and "Paper" line, `CITATION.cff`
   `preferred-citation`, and PyPI sidebar links (Documentation, Paper, Issues,
   Changelog) now point at the bioRxiv preprint (doi:10.64898/2026.09.18.752791).
+- **Docs index and README** now carry the preprint citation and an "open an
+  issue" pointer to the issue forms and Discussions.
 - **Issue forms** under `.github/ISSUE_TEMPLATE/`: bug report, "I tried it on my
   data", and feature request; the chooser also links to GitHub Discussions.
 
