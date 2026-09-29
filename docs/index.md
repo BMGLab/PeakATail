@@ -185,5 +185,17 @@ Results land in `switch_diff_<timestamp>/` inside the same run directory.
 PeakATail is developed at the BMG Lab. Source code and issue tracker:
 [github.com/BMGLab/PeakATail](https://github.com/BMGLab/PeakATail).
 
-If you use PeakATail in your research, please cite the repository until a
-peer-reviewed publication is available.
+**Paper (preprint):** Amiri Tabat A, Bafandeh Zendeh E, Kaymaz Y.
+*PeakATail: precision-first poly(A)-site calling and calibrated alternative
+polyadenylation analysis in single-cell RNA-seq.* bioRxiv, 2026.
+doi: [10.64898/2026.09.18.752791](https://doi.org/10.64898/2026.09.18.752791). Under review at
+*NAR Genomics and Bioinformatics*.
+
+If you use PeakATail, cite the paper for the method and the Zenodo version DOI
+of the release you ran for the software (concept DOI
+[10.5281/zenodo.22697820](https://doi.org/10.5281/zenodo.22697820)). The
+repository's `CITATION.cff` carries both in machine-readable form.
+
+Found a problem or ran it on your own data? Please
+[open an issue](https://github.com/BMGLab/PeakATail/issues/new/choose) or
+join the [discussion](https://github.com/BMGLab/PeakATail/discussions).
