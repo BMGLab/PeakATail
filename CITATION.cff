@@ -1,4 +1,7 @@
-# Author list matches the PeakATail manuscript (Amiri Tabat & Kaymaz).
+# Author list matches the PeakATail manuscript (Amiri Tabat, Bafandeh Zendeh &
+# Kaymaz). E. Bafandeh Zendeh added 2026-09-15: he is the paper's second author
+# and contributed to the software, work that is not visible in this repository's
+# commit history because it was done elsewhere. Confirmed by the PI.
 # Further authors will be added as the manuscript's author list grows; keep
 # the order here identical to the paper's.
 cff-version: 1.2.0
@@ -11,6 +14,10 @@ authors:
   - family-names: "Amiri Tabat"
     given-names: "Amir"
     orcid: "https://orcid.org/0009-0009-8740-7770"
+    affiliation: "Department of Computer Engineering, Faculty of Computer and Informatics Sciences, Ege University, İzmir, Türkiye"
+  - family-names: "Bafandeh Zendeh"
+    given-names: "Elyar"
+    orcid: "https://orcid.org/0009-0007-1696-3900"
     affiliation: "Department of Computer Engineering, Faculty of Computer and Informatics Sciences, Ege University, İzmir, Türkiye"
   - family-names: "Kaymaz"
     given-names: "Yasin"
