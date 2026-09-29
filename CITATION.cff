@@ -2,7 +2,7 @@
 # Further authors will be added as the manuscript's author list grows; keep
 # the order here identical to the paper's.
 cff-version: 1.2.0
-message: "If you use PeakATail in your research, please cite it using the metadata below."
+message: "If you use PeakATail, please cite the paper (preferred-citation) and the Zenodo version DOI of the release you ran."
 type: software
 title: "PeakATail"
 version: "0.3.1"
@@ -28,3 +28,22 @@ keywords:
   - scRNA-seq
   - polyadenylation
   - APA
+preferred-citation:
+  type: article
+  title: "PeakATail: precision-first poly(A)-site calling and calibrated alternative polyadenylation analysis in single-cell RNA-seq"
+  authors:
+    - family-names: "Amiri Tabat"
+      given-names: "Amir"
+      orcid: "https://orcid.org/0009-0009-8740-7770"
+    - family-names: "Bafandeh Zendeh"
+      given-names: "Elyar"
+      orcid: "https://orcid.org/0009-0007-1696-3900"
+    - family-names: "Kaymaz"
+      given-names: "Yasin"
+      orcid: "https://orcid.org/0000-0002-9725-7536"
+  journal: "bioRxiv"
+  year: 2026
+  month: 9
+  doi: "10.64898/2026.09.18.752791"
+  url: "https://doi.org/10.64898/2026.09.18.752791"
+  notes: "Preprint. Under review at NAR Genomics and Bioinformatics."

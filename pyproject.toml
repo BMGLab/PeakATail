@@ -92,6 +92,10 @@ ema = "ema.cli:ema_deprecated_main"
 [project.urls]
 Homepage = "https://github.com/BMGLab/PeakATail"
 Repository = "https://github.com/BMGLab/PeakATail"
+Documentation = "https://bmglab.github.io/PeakATail/"
+Paper = "https://doi.org/10.64898/2026.09.18.752791"
+Issues = "https://github.com/BMGLab/PeakATail/issues"
+Changelog = "https://github.com/BMGLab/PeakATail/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 packages = {find = {where = ["."], include = ["ema*"]}}

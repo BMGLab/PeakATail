@@ -12,6 +12,9 @@ PeakATail is a Python tool for single-cell poly(A) site (PAS) detection and alte
 [![PyPI](https://img.shields.io/pypi/v/peakatail)](https://pypi.org/project/peakatail/)
 [![CI](https://github.com/BMGLab/PeakATail/actions/workflows/ci.yml/badge.svg)](https://github.com/BMGLab/PeakATail/actions/workflows/ci.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22697820.svg)](https://doi.org/10.5281/zenodo.22697820)
+[![Preprint](https://img.shields.io/badge/bioRxiv-10.64898%2F2026.09.18.752791-b31b1b)](https://doi.org/10.64898/2026.09.18.752791)
+
+**Paper:** Amiri Tabat A, Bafandeh Zendeh E, Kaymaz Y. *PeakATail: precision-first poly(A)-site calling and calibrated alternative polyadenylation analysis in single-cell RNA-seq.* bioRxiv (2026). doi: [10.64898/2026.09.18.752791](https://doi.org/10.64898/2026.09.18.752791). Under review at *NAR Genomics and Bioinformatics*.
 
 ---
 
@@ -278,9 +281,26 @@ PeakATail/
 
 ## Citation
 
-If you use PeakATail, please cite the archived release you actually ran.
-`CITATION.cff` in this repository carries the same metadata in machine-readable
-form, and GitHub renders it under **Cite this repository**.
+If you use PeakATail, please cite **the paper** for the method and **the archived
+release you actually ran** for the software. `CITATION.cff` in this repository carries
+the same metadata in machine-readable form, and GitHub renders it under **Cite this
+repository**.
+
+**Paper (preprint):** Amiri Tabat A, Bafandeh Zendeh E, Kaymaz Y. *PeakATail: precision-first poly(A)-site calling and calibrated alternative polyadenylation analysis in single-cell RNA-seq.* bioRxiv, 2026. doi: [10.64898/2026.09.18.752791](https://doi.org/10.64898/2026.09.18.752791)
+
+```bibtex
+@article{peakatail2026,
+  author  = {Amiri Tabat, Amir and Bafandeh Zendeh, Elyar and Kaymaz, Yasin},
+  title   = {{PeakATail}: precision-first poly(A)-site calling and calibrated alternative polyadenylation analysis in single-cell RNA-seq},
+  journal = {bioRxiv},
+  year    = {2026},
+  doi     = {10.64898/2026.09.18.752791},
+  url     = {https://doi.org/10.64898/2026.09.18.752791},
+  note    = {Preprint}
+}
+```
+
+**Software:**
 
 | What to cite | DOI |
 |---|---|
@@ -292,7 +312,7 @@ DOI** and the tag, not just the repository URL.
 
 ```bibtex
 @software{peakatail,
-  author    = {Amiri Tabat, Amir and Kaymaz, Yasin},
+  author    = {Amiri Tabat, Amir and Bafandeh Zendeh, Elyar and Kaymaz, Yasin},
   title     = {{PeakATail}: single-cell poly(A) site detection and APA analysis},
   version   = {0.3.1},
   doi       = {10.5281/zenodo.22699241},
@@ -308,8 +328,8 @@ A suggested availability statement:
 > archived at Zenodo (DOI: 10.5281/zenodo.22699241). Install with
 > `pip install peakatail`.
 
-The manuscript describing PeakATail is in preparation; this entry will be
-updated with the journal citation when it is published.
+The manuscript is under review at *NAR Genomics and Bioinformatics*; this entry
+will be updated with the journal citation when it is published.
 
 ---
 

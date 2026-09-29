@@ -1,0 +1,42 @@
+name: Feature request
+description: Something PeakATail should do that it does not do today.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The analysis question, not the implementation. What would you do with the result?
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: How you do it today
+      description: A workaround, another tool, or nothing.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: A command, an option, an output, or a Python function. Rough is fine.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Peak / PAS calling
+        - Count matrix and filtering
+        - Clustering
+        - Differential APA (switch diff)
+        - 3'UTR length
+        - Annotation
+        - Python API / scverse integration
+        - Docs
+        - Other
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to open a pull request for this with some guidance.
